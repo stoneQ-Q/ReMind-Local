@@ -54,6 +54,111 @@ try {
   });
   assert.equal(invalidRefresh.status, 401);
 
+  const testApiKey = 'test-provider-key-not-a-real-secret-8472';
+  const initialAiSettings = await authenticatedRequest(
+    'GET',
+    '/api/v1/ai/settings',
+    refreshed.body.accessToken,
+  );
+  assert.equal(initialAiSettings.status, 200);
+  assert.equal(initialAiSettings.body.mode, 'disabled');
+  assert.deepEqual(initialAiSettings.body.credentials, []);
+
+  const missingCredentialMode = await authenticatedRequest(
+    'PUT',
+    '/api/v1/ai/settings',
+    refreshed.body.accessToken,
+    { mode: 'bring_your_own_key' },
+  );
+  assert.equal(missingCredentialMode.status, 409);
+
+  const savedCredential = await authenticatedRequest(
+    'PUT',
+    '/api/v1/ai/credentials/deepseek',
+    refreshed.body.accessToken,
+    { apiKey: testApiKey },
+  );
+  assert.equal(savedCredential.status, 200);
+  assert.equal(savedCredential.body.credentials.length, 1);
+  assert.equal(savedCredential.body.credentials[0].maskedSuffix, '8472');
+  assert.equal(JSON.stringify(savedCredential.body).includes(testApiKey), false);
+
+  const zhipuApiKey = 'test-zhipu-key-not-a-real-secret-9911';
+  const secondCredential = await authenticatedRequest(
+    'PUT',
+    '/api/v1/ai/credentials/zhipu',
+    refreshed.body.accessToken,
+    { apiKey: zhipuApiKey },
+  );
+  assert.equal(secondCredential.status, 200);
+  assert.equal(secondCredential.body.credentials.length, 2);
+  assert.equal(JSON.stringify(secondCredential.body).includes(zhipuApiKey), false);
+
+  const encryptedAtRest = await pool.query(
+    `SELECT
+       bool_and(
+         position(convert_to($2, 'UTF8') in encrypted_key) = 0
+         AND position(convert_to($3, 'UTF8') in encrypted_key) = 0
+       ) AS plaintext_absent,
+       encryption_key_version
+     FROM api_credentials
+     WHERE user_id = $1
+     GROUP BY encryption_key_version`,
+    [first.userId, testApiKey, zhipuApiKey],
+  );
+  assert.equal(encryptedAtRest.rows[0].plaintext_absent, true);
+  assert.equal(encryptedAtRest.rows[0].encryption_key_version, 'local-v1');
+
+  const secondUserAiSettings = await authenticatedRequest(
+    'GET',
+    '/api/v1/ai/settings',
+    second.accessToken,
+  );
+  assert.equal(secondUserAiSettings.status, 200);
+  assert.deepEqual(secondUserAiSettings.body.credentials, []);
+
+  const ownKeyMode = await authenticatedRequest(
+    'PUT',
+    '/api/v1/ai/settings',
+    refreshed.body.accessToken,
+    { mode: 'bring_your_own_key' },
+  );
+  assert.equal(ownKeyMode.status, 200);
+  assert.equal(ownKeyMode.body.mode, 'bring_your_own_key');
+
+  const managedMode = await authenticatedRequest(
+    'PUT',
+    '/api/v1/ai/settings',
+    refreshed.body.accessToken,
+    { mode: 'managed' },
+  );
+  assert.equal(managedMode.status, 200);
+  assert.equal(managedMode.body.mode, 'managed');
+
+  await authenticatedRequest(
+    'PUT',
+    '/api/v1/ai/settings',
+    refreshed.body.accessToken,
+    { mode: 'bring_your_own_key' },
+  );
+  const deletedCredential = await authenticatedRequest(
+    'DELETE',
+    '/api/v1/ai/credentials/deepseek',
+    refreshed.body.accessToken,
+  );
+  assert.equal(deletedCredential.status, 200);
+  assert.equal(deletedCredential.body.mode, 'bring_your_own_key');
+  assert.equal(deletedCredential.body.credentials.length, 1);
+  assert.equal(deletedCredential.body.credentials[0].provider, 'zhipu');
+  const deletedLastCredential = await authenticatedRequest(
+    'DELETE',
+    '/api/v1/ai/credentials/zhipu',
+    refreshed.body.accessToken,
+  );
+  assert.equal(deletedLastCredential.status, 200);
+  assert.equal(deletedLastCredential.body.mode, 'disabled');
+  assert.deepEqual(deletedLastCredential.body.credentials, []);
+
   const recovered = await requestJson('/api/v1/auth/recover', {
     recoveryCode: first.recoveryCode.toLowerCase().replaceAll('-', ' '),
     platform: 'ios',
@@ -108,7 +213,7 @@ try {
   assert.equal(storedSecrets.rows[0].devices_hashed, true);
 
   console.log(
-    'anonymous auth smoke test passed: registration, renewal, recovery, sessions, and two-user isolation',
+    'cloud smoke test passed: auth, renewal, recovery, AI settings, encrypted credentials, and two-user isolation',
   );
 } finally {
   if (createdUserIds.length) {
@@ -150,11 +255,24 @@ async function register(displayName) {
 }
 
 async function authenticatedJson(path, accessToken) {
+  const result = await authenticatedRequest('GET', path, accessToken);
+  assert.equal(result.status, 200);
+  return result.body;
+}
+
+async function authenticatedRequest(method, path, accessToken, body) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  assert.equal(response.status, 200);
-  return response.json();
+  return {
+    status: response.status,
+    body: await response.json(),
+  };
 }
 
 async function requestJson(path, body) {

@@ -9,10 +9,21 @@ import {
   type DevicePlatform,
   type DeviceRegistration,
 } from './auth.js';
+import {
+  deleteApiCredential,
+  getAiSettings,
+  InvalidApiCredentialError,
+  isAiProvider,
+  isAiUsageMode,
+  saveApiCredential,
+  updateAiMode,
+} from './ai-settings.js';
 import { apiPort } from './config.js';
+import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 
 const port = apiPort();
+const credentialCipher = credentialCipherFromEnvironment();
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 const allowedPlatforms = new Set<DevicePlatform>([
   'android',
@@ -151,6 +162,110 @@ const server = createServer(async (request, response) => {
         account.deviceId,
       );
       sendJson(response, 200, { devices });
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      request.url === '/api/v1/ai/settings'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      sendJson(response, 200, await getAiSettings(database, account.userId));
+      return;
+    }
+
+    if (
+      request.method === 'PUT' &&
+      request.url === '/api/v1/ai/settings'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const mode = isRecord(body) ? body.mode : undefined;
+      if (!isAiUsageMode(mode)) {
+        sendJson(response, 400, { error: 'invalid_ai_mode' });
+        return;
+      }
+      const settings = await updateAiMode(database, account.userId, mode);
+      if (!settings) {
+        sendJson(response, 409, { error: 'api_credential_required' });
+        return;
+      }
+      sendJson(response, 200, settings);
+      return;
+    }
+
+    const credentialMatch = request.url?.match(
+      /^\/api\/v1\/ai\/credentials\/([^/?]+)$/,
+    );
+    if (credentialMatch && request.method === 'PUT') {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const provider = decodeURIComponent(credentialMatch[1] ?? '');
+      if (!isAiProvider(provider)) {
+        sendJson(response, 400, { error: 'unsupported_ai_provider' });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const apiKey =
+        isRecord(body) && typeof body.apiKey === 'string' ? body.apiKey : '';
+      try {
+        const settings = await saveApiCredential(
+          database,
+          credentialCipher,
+          account.userId,
+          provider,
+          apiKey,
+        );
+        sendJson(response, 200, settings);
+      } catch (error) {
+        if (error instanceof InvalidApiCredentialError) {
+          sendJson(response, 400, { error: 'invalid_api_credential' });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    if (credentialMatch && request.method === 'DELETE') {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const provider = decodeURIComponent(credentialMatch[1] ?? '');
+      if (!isAiProvider(provider)) {
+        sendJson(response, 400, { error: 'unsupported_ai_provider' });
+        return;
+      }
+      sendJson(
+        response,
+        200,
+        await deleteApiCredential(database, account.userId, provider),
+      );
       return;
     }
 

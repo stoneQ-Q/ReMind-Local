@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "migrate": "node dist/migrate.js",
+    "rotate:credentials": "node dist/rotate-credentials.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

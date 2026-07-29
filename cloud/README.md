@@ -48,6 +48,32 @@
 
 App 在会话剩余 7 天或更少时使用设备密钥自动续期。续期成功后，原会话令牌立即失效，新的会话继续有效 30 天。正常使用不会要求用户定期输入恢复码；只有设备密钥丢失、设备被撤销或更换手机时才需要恢复码。
 
+## AI 模式与用户 API Key
+
+每个账号默认使用 `disabled`，可以切换为：
+
+- `disabled`：关闭 AI，不读取任何模型凭据；
+- `bring_your_own_key`：使用用户自己配置的 DeepSeek 或智谱 Key；
+- `managed`：使用 ReMind 托管额度；当前只保存模式，计费完成前不会发起真实调用。
+
+云端 API 提供：
+
+- `GET /api/v1/ai/settings`：读取模式和已配置供应商；
+- `PUT /api/v1/ai/settings`：切换 AI 模式；
+- `PUT /api/v1/ai/credentials/:provider`：新增或替换用户 Key；
+- `DELETE /api/v1/ai/credentials/:provider`：物理删除用户 Key。
+
+API 永远不返回完整 Key，只返回供应商、末四位和更新时间。Key 使用 AES-256-GCM 加密，每次加密使用独立随机 nonce，并将用户 ID、供应商和密钥版本绑定为附加认证数据；密文被复制给另一用户或供应商后无法解密。
+
+本地开发使用 `.env` 中的 32 字节主密钥。轮换时：
+
+1. 将旧版本与旧密钥加入 `REMIND_CREDENTIAL_KEY_RING_JSON`；
+2. 把新的版本和密钥设置为当前活动密钥；
+3. 执行 `docker compose run --rm api node dist/rotate-credentials.js`；
+4. 验证所有凭据都已更新后，再从 key ring 中移除旧密钥。
+
+正式收费前必须把本地主密钥适配器替换为云 KMS，不能把生产主密钥长期保存在普通环境变量中。
+
 ## 备份
 
 `backup` 服务启动后会立即生成一份 PostgreSQL 自定义格式备份，之后默认每 24 小时备份一次，并保留最近 7 天。备份文件位于本机 `cloud/backups`，已排除在 Git 之外。
