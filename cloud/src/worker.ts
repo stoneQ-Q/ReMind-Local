@@ -1,6 +1,7 @@
 import { hostname } from 'node:os';
 
 import { workerPollMs } from './config.js';
+import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 import {
   processNextCancellation,
@@ -8,9 +9,14 @@ import {
   runNextJob,
   type JobHandlers,
 } from './jobs.js';
+import {
+  createWechatPollHandler,
+  ensureNextWechatPollJob,
+} from './wechat-connections.js';
 
 const pollMs = workerPollMs();
 const workerId = `${hostname()}:${process.pid}`;
+const credentialCipher = credentialCipherFromEnvironment();
 const handlers: JobHandlers = new Map([
   [
     'system.noop',
@@ -19,6 +25,7 @@ const handlers: JobHandlers = new Map([
       return { ok: true };
     },
   ],
+  ['wechat.poll', createWechatPollHandler(database, credentialCipher)],
 ]);
 let stopping = false;
 
@@ -30,6 +37,7 @@ void run().finally(async () => {
 async function run(): Promise<void> {
   while (!stopping) {
     try {
+      if (await ensureNextWechatPollJob(database)) continue;
       if (await recoverNextExpiredLease(database)) continue;
       if (await processNextCancellation(database)) continue;
       if (await runNextJob(database, workerId, handlers)) continue;
