@@ -18,6 +18,7 @@ import {
   saveApiCredential,
   updateAiMode,
 } from './ai-settings.js';
+import { getBillingAccount, listLedgerEntries } from './billing.js';
 import { apiPort } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
@@ -162,6 +163,45 @@ const server = createServer(async (request, response) => {
         account.deviceId,
       );
       sendJson(response, 200, { devices });
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      request.url === '/api/v1/billing/account'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const billingAccount = await getBillingAccount(database, account.userId);
+      if (!billingAccount) {
+        sendJson(response, 404, { error: 'billing_account_not_found' });
+        return;
+      }
+      sendJson(response, 200, billingAccount);
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      request.url === '/api/v1/billing/ledger'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      sendJson(response, 200, {
+        entries: await listLedgerEntries(database, account.userId),
+      });
       return;
     }
 

@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { closeDatabase, database } from './database.js';
 
 const MIGRATION_LOCK_ID = 7_214_306_291;
-const migrationsDirectory = fileURLToPath(
-  new URL('../migrations/', import.meta.url).href,
-);
+const migrationsDirectory = process.env.REMIND_MIGRATIONS_DIRECTORY
+  ? resolve(process.env.REMIND_MIGRATIONS_DIRECTORY)
+  : fileURLToPath(new URL('../migrations/', import.meta.url).href);
 
 await runMigrations();
 

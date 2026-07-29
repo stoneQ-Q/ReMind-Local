@@ -30,6 +30,23 @@ try {
   assert.equal(firstProfile.id, first.userId);
   assert.equal(secondProfile.id, second.userId);
 
+  const firstBilling = await authenticatedJson(
+    '/api/v1/billing/account',
+    first.accessToken,
+  );
+  const secondBilling = await authenticatedJson(
+    '/api/v1/billing/account',
+    second.accessToken,
+  );
+  assert.equal(firstBilling.balanceMicros, '0');
+  assert.equal(firstBilling.reservedMicros, '0');
+  assert.equal(secondBilling.balanceMicros, '0');
+  const firstLedger = await authenticatedJson(
+    '/api/v1/billing/ledger',
+    first.accessToken,
+  );
+  assert.deepEqual(firstLedger.entries, []);
+
   const refreshed = await requestJson('/api/v1/auth/refresh', {
     deviceId: first.deviceId,
     deviceSecret: first.deviceSecret,

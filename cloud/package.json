@@ -7,6 +7,7 @@
     "build": "tsc",
     "migrate": "node dist/migrate.js",
     "rotate:credentials": "node dist/rotate-credentials.js",
+    "smoke:billing": "node scripts/billing-smoke-runner.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
