@@ -31,6 +31,9 @@ try {
   await runNode(['scripts/wechat-polling-smoke.mjs'], {
     REMIND_BILLING_TEST_DATABASE_URL: testUrl,
   });
+  await runNode(['scripts/link-processing-smoke.mjs'], {
+    REMIND_BILLING_TEST_DATABASE_URL: testUrl,
+  });
 } finally {
   await admin.query(
     `SELECT pg_terminate_backend(pid)

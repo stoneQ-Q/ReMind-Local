@@ -10,6 +10,10 @@ import {
   type JobHandlers,
 } from './jobs.js';
 import {
+  createLinkParseHandler,
+  ensureNextLinkParseJob,
+} from './link-processing.js';
+import {
   createWechatPollHandler,
   ensureNextWechatPollJob,
 } from './wechat-connections.js';
@@ -26,6 +30,7 @@ const handlers: JobHandlers = new Map([
     },
   ],
   ['wechat.poll', createWechatPollHandler(database, credentialCipher)],
+  ['link.parse', createLinkParseHandler(database)],
 ]);
 let stopping = false;
 
@@ -38,6 +43,7 @@ async function run(): Promise<void> {
   while (!stopping) {
     try {
       if (await ensureNextWechatPollJob(database)) continue;
+      if (await ensureNextLinkParseJob(database)) continue;
       if (await recoverNextExpiredLease(database)) continue;
       if (await processNextCancellation(database)) continue;
       if (await runNextJob(database, workerId, handlers)) continue;

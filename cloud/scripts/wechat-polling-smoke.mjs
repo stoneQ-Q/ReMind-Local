@@ -47,7 +47,14 @@ const protocol = {
         from_user_id: 'wechat-user-a',
         create_time_ms: 1_700_000_000_000,
         context_token: 'context-a',
-        item_list: [{ type: 1, text_item: { text: 'A 的微信记录' } }],
+        item_list: [
+          {
+            type: 1,
+            text_item: {
+              text: '下周阅读 https://example.com/wechat-link',
+            },
+          },
+        ],
       };
       return {
         ret: 0,
@@ -148,7 +155,7 @@ try {
   );
 
   const notes = await pool.query(
-    `SELECT user_id, content, content_kind
+    `SELECT id, user_id, content, content_kind, source_url, link_status
      FROM notes WHERE source = 'wechat' ORDER BY user_id`,
   );
   assert.equal(notes.rowCount, 2);
@@ -164,6 +171,10 @@ try {
     notes.rows.some((row) => row.content === '不可保存'),
     false,
   );
+  const firstLinkNote = notes.rows.find((row) => row.user_id === firstUser);
+  assert.equal(firstLinkNote.content_kind, 'mixed');
+  assert.equal(firstLinkNote.source_url, 'https://example.com/wechat-link');
+  assert.equal(firstLinkNote.link_status, 'pending');
 
   const messages = await pool.query(
     `SELECT user_id, connection_id, external_id, type, reply_sent_at
@@ -301,6 +312,11 @@ try {
   assert.equal(
     JSON.stringify(replacedJobs.rows).includes(replacementToken),
     false,
+  );
+  await pool.query(
+    `UPDATE notes SET link_status = 'failed', link_error_code = 'test_complete'
+     WHERE user_id = $1 AND id = $2`,
+    [firstUser, firstLinkNote.id],
   );
 
   console.log(

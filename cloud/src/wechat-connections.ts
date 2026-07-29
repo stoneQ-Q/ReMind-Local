@@ -4,6 +4,8 @@ import type { Pool, PoolClient } from 'pg';
 
 import type { CredentialCipher } from './credential-cipher.js';
 import type { JobHandler } from './jobs.js';
+import { parseLinkInput } from './link-input.js';
+import { validatePublicLinkUrl } from './link-page.js';
 import {
   IlinkWechatProtocolClient,
   normalizeWechatMessage,
@@ -405,13 +407,20 @@ async function persistCapture(
 
     const noteId = randomUUID();
     const clientId = `wechat:${connectionId}:${capture.externalId}`;
+    const link = safeLinkInput(capture.content);
+    const contentKind = link
+      ? link.userContext || link.urlCount > 1
+        ? 'mixed'
+        : 'link'
+      : 'text';
     const note = await client.query<{ id: string }>(
       `INSERT INTO notes (
          id, user_id, client_id, title, content, source,
-         record_type, content_kind, created_at, updated_at
+         record_type, content_kind, source_url, user_context,
+         link_status, created_at, updated_at
        ) VALUES (
          $1, $2, $3, $4, $5, 'wechat',
-         'capture', 'text', $6, $6
+         'capture', $6, $7, $8, $9, $10, $10
        )
        ON CONFLICT (user_id, client_id)
        DO UPDATE SET client_id = EXCLUDED.client_id
@@ -422,6 +431,10 @@ async function persistCapture(
         clientId,
         noteTitle(capture.content),
         capture.content,
+        contentKind,
+        link?.url ?? null,
+        link?.userContext || null,
+        link ? 'pending' : null,
         capture.createdAt,
       ],
     );
@@ -510,6 +523,18 @@ function validPollingTimeout(value: number | undefined, fallback: number): numbe
 
 function noteTitle(content: string): string {
   return content.split(/\r?\n/, 1)[0]?.slice(0, 80) || '微信记录';
+}
+
+function safeLinkInput(
+  content: string,
+): { url: string; userContext: string; urlCount: number } | null {
+  const parsed = parseLinkInput(content);
+  if (!parsed) return null;
+  try {
+    return { ...parsed, url: validatePublicLinkUrl(parsed.url) };
+  } catch {
+    return null;
+  }
 }
 
 function normalizeErrorCode(error: unknown): string {
