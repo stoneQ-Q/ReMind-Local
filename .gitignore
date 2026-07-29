@@ -6,6 +6,7 @@ server/.wrangler/
 server/.dev.vars
 gateway/.env
 cloud/.env
+cloud/backups/
 
 # Expo
 .expo/

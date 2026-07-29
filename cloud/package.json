@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "migrate": "node dist/migrate.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

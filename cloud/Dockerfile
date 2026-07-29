@@ -5,6 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
+COPY db/migrations ./migrations
 RUN npm run build
 
 FROM node:24-alpine AS runtime
@@ -14,6 +15,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/migrations ./migrations
 
 USER node
 CMD ["node", "dist/api.js"]
