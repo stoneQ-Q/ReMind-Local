@@ -2,6 +2,12 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { createImportedNote } from './database';
+import {
+  buildReMindApiUrl,
+  credentialScope,
+  getReMindServiceConfig,
+  type ReMindServiceConfig,
+} from './service-contract';
 
 const DEVICE_ID_KEY = 'remind.wechat.device-id';
 const DEVICE_SECRET_KEY = 'remind.wechat.device-secret';
@@ -55,14 +61,14 @@ type InboxMessage = {
 };
 
 export function isWechatApiConfigured(): boolean {
-  return Boolean(apiBaseUrl());
+  return getReMindServiceConfig() !== null;
 }
 
 export async function getWechatConnection(
   createIfMissing: boolean,
 ): Promise<WechatConnection> {
-  const baseUrl = apiBaseUrl();
-  if (!baseUrl) {
+  const service = getReMindServiceConfig();
+  if (!service) {
     return {
       configured: false,
       bound: false,
@@ -76,9 +82,9 @@ export async function getWechatConnection(
     };
   }
 
-  let device = await getStoredDevice(baseUrl);
+  let device = await getStoredDevice(service);
   if (!device && createIfMissing) {
-    device = await registerDevice(baseUrl);
+    device = await registerDevice(service);
   }
   if (!device) {
     return {
@@ -95,7 +101,7 @@ export async function getWechatConnection(
   }
 
   const response = await apiRequest(
-    `${baseUrl}/api/devices/${encodeURIComponent(device.deviceId)}/status`,
+    deviceApiUrl(service, device.deviceId, 'status'),
     {
       headers: { Authorization: `Bearer ${device.deviceSecret}` },
     },
@@ -113,9 +119,7 @@ export async function getWechatConnection(
   };
   if (!status.bound && Date.parse(status.expiresAt) <= Date.now()) {
     const refresh = await apiRequest(
-      `${baseUrl}/api/devices/${encodeURIComponent(
-        device.deviceId,
-      )}/binding-code`,
+      deviceApiUrl(service, device.deviceId, 'binding-code'),
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${device.deviceSecret}` },
@@ -144,12 +148,12 @@ export async function getWechatConnection(
 export async function updateWechatReplyMode(
   replyMode: WechatReplyMode,
 ): Promise<void> {
-  const baseUrl = apiBaseUrl();
-  const device = baseUrl ? await getStoredDevice(baseUrl) : null;
-  if (!baseUrl || !device) throw new Error('WeChat is not connected');
+  const service = getReMindServiceConfig();
+  const device = service ? await getStoredDevice(service) : null;
+  if (!service || !device) throw new Error('WeChat is not connected');
 
   const response = await apiRequest(
-    `${baseUrl}/api/devices/${encodeURIComponent(device.deviceId)}/reply-mode`,
+    deviceApiUrl(service, device.deviceId, 'reply-mode'),
     {
       method: 'PUT',
       headers: {
@@ -167,14 +171,14 @@ export async function requestAuthenticatedDeviceApi(
   init: RequestInit = {},
   timeoutMs = 8_000,
 ): Promise<Response> {
-  const baseUrl = apiBaseUrl();
-  if (!baseUrl) throw new Error('ReMind service is not configured');
-  let device = await getStoredDevice(baseUrl);
-  if (!device) device = await registerDevice(baseUrl);
+  const service = getReMindServiceConfig();
+  if (!service) throw new Error('ReMind service is not configured');
+  let device = await getStoredDevice(service);
+  if (!device) device = await registerDevice(service);
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${device.deviceSecret}`);
   return apiRequest(
-    `${baseUrl}/api/devices/${encodeURIComponent(device.deviceId)}/${action}`,
+    deviceApiUrl(service, device.deviceId, action),
     { ...init, headers },
     timeoutMs,
   );
@@ -183,12 +187,12 @@ export async function requestAuthenticatedDeviceApi(
 export async function syncWechatInbox(
   db: SQLiteDatabase,
 ): Promise<number> {
-  const baseUrl = apiBaseUrl();
-  const device = baseUrl ? await getStoredDevice(baseUrl) : null;
-  if (!baseUrl || !device) return 0;
+  const service = getReMindServiceConfig();
+  const device = service ? await getStoredDevice(service) : null;
+  if (!service || !device) return 0;
 
   const response = await apiRequest(
-    `${baseUrl}/api/devices/${encodeURIComponent(device.deviceId)}/inbox`,
+    deviceApiUrl(service, device.deviceId, 'inbox'),
     {
       headers: { Authorization: `Bearer ${device.deviceSecret}` },
     },
@@ -217,7 +221,7 @@ export async function syncWechatInbox(
 
   if (acknowledgedIds.length) {
     const acknowledge = await apiRequest(
-      `${baseUrl}/api/devices/${encodeURIComponent(device.deviceId)}/ack`,
+      deviceApiUrl(service, device.deviceId, 'ack'),
       {
         method: 'POST',
         headers: {
@@ -267,8 +271,10 @@ export async function approveWechatProcessingCost(
   if (!response.ok) throw new Error('Unable to approve cloud transcription cost');
 }
 
-async function registerDevice(baseUrl: string): Promise<StoredDevice> {
-  const response = await apiRequest(`${baseUrl}/api/devices`, {
+async function registerDevice(
+  service: ReMindServiceConfig,
+): Promise<StoredDevice> {
+  const response = await apiRequest(buildReMindApiUrl(service, 'devices'), {
     method: 'POST',
   });
   if (!response.ok) throw new Error('Unable to register this device');
@@ -276,10 +282,11 @@ async function registerDevice(baseUrl: string): Promise<StoredDevice> {
     deviceId: string;
     deviceSecret: string;
   };
+  const scope = credentialScope(service);
   await Promise.all([
-    SecureStore.setItemAsync(scopedKey(DEVICE_ID_KEY, baseUrl), payload.deviceId),
+    SecureStore.setItemAsync(scopedKey(DEVICE_ID_KEY, scope), payload.deviceId),
     SecureStore.setItemAsync(
-      scopedKey(DEVICE_SECRET_KEY, baseUrl),
+      scopedKey(DEVICE_SECRET_KEY, scope),
       payload.deviceSecret,
     ),
   ]);
@@ -289,10 +296,13 @@ async function registerDevice(baseUrl: string): Promise<StoredDevice> {
   };
 }
 
-async function getStoredDevice(baseUrl: string): Promise<StoredDevice | null> {
+async function getStoredDevice(
+  service: ReMindServiceConfig,
+): Promise<StoredDevice | null> {
+  const scope = credentialScope(service);
   const [deviceId, deviceSecret] = await Promise.all([
-    SecureStore.getItemAsync(scopedKey(DEVICE_ID_KEY, baseUrl)),
-    SecureStore.getItemAsync(scopedKey(DEVICE_SECRET_KEY, baseUrl)),
+    SecureStore.getItemAsync(scopedKey(DEVICE_ID_KEY, scope)),
+    SecureStore.getItemAsync(scopedKey(DEVICE_SECRET_KEY, scope)),
   ]);
   return deviceId && deviceSecret ? { deviceId, deviceSecret } : null;
 }
@@ -319,6 +329,13 @@ async function apiRequest(
   }
 }
 
-function apiBaseUrl(): string {
-  return (process.env.EXPO_PUBLIC_REMIND_API_URL ?? '').replace(/\/+$/, '');
+function deviceApiUrl(
+  service: ReMindServiceConfig,
+  deviceId: string,
+  action: string,
+): string {
+  return buildReMindApiUrl(
+    service,
+    `devices/${encodeURIComponent(deviceId)}/${action}`,
+  );
 }

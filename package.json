@@ -19,7 +19,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^4.1.10"
   },
   "scripts": {
     "start": "expo start",
@@ -31,6 +32,7 @@
     "services:restart": "node scripts/remind-services.mjs restart",
     "services:logs": "node scripts/remind-services.mjs logs",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "check": "npm run typecheck && npx expo export --platform ios --output-dir dist"
   },
   "private": true
