@@ -1,9 +1,10 @@
 import type { Pool, PoolClient } from 'pg';
 
-import { releaseJobCost } from './billing.js';
+import { releaseJobCost, settleClaimedJobCost } from './billing.js';
 
 const DEFAULT_LEASE_SECONDS = 30;
 const DEFAULT_RETRY_BASE_MS = 1_000;
+const JOB_OUTCOME = Symbol('job-outcome');
 
 export type ClaimedJob = {
   id: string;
@@ -23,6 +24,24 @@ export type JobHandler = (
 ) => Promise<unknown>;
 
 export type JobHandlers = ReadonlyMap<string, JobHandler>;
+
+type JobOutcome = {
+  readonly [JOB_OUTCOME]: true;
+  readonly result: unknown;
+  readonly actualCostMicros: bigint;
+};
+
+export function jobOutcome(
+  result: unknown,
+  actualCostMicros: bigint,
+): JobOutcome {
+  if (actualCostMicros < 0n) throw jobError('job_actual_cost_invalid');
+  return {
+    [JOB_OUTCOME]: true,
+    result,
+    actualCostMicros,
+  };
+}
 
 export type JobSnapshot = {
   id: string;
@@ -126,6 +145,19 @@ export async function claimNextJob(
            AND job.cancel_requested_at IS NULL
            AND job.available_at <= now()
            AND job.type = ANY($1::text[])
+           AND (
+             job.type NOT IN ('ai.text', 'ai.image', 'ai.video', 'ai.transcription')
+             OR (
+               job.status = 'reserved'
+               AND job.reserved_cost_micros > 0
+             )
+             OR (
+               job.status = 'queued'
+               AND job.estimated_cost_micros = 0
+               AND job.reserved_cost_micros = 0
+               AND job.confirmed_at IS NOT NULL
+             )
+           )
          ORDER BY job.user_id, job.available_at, job.created_at, job.id
        )
        SELECT job.id, job.user_id
@@ -429,26 +461,53 @@ async function completeJob(
   job: ClaimedJob,
   result: unknown,
 ): Promise<void> {
+  const outcome = isJobOutcome(result) ? result : null;
+  const reservedCostMicros = BigInt(job.reservedCostMicros);
+  if (reservedCostMicros > 0n && !outcome) {
+    throw jobError('job_actual_cost_missing');
+  }
+  const actualCostMicros = outcome?.actualCostMicros ?? 0n;
+  if (actualCostMicros > reservedCostMicros) {
+    throw jobError('actual_cost_exceeds_reservation');
+  }
+  const serializedResult = JSON.stringify(outcome?.result ?? result ?? null);
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (reservedCostMicros > 0n) {
+      await settleClaimedJobCost(client, {
+        userId: job.userId,
+        jobId: job.id,
+        leaseToken: job.leaseToken,
+        actualCostMicros,
+        idempotencyKey: `worker-settle:${job.id}`,
+      });
+    }
     const completed = await client.query(
       `UPDATE jobs
        SET status = 'succeeded',
            result_json = $1::jsonb,
            error_code = NULL,
-           actual_cost_micros = COALESCE(actual_cost_micros, 0),
+           actual_cost_micros = $2,
+           reserved_cost_micros = 0,
            finished_at = now(),
            lease_token = NULL,
            lease_expires_at = NULL,
            worker_id = NULL,
            last_heartbeat_at = NULL,
            updated_at = now()
-       WHERE user_id = $2 AND id = $3
+       WHERE user_id = $3 AND id = $4
          AND status = 'running'
-         AND lease_token = $4
+         AND lease_token = $5
          AND cancel_requested_at IS NULL`,
-      [JSON.stringify(result ?? null), job.userId, job.id, job.leaseToken],
+      [
+        serializedResult,
+        actualCostMicros.toString(),
+        job.userId,
+        job.id,
+        job.leaseToken,
+      ],
     );
     if (completed.rowCount !== 1) {
       throw new Error('job_lease_lost');
@@ -616,6 +675,21 @@ function normalizeErrorCode(value: string): string {
     .replace(/[^a-z0-9_.-]+/g, '_')
     .slice(0, 80);
   return normalized || 'job_failed';
+}
+
+function isJobOutcome(value: unknown): value is JobOutcome {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    JOB_OUTCOME in value &&
+    (value as JobOutcome)[JOB_OUTCOME] === true
+  );
+}
+
+function jobError(code: string): Error {
+  const error = new Error(code);
+  error.name = code;
+  return error;
 }
 
 function rejectWhenAborted(signal: AbortSignal): Promise<never> {

@@ -6,6 +6,7 @@ import { creditBalance, reserveJobCost } from '../dist/billing.js';
 import {
   claimNextJob,
   getUserJob,
+  jobOutcome,
   processNextCancellation,
   recoverNextExpiredLease,
   requestJobCancellation,
@@ -20,6 +21,74 @@ const pool = new pg.Pool({ connectionString: databaseUrl });
 try {
   const firstUser = await createUser();
   const secondUser = await createUser();
+
+  let unauthorizedCalls = 0;
+  const rawAiJob = await createJob(
+    firstUser,
+    'ai.video',
+    'raw-ai-video',
+    { prompt: 'must not run before authorization' },
+  );
+  const unreservedPaidAiJob = await createJob(
+    secondUser,
+    'ai.image',
+    'unreserved-paid-ai-image',
+    { prompt: 'must not run without a reservation' },
+  );
+  await pool.query(
+    `UPDATE jobs
+     SET confirmed_at = now(), estimated_cost_micros = 1000000
+     WHERE id = $1`,
+    [unreservedPaidAiJob],
+  );
+  assert.equal(
+    await runNextJob(
+      pool,
+      'unauthorized-ai-worker',
+      new Map([
+        ['ai.video', async () => {
+          unauthorizedCalls += 1;
+          return { unauthorized: true };
+        }],
+        ['ai.image', async () => {
+          unauthorizedCalls += 1;
+          return { unauthorized: true };
+        }],
+      ]),
+    ),
+    false,
+  );
+  assert.equal(unauthorizedCalls, 0);
+  assert.equal((await getUserJob(pool, firstUser, rawAiJob)).status, 'queued');
+  assert.equal(
+    (await getUserJob(pool, secondUser, unreservedPaidAiJob)).status,
+    'queued',
+  );
+
+  const byokAiJob = await createJob(
+    firstUser,
+    'ai.transcription',
+    'authorized-byok-ai',
+    { audio: 'user-owned-provider-key' },
+  );
+  await authorizeJob(byokAiJob);
+  let byokCalls = 0;
+  await runNextJob(
+    pool,
+    'byok-ai-worker',
+    new Map([
+      ['ai.transcription', async () => {
+        byokCalls += 1;
+        return { text: 'authorized zero-cost result' };
+      }],
+    ]),
+  );
+  assert.equal(byokCalls, 1);
+  assert.equal((await getUserJob(pool, firstUser, byokAiJob)).status, 'succeeded');
+  await pool.query(
+    'DELETE FROM worker_user_fairness WHERE user_id = ANY($1::uuid[])',
+    [[firstUser, secondUser]],
+  );
 
   const executionOrder = [];
   const successHandlers = new Map([
@@ -281,8 +350,139 @@ try {
     1,
   );
 
+  const paidSuccessJob = await createJob(
+    firstUser,
+    'ai.video',
+    'paid-success',
+    { prompt: 'settle atomically' },
+    { maxAttempts: 1 },
+  );
+  await authorizeJob(paidSuccessJob);
+  await reserveJobCost(
+    pool,
+    firstUser,
+    paidSuccessJob,
+    1_000_000n,
+    'reserve:paid-success',
+  );
+  await runNextJob(
+    pool,
+    'paid-success-worker',
+    new Map([
+      [
+        'ai.video',
+        async () => jobOutcome({ assetId: 'video-1' }, 600_000n),
+      ],
+    ]),
+  );
+  const paidSuccess = await pool.query(
+    `SELECT status, result_json, actual_cost_micros, reserved_cost_micros
+     FROM jobs WHERE id = $1`,
+    [paidSuccessJob],
+  );
+  assert.deepEqual(paidSuccess.rows[0], {
+    status: 'succeeded',
+    result_json: { assetId: 'video-1' },
+    actual_cost_micros: '600000',
+    reserved_cost_micros: '0',
+  });
+  const paidSuccessAccount = await pool.query(
+    `SELECT balance_micros, reserved_micros
+     FROM billing_accounts WHERE user_id = $1`,
+    [firstUser],
+  );
+  assert.deepEqual(paidSuccessAccount.rows[0], {
+    balance_micros: '4400000',
+    reserved_micros: '0',
+  });
+  const paidSuccessLedger = await pool.query(
+    `SELECT kind, amount_micros
+     FROM ledger_entries
+     WHERE user_id = $1 AND job_id = $2
+       AND kind IN ('settle', 'release')
+     ORDER BY kind`,
+    [firstUser, paidSuccessJob],
+  );
+  assert.deepEqual(paidSuccessLedger.rows, [
+    { kind: 'settle', amount_micros: '600000' },
+    { kind: 'release', amount_micros: '400000' },
+  ]);
+
+  const unsafePaidCases = [
+    {
+      type: 'ai.image',
+      key: 'paid-missing-actual',
+      handler: async () => ({ assetId: 'missing-cost' }),
+      expectedError: 'job_actual_cost_missing',
+    },
+    {
+      type: 'ai.text',
+      key: 'paid-cost-overrun',
+      handler: async () => jobOutcome({ text: 'too expensive' }, 1_100_000n),
+      expectedError: 'actual_cost_exceeds_reservation',
+    },
+    {
+      type: 'ai.video',
+      key: 'paid-unserializable-result',
+      handler: async () => jobOutcome({ invalidJson: 1n }, 600_000n),
+      expectedError: 'typeerror',
+    },
+  ];
+  for (const unsafeCase of unsafePaidCases) {
+    const unsafeJob = await createJob(
+      firstUser,
+      unsafeCase.type,
+      unsafeCase.key,
+      { prompt: unsafeCase.key },
+      { maxAttempts: 1 },
+    );
+    await authorizeJob(unsafeJob);
+    await reserveJobCost(
+      pool,
+      firstUser,
+      unsafeJob,
+      1_000_000n,
+      `reserve:${unsafeCase.key}`,
+    );
+    await runNextJob(
+      pool,
+      `worker:${unsafeCase.key}`,
+      new Map([[unsafeCase.type, unsafeCase.handler]]),
+      { retryBaseMs: 0 },
+    );
+    const unsafeState = await pool.query(
+      `SELECT status, error_code, actual_cost_micros, reserved_cost_micros
+       FROM jobs WHERE id = $1`,
+      [unsafeJob],
+    );
+    assert.deepEqual(unsafeState.rows[0], {
+      status: 'failed',
+      error_code: unsafeCase.expectedError,
+      actual_cost_micros: null,
+      reserved_cost_micros: '0',
+    });
+    const unsafeLedger = await pool.query(
+      `SELECT
+         count(*) FILTER (WHERE kind = 'settle')::int AS settles,
+         count(*) FILTER (WHERE kind = 'release')::int AS releases
+       FROM ledger_entries
+       WHERE user_id = $1 AND job_id = $2`,
+      [firstUser, unsafeJob],
+    );
+    assert.deepEqual(unsafeLedger.rows[0], { settles: 0, releases: 1 });
+  }
+  const finalPaidAccount = await pool.query(
+    `SELECT balance_micros, reserved_micros
+     FROM billing_accounts WHERE user_id = $1`,
+    [firstUser],
+  );
+  assert.deepEqual(finalPaidAccount.rows[0], {
+    balance_micros: '4400000',
+    reserved_micros: '0',
+  });
+
   console.log(
-    'job executor smoke test passed: per-user fairness, single claim, retry, timeout, queued/running cancellation, lease recovery, tenant isolation, input preservation, and final reservation release',
+    'job executor smoke test passed: AI authorization gate, BYOK execution, per-user fairness, single claim, retry, timeout, cancellation, lease recovery, tenant isolation, atomic paid settlement, and failure reservation release',
   );
 } finally {
   await pool.end();
@@ -318,6 +518,10 @@ async function createJob(
     ],
   );
   return result.rows[0].id;
+}
+
+async function authorizeJob(jobId) {
+  await pool.query('UPDATE jobs SET confirmed_at = now() WHERE id = $1', [jobId]);
 }
 
 function wait(durationMs) {

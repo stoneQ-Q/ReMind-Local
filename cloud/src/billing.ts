@@ -65,6 +65,7 @@ type JobRow = {
   id: string;
   user_id: string;
   status: 'queued' | 'reserved' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  lease_token: string | null;
   estimated_cost_micros: string;
   reserved_cost_micros: string;
   provider: string | null;
@@ -300,62 +301,36 @@ export async function settleJobCost(
     );
     if (existing) return accountSnapshot(await requireAccount(client, userId));
 
-    const account = await requireAccount(client, userId);
-    const job = await requireJob(client, userId, jobId);
-    if (job.status !== 'reserved' && job.status !== 'running') {
-      throw new BillingError('job_not_settleable');
-    }
-    const jobReserved = BigInt(job.reserved_cost_micros);
-    if (actualCostMicros > jobReserved) {
-      throw new BillingError('actual_cost_exceeds_reservation');
-    }
-
-    let updated = await updateAccount(
-      client,
+    const updated = await applyJobSettlement(client, {
       userId,
-      -actualCostMicros,
-      -actualCostMicros,
-    );
-    await appendLedgerEntry(client, {
-      userId,
-      accountId: account.id,
       jobId,
-      kind: 'settle',
-      amountMicros: actualCostMicros,
-      balanceDeltaMicros: -actualCostMicros,
-      reservedDeltaMicros: -actualCostMicros,
-      account: updated,
-      idempotencyKey: settleKey,
-      metadata: {},
+      actualCostMicros,
+      idempotencyKey,
+      finalizeJob: true,
     });
-
-    const surplus = jobReserved - actualCostMicros;
-    if (surplus > 0n) {
-      updated = await updateAccount(client, userId, 0n, -surplus);
-      await appendLedgerEntry(client, {
-        userId,
-        accountId: account.id,
-        jobId,
-        kind: 'release',
-        amountMicros: surplus,
-        balanceDeltaMicros: 0n,
-        reservedDeltaMicros: -surplus,
-        account: updated,
-        idempotencyKey: `${idempotencyKey}:surplus`,
-        metadata: { reason: 'unused_reservation' },
-      });
-    }
-    await client.query(
-      `UPDATE jobs
-       SET status = 'succeeded',
-           actual_cost_micros = $1,
-           reserved_cost_micros = 0,
-           finished_at = now(),
-           updated_at = now()
-       WHERE user_id = $2 AND id = $3`,
-      [actualCostMicros.toString(), userId, jobId],
-    );
     return accountSnapshot(updated);
+  });
+}
+
+export async function settleClaimedJobCost(
+  client: PoolClient,
+  input: {
+    userId: string;
+    jobId: string;
+    leaseToken: string;
+    actualCostMicros: bigint;
+    idempotencyKey: string;
+  },
+): Promise<void> {
+  // The caller must already own an open transaction so result persistence,
+  // attempt completion, and billing changes commit or roll back together.
+  requireNonnegativeAmount(input.actualCostMicros);
+  await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [
+    BILLING_GLOBAL_LOCK_ID,
+  ]);
+  await applyJobSettlement(client, {
+    ...input,
+    finalizeJob: false,
   });
 }
 
@@ -458,7 +433,7 @@ async function requireJob(
   jobId: string,
 ): Promise<JobRow> {
   const result = await client.query<JobRow>(
-    `SELECT id, user_id, status, estimated_cost_micros,
+    `SELECT id, user_id, status, lease_token, estimated_cost_micros,
             reserved_cost_micros, provider, confirmation_required,
             confirmed_at, quote_expires_at
      FROM jobs
@@ -469,6 +444,86 @@ async function requireJob(
   const row = result.rows[0];
   if (!row) throw new BillingError('job_not_found');
   return row;
+}
+
+async function applyJobSettlement(
+  client: PoolClient,
+  input: {
+    userId: string;
+    jobId: string;
+    actualCostMicros: bigint;
+    idempotencyKey: string;
+    finalizeJob: boolean;
+    leaseToken?: string;
+  },
+): Promise<AccountRow> {
+  const account = await requireAccount(client, input.userId);
+  const job = await requireJob(client, input.userId, input.jobId);
+  if (
+    input.finalizeJob
+      ? job.status !== 'reserved' && job.status !== 'running'
+      : job.status !== 'running' || job.lease_token !== input.leaseToken
+  ) {
+    throw new BillingError('job_not_settleable');
+  }
+
+  const jobReserved = BigInt(job.reserved_cost_micros);
+  if (input.actualCostMicros > jobReserved) {
+    throw new BillingError('actual_cost_exceeds_reservation');
+  }
+
+  let updated = await updateAccount(
+    client,
+    input.userId,
+    -input.actualCostMicros,
+    -input.actualCostMicros,
+  );
+  await appendLedgerEntry(client, {
+    userId: input.userId,
+    accountId: account.id,
+    jobId: input.jobId,
+    kind: 'settle',
+    amountMicros: input.actualCostMicros,
+    balanceDeltaMicros: -input.actualCostMicros,
+    reservedDeltaMicros: -input.actualCostMicros,
+    account: updated,
+    idempotencyKey: `${input.idempotencyKey}:settle`,
+    metadata: {},
+  });
+
+  const surplus = jobReserved - input.actualCostMicros;
+  if (surplus > 0n) {
+    updated = await updateAccount(client, input.userId, 0n, -surplus);
+    await appendLedgerEntry(client, {
+      userId: input.userId,
+      accountId: account.id,
+      jobId: input.jobId,
+      kind: 'release',
+      amountMicros: surplus,
+      balanceDeltaMicros: 0n,
+      reservedDeltaMicros: -surplus,
+      account: updated,
+      idempotencyKey: `${input.idempotencyKey}:surplus`,
+      metadata: { reason: 'unused_reservation' },
+    });
+  }
+
+  await client.query(
+    `UPDATE jobs
+     SET status = CASE WHEN $1 THEN 'succeeded' ELSE status END,
+         actual_cost_micros = $2,
+         reserved_cost_micros = 0,
+         finished_at = CASE WHEN $1 THEN now() ELSE finished_at END,
+         updated_at = now()
+     WHERE user_id = $3 AND id = $4`,
+    [
+      input.finalizeJob,
+      input.actualCostMicros.toString(),
+      input.userId,
+      input.jobId,
+    ],
+  );
+  return updated;
 }
 
 async function requirePolicy(client: PoolClient): Promise<PolicyRow> {
