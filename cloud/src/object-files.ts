@@ -76,7 +76,7 @@ export async function saveObjectFile(
   },
 ): Promise<StoredObjectFile> {
   requireUuid(input.userId);
-  const media = mediaPolicy(input.contentType);
+  const media = objectFilePolicy(input.contentType);
   if (
     input.content.byteLength === 0 ||
     input.content.byteLength > media.maximumBytes
@@ -91,7 +91,7 @@ export async function saveObjectFile(
   const objectKey =
     `users/${input.userId}/${input.purpose}/${fileId}.${media.extension}`;
   const sha256Hex = createHash('sha256').update(input.content).digest('hex');
-  const originalName = normalizeOriginalName(input.originalName);
+  const originalName = normalizeObjectOriginalName(input.originalName);
   const inserted = await pool.query<{ expires_at: Date | null }>(
     `INSERT INTO files (
        id, user_id, object_key, content_type, size_bytes, sha256_hex,
@@ -340,6 +340,15 @@ async function claimCleanup(
            (
              status = 'pending'
              AND created_at <= now() - interval '10 minutes'
+             AND NOT EXISTS (
+               SELECT 1
+               FROM file_uploads AS upload
+               WHERE upload.user_id = files.user_id
+                 AND upload.file_id = files.id
+                 AND upload.status IN (
+                   'pending', 'uploading', 'completing', 'cancelling'
+                 )
+             )
            )
            OR
            (
@@ -403,7 +412,7 @@ async function claimCleanup(
   }
 }
 
-function mediaPolicy(contentTypeValue: string): {
+export function objectFilePolicy(contentTypeValue: string): {
   contentType: string;
   kind: MediaKind;
   extension: string;
@@ -447,7 +456,9 @@ function validTemporaryTtl(value: number | undefined): number {
   return ttl;
 }
 
-function normalizeOriginalName(value: string | undefined): string | null {
+export function normalizeObjectOriginalName(
+  value: string | undefined,
+): string | null {
   if (!value) return null;
   const normalized = value
     .replace(/[\u0000-\u001F\u007F/\\]+/g, '_')

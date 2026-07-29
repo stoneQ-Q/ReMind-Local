@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import pg from 'pg';
 
@@ -13,6 +16,7 @@ if (!databaseUrl) throw new Error('REMIND_BILLING_TEST_DATABASE_URL is required'
 const port = 18_000 + Math.floor(Math.random() * 1_000);
 const baseUrl = `http://127.0.0.1:${port}`;
 const pool = new pg.Pool({ connectionString: databaseUrl });
+const objectDirectory = await mkdtemp(join(tmpdir(), 'remind-upload-api-'));
 const api = spawn(process.execPath, ['dist/api.js'], {
   stdio: ['ignore', 'pipe', 'pipe'],
   env: {
@@ -22,6 +26,7 @@ const api = spawn(process.execPath, ['dist/api.js'], {
     REMIND_CREDENTIAL_KEY_VERSION: 'api-smoke-v1',
     REMIND_CREDENTIAL_KEY_BASE64: randomBytes(32).toString('base64'),
     REMIND_MEDIA_PROVIDER: 'remote',
+    REMIND_OBJECT_STORE_ROOT: objectDirectory,
     REMIND_PRICE_ZHIPU_VISION_PER_IMAGE_MICROS: '1200000',
     REMIND_PRICE_ZHIPU_ASR_PER_MINUTE_MICROS: '1200000',
     REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS: '2000000',
@@ -44,6 +49,16 @@ try {
   assert.equal(registration.status, 201);
   const userId = registration.body.userId;
   const token = registration.body.accessToken;
+  const otherRegistration = await jsonRequest(
+    'POST',
+    '/api/v1/auth/register',
+    null,
+    {
+      platform: 'ios',
+      displayName: '其他上传用户',
+      appVersion: '0.0.0-test',
+    },
+  );
   const settings = await jsonRequest(
     'PUT',
     '/api/v1/ai/settings',
@@ -53,7 +68,65 @@ try {
   assert.equal(settings.status, 200);
   await creditBalance(pool, userId, 5_000_000n, 'managed-api-credit');
 
-  const image = await insertSourceFile(userId, 'image', 'image/png');
+  const imageContent = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from('private image uploaded through API'),
+  ]);
+  const imageDigest = createHash('sha256')
+    .update(imageContent)
+    .digest('hex');
+  const imageUpload = await jsonRequest(
+    'POST',
+    '/api/v1/files/uploads',
+    token,
+    {
+      contentType: 'image/png',
+      sizeBytes: imageContent.length,
+      sha256Hex: imageDigest,
+      idempotencyKey: 'managed-api-image-upload',
+      originalName: '../private/image.png',
+    },
+  );
+  assert.equal(imageUpload.status, 201);
+  assert.equal(imageUpload.body.status, 'pending');
+  const otherUsersUpload = await jsonRequest(
+    'GET',
+    `/api/v1/files/uploads/${imageUpload.body.id}`,
+    otherRegistration.body.accessToken,
+  );
+  assert.equal(otherUsersUpload.status, 404);
+  const firstChunk = imageContent.subarray(0, 12);
+  const firstChunkResult = await uploadChunk(
+    imageUpload.body.id,
+    token,
+    0,
+    firstChunk,
+  );
+  assert.equal(firstChunkResult.status, 200);
+  assert.equal(firstChunkResult.body.uploadedSizeBytes, firstChunk.length);
+  const wrongOffset = await uploadChunk(
+    imageUpload.body.id,
+    token,
+    0,
+    imageContent.subarray(12),
+  );
+  assert.equal(wrongOffset.status, 409);
+  assert.equal(wrongOffset.body.error, 'upload_offset_mismatch');
+  const secondChunkResult = await uploadChunk(
+    imageUpload.body.id,
+    token,
+    firstChunk.length,
+    imageContent.subarray(firstChunk.length),
+  );
+  assert.equal(secondChunkResult.status, 200);
+  const completedUpload = await jsonRequest(
+    'POST',
+    `/api/v1/files/uploads/${imageUpload.body.id}/complete`,
+    token,
+  );
+  assert.equal(completedUpload.status, 200);
+  assert.equal(completedUpload.body.status, 'succeeded');
+  const image = completedUpload.body.fileId;
   const audio = await insertSourceFile(userId, 'audio', 'audio/mpeg');
   const created = await jsonRequest(
     'POST',
@@ -109,7 +182,7 @@ try {
   assert.match(await ensureNextMediaProcessingJob(pool), /^finalized:/);
 
   console.log(
-    'managed media API smoke test passed: remote-mode quote creation, one confirmation/reservation, request lookup, and duration validation without platform keys in the API process',
+    'managed media API smoke test passed: tenant-isolated resumable upload, offset recovery, integrity completion, remote-mode quote creation, one confirmation/reservation, request lookup, and duration validation without platform keys in the API process',
   );
 } finally {
   if (api.exitCode === null) {
@@ -117,6 +190,7 @@ try {
     await new Promise((resolve) => api.once('exit', resolve));
   }
   await pool.end();
+  await rm(objectDirectory, { recursive: true, force: true });
 }
 
 async function insertSourceFile(ownerId, mediaKind, contentType) {
@@ -144,6 +218,25 @@ async function jsonRequest(method, path, token, body) {
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
+  return {
+    status: response.status,
+    body: await response.json(),
+  };
+}
+
+async function uploadChunk(uploadId, token, offset, content) {
+  const response = await fetch(
+    `${baseUrl}/api/v1/files/uploads/${uploadId}/chunks`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/octet-stream',
+        'Upload-Offset': String(offset),
+      },
+      body: content,
+    },
+  );
   return {
     status: response.status,
     body: await response.json(),

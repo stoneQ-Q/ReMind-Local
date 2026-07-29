@@ -27,6 +27,14 @@ import { apiPort, mediaProviderMode } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 import {
+  appendFileUploadChunk,
+  cancelFileUpload,
+  completeFileUpload,
+  createFileUpload,
+  FileUploadError,
+  getUserFileUpload,
+} from './file-uploads.js';
+import {
   confirmAndReserveManagedJobQuote,
   getManagedJobQuote,
   JobQuoteError,
@@ -44,15 +52,18 @@ import {
   managedMediaPriceCatalogFromEnvironment,
   ManagedMediaPricingUnavailableError,
 } from './media-pricing.js';
+import { objectStoreFromEnvironment } from './object-store.js';
 
 const port = apiPort();
 const credentialCipher = credentialCipherFromEnvironment();
+const objectStore = objectStoreFromEnvironment();
 const configuredMediaProvider = mediaProviderMode();
 const managedMediaPriceCatalog =
   configuredMediaProvider === 'remote'
     ? managedMediaPriceCatalogFromEnvironment()
     : null;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
+const MAX_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 const allowedPlatforms = new Set<DevicePlatform>([
   'android',
   'ios',
@@ -235,6 +246,168 @@ const server = createServer(async (request, response) => {
     const jobQuoteMatch = request.url?.match(
       /^\/api\/v1\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/quote$/i,
     );
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/files/uploads'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const body = await readJsonBody(request);
+      if (!isRecord(body)) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      const contentType =
+        typeof body.contentType === 'string' ? body.contentType : '';
+      const sizeBytes =
+        typeof body.sizeBytes === 'number' ? body.sizeBytes : Number.NaN;
+      const sha256Hex =
+        typeof body.sha256Hex === 'string' ? body.sha256Hex : '';
+      const idempotencyKey =
+        typeof body.idempotencyKey === 'string' ? body.idempotencyKey : '';
+      const originalName =
+        typeof body.originalName === 'string' ? body.originalName : undefined;
+      if (
+        !contentType ||
+        !Number.isSafeInteger(sizeBytes) ||
+        !sha256Hex ||
+        !idempotencyKey
+      ) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      sendJson(
+        response,
+        201,
+        await createFileUpload(database, objectStore, {
+          userId: account.userId,
+          contentType,
+          sizeBytes,
+          sha256Hex,
+          idempotencyKey,
+          originalName,
+        }),
+      );
+      return;
+    }
+
+    const fileUploadMatch = request.url?.match(
+      /^\/api\/v1\/files\/uploads\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/(chunks|complete))?$/i,
+    );
+    if (
+      fileUploadMatch &&
+      request.method === 'GET' &&
+      !fileUploadMatch[2]
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const upload = await getUserFileUpload(
+        database,
+        account.userId,
+        fileUploadMatch[1] ?? '',
+      );
+      if (!upload) {
+        sendJson(response, 404, { error: 'upload_not_found' });
+        return;
+      }
+      sendJson(response, 200, upload);
+      return;
+    }
+    if (
+      fileUploadMatch &&
+      fileUploadMatch[2] === 'chunks' &&
+      request.method === 'PUT'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const offset = parseUploadOffset(request.headers['upload-offset']);
+      if (offset === null) {
+        sendJson(response, 400, { error: 'invalid_upload_chunk' });
+        return;
+      }
+      const content = await readUploadChunk(request);
+      sendJson(
+        response,
+        200,
+        await appendFileUploadChunk(database, objectStore, {
+          userId: account.userId,
+          uploadId: fileUploadMatch[1] ?? '',
+          offset,
+          content,
+        }),
+      );
+      return;
+    }
+    if (
+      fileUploadMatch &&
+      fileUploadMatch[2] === 'complete' &&
+      request.method === 'POST'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      sendJson(
+        response,
+        200,
+        await completeFileUpload(
+          database,
+          objectStore,
+          account.userId,
+          fileUploadMatch[1] ?? '',
+        ),
+      );
+      return;
+    }
+    if (
+      fileUploadMatch &&
+      !fileUploadMatch[2] &&
+      request.method === 'DELETE'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const upload = await cancelFileUpload(
+        database,
+        objectStore,
+        account.userId,
+        fileUploadMatch[1] ?? '',
+      );
+      if (!upload) {
+        sendJson(response, 404, { error: 'upload_not_found' });
+        return;
+      }
+      sendJson(response, 202, upload);
+      return;
+    }
 
     if (
       request.method === 'POST' &&
@@ -591,6 +764,26 @@ const server = createServer(async (request, response) => {
       );
       return;
     }
+    if (error instanceof FileUploadError) {
+      sendJson(
+        response,
+        error.code === 'upload_not_found'
+          ? 404
+          : error.code === 'upload_offset_mismatch' ||
+              error.code === 'upload_idempotency_conflict' ||
+              error.code === 'upload_not_writable' ||
+              error.code === 'upload_not_completable' ||
+              error.code === 'upload_already_completed'
+            ? 409
+            : error.code === 'upload_strategy_unavailable'
+              ? 503
+              : error.code === 'upload_expired'
+                ? 410
+              : 400,
+        { error: error.code },
+      );
+      return;
+    }
     if (error instanceof ManagedMediaPricingUnavailableError) {
       sendJson(response, 503, { error: error.message });
       return;
@@ -647,6 +840,44 @@ async function readJsonBody(
   } catch {
     throw new RequestBodyError(400, 'invalid_json');
   }
+}
+
+async function readUploadChunk(
+  request: import('node:http').IncomingMessage,
+): Promise<Buffer> {
+  if (request.headers['content-type'] !== 'application/octet-stream') {
+    throw new RequestBodyError(415, 'content_type_required');
+  }
+  const declared = Number(request.headers['content-length']);
+  if (
+    !Number.isSafeInteger(declared) ||
+    declared < 1 ||
+    declared > MAX_UPLOAD_CHUNK_BYTES
+  ) {
+    throw new RequestBodyError(413, 'invalid_upload_chunk');
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.byteLength;
+    if (size > MAX_UPLOAD_CHUNK_BYTES || size > declared) {
+      throw new RequestBodyError(413, 'invalid_upload_chunk');
+    }
+    chunks.push(buffer);
+  }
+  if (size !== declared) {
+    throw new RequestBodyError(400, 'invalid_upload_chunk');
+  }
+  return Buffer.concat(chunks, size);
+}
+
+function parseUploadOffset(value: string | string[] | undefined): number | null {
+  if (typeof value !== 'string' || !/^(?:0|[1-9][0-9]{0,9})$/.test(value)) {
+    return null;
+  }
+  const offset = Number(value);
+  return Number.isSafeInteger(offset) ? offset : null;
 }
 
 function parseDeviceRegistration(body: unknown): DeviceRegistration | null {

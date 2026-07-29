@@ -8,6 +8,9 @@ import { mediaProviderMode, workerPollMs } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 import {
+  cleanupNextExpiredFileUpload,
+} from './file-uploads.js';
+import {
   processNextCancellation,
   recoverNextExpiredLease,
   runNextJob,
@@ -85,6 +88,7 @@ void run().finally(async () => {
 async function run(): Promise<void> {
   while (!stopping) {
     try {
+      await cleanupNextExpiredFileUpload(database, objectStore);
       await cleanupNextExpiredObject(database, objectStore);
       if (await ensureNextWechatPollJob(database)) continue;
       if (await ensureNextLinkParseJob(database)) continue;

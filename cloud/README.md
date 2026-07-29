@@ -82,7 +82,15 @@ API 提供 `GET /api/v1/jobs/:jobId` 查询当前用户自己的任务状态，�
 - Worker 每轮最多领取一个到期文件，使用短租约和删除尝试历史；进程崩溃、对象已不存在和临时删除失败均可安全重试；
 - 超过 10 分钟仍未完成入库的 `pending` 半成品会被回收，删除失败期间文件保持不可读取。
 
-对象存储方法目前只供可信内部代码和测试使用，尚未开放上传 API，也没有生成公开或长期签名地址。接口已预留 `local`、`tencent_cos` 和 `aliyun_oss` 三种供应商标识，但本地阶段只实现 `local`；部署腾讯云时替换适配器，不改变任务和数据库契约。
+本地开发上传使用短期会话和 4 MB 分块：
+
+- `POST /api/v1/files/uploads`：提交类型、总大小、SHA-256、幂等键和可选原文件名，创建 24 小时上传会话；
+- `PUT /api/v1/files/uploads/:uploadId/chunks`：使用 `application/octet-stream` 和 `Upload-Offset` 追加一个分块；
+- `GET /api/v1/files/uploads/:uploadId`：读取当前服务端偏移，网络中断后从该偏移继续；
+- `POST /api/v1/files/uploads/:uploadId/complete`：校验总大小和 SHA-256，原子发布为可读取源文件；
+- `DELETE /api/v1/files/uploads/:uploadId`：取消并清理未完成对象。
+
+上传完成前文件保持 `pending` 且无法被媒体任务读取；错误偏移、跨用户会话、超限分块和完整性不匹配都会被拒绝。过期会话由 Worker 使用短租约清理，清理失败可退避重试。接口与数据库已区分 `proxy_chunks` 和 `provider_multipart`，并定义了云厂商分片创建、分片签名、合并和终止边界；当前只实现本地 `proxy_chunks`，不会生成公开或长期签名地址。腾讯 COS／阿里 OSS 适配器后续可以切换为短期签名直传，不改变文件和媒体任务契约。
 
 PostgreSQL 备份只包含对象元数据，不包含 `remind-object-data` 中的二进制文件。私密测试部署必须使用 COS 的版本控制/生命周期和独立备份策略；不要把本地对象卷当作生产备份。
 
@@ -117,7 +125,7 @@ BYOK 模式开启后提供：
 - `GET /api/v1/media/requests/:requestId`：查询图片、音频或视频处理进度与结果；
 - `POST /api/v1/media/requests/:requestId/cancel`：取消排队或正在处理的请求。
 
-创建图片或音频请求必须已有智谱 Key；视频还必须同时已有 DeepSeek Key。接口只能引用当前用户、状态为 `ready` 的 `source` 文件，跨用户文件会返回不存在。当前尚未开放 App 文件上传入口，因此这些 API 先供云端内部联调，阶段 6 再与 App 上传界面连接。
+创建图片或音频请求必须已有智谱 Key；视频还必须同时已有 DeepSeek Key。接口只能引用当前用户、状态为 `ready` 的 `source` 文件，跨用户文件会返回不存在。云端上传 API 已可完成源文件准备，阶段 6 再与 App 文件选择、断点续传和进度界面连接。
 
 视频源文件会先复制到 Worker 的私有临时目录并校验大小与 SHA-256；FFmpeg 只读取这个本地路径，不接收远程 URL、Cookie 或鉴权头。音频以 28 秒为一段，单段不超过 5 MB、单个视频最多 800 段。分段分别保存为当前用户的临时对象，逐段转写后用时间戳合并，并全部进入到期清理。FFmpeg 只安装在 Worker 镜像，API 与迁移镜像不携带它。
 
