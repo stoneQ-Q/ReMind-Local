@@ -1,0 +1,23 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "remind-wechat",
+	"account_id": "39cabdde03e86b37adf1bf5694a72b6b",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-07-26",
+	"workers_dev": true,
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "remind-wechat",
+			"migrations_dir": "migrations",
+			"database_id": "ed97cc35-24ff-4345-8fe4-7e43f9e8cedd"
+		}
+	],
+	"secrets": {
+		"required": [
+			"WECHAT_TOKEN",
+			"DEEPSEEK_API_KEY",
+			"ZHIPU_API_KEY"
+		]
+	}
+}

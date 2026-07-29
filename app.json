@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "ReMind",
+    "slug": "remind",
+    "version": "1.0.2",
+    "orientation": "portrait",
+    "icon": "./assets/remind-app-icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "remind",
+    "backgroundColor": "#F6F4ED",
+    "ios": {
+      "supportsTablet": false,
+      "icon": "./assets/remind-app-icon.png",
+      "bundleIdentifier": "app.remind.notes"
+    },
+    "android": {
+      "package": "app.remind.notes",
+      "adaptiveIcon": {
+        "backgroundColor": "#F6F4ED",
+        "foregroundImage": "./assets/remind-android-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/remind-favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "168091dd-00bc-4ece-932b-22630a05c40d"
+      }
+    }
+  }
+}
