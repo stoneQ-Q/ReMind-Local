@@ -98,9 +98,9 @@ PostgreSQL 备份只包含对象元数据，不包含 `remind-object-data` 中�
 - 视频临时音轨完成转写后立即到期，由对象清理 Worker 删除；源文件不会被临时清理；
 - 整个请求支持取消、跨用户隔离和幂等创建。
 
-当前只有确定性的模拟供应商，专门用于无费用的故障测试。它默认关闭，只有显式设置 `REMIND_MEDIA_PROVIDER=mock` 才会注册媒体处理器；未知配置会使 Worker 拒绝启动。正式供应商适配器和 App 创建入口尚未接入，因此不会把模拟结果误当作真实分析返回给用户。
+媒体处理默认关闭。`REMIND_MEDIA_PROVIDER=mock` 只用于无网络、零费用的故障测试；`REMIND_MEDIA_PROVIDER=byok` 才会注册真实 BYOK 处理器。未知配置会使 API 和 Worker 拒绝启动，因此不会把模拟结果误当作真实分析返回给用户。
 
-真实供应商的网络与凭据边界已经独立实现，但尚未注册到 Worker：
+真实供应商的网络与凭据边界已经接入 BYOK Worker：
 
 - 图片观察和语音识别沿用现有功能的智谱 HTTPS 接口，视频转写后的总结沿用 DeepSeek Chat Completions；
 - BYOK 每次执行时只在内存中解密当前用户对应供应商的 Key；用户关闭 AI 或缺少该供应商 Key 时拒绝调用；
@@ -110,6 +110,16 @@ PostgreSQL 备份只包含对象元数据，不包含 `remind-object-data` 中�
 - 托管价格不写死在代码中。智谱图片单价、ASR 每分钟单价、DeepSeek 输入/输出 token 单价必须全部由服务端配置，缺少任一项即拒绝托管媒体报价。
 
 零费用 AI 任务除了明确确认外，还必须在领取时确认用户当前处于 BYOK 模式。切换为“关闭 AI”或“ReMind 托管”后，旧的零费用任务不会继续调用模型；托管任务仍必须完成费用预占。
+
+BYOK 模式开启后提供：
+
+- `POST /api/v1/media/requests`：使用当前用户自己的源文件创建幂等媒体请求；
+- `GET /api/v1/media/requests/:requestId`：查询图片、音频或视频处理进度与结果；
+- `POST /api/v1/media/requests/:requestId/cancel`：取消排队或正在处理的请求。
+
+创建图片或音频请求必须已有智谱 Key；视频还必须同时已有 DeepSeek Key。接口只能引用当前用户、状态为 `ready` 的 `source` 文件，跨用户文件会返回不存在。当前尚未开放 App 文件上传入口，因此这些 API 先供云端内部联调，阶段 6 再与 App 上传界面连接。
+
+视频源文件会先复制到 Worker 的私有临时目录并校验大小与 SHA-256；FFmpeg 只读取这个本地路径，不接收远程 URL、Cookie 或鉴权头。音频以 28 秒为一段，单段不超过 5 MB、单个视频最多 800 段。分段分别保存为当前用户的临时对象，逐段转写后用时间戳合并，并全部进入到期清理。FFmpeg 只安装在 Worker 镜像，API 与迁移镜像不携带它。
 
 ## 匿名账号
 
