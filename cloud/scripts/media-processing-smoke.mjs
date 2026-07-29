@@ -9,11 +9,14 @@ import pg from 'pg';
 import {
   saveApiCredential,
 } from '../dist/ai-settings.js';
+import { creditBalance, getBillingAccount } from '../dist/billing.js';
 import { ByokMediaProcessingProvider } from '../dist/byok-media-provider.js';
 import { LocalAesGcmCredentialCipher } from '../dist/credential-cipher.js';
 import { processNextCancellation, runNextJob } from '../dist/jobs.js';
+import { confirmAndReserveManagedJobQuote } from '../dist/job-quotes.js';
 import {
   createByokMediaProcessingRequest,
+  createManagedMediaProcessingRequest,
   createMediaProcessingHandlers,
   createMediaProcessingRequest,
   ensureNextMediaProcessingJob,
@@ -135,6 +138,12 @@ try {
     userId: secondUser,
     contentType: 'image/jpeg',
     content: Buffer.from('second user private image'),
+    purpose: 'source',
+  });
+  const secondUserVideo = await saveObjectFile(pool, store, {
+    userId: secondUser,
+    contentType: 'video/mp4',
+    content: Buffer.from('second user private video'),
     purpose: 'source',
   });
 
@@ -454,8 +463,209 @@ try {
     actual_cost: '0',
   });
 
+  const managedCatalog = {
+    zhipuVisionPerImageMicros: 1_200_000n,
+    zhipuAsrPerMinuteMicros: 1_200_000n,
+    deepseekInputPerMillionTokensMicros: 2_000_000n,
+    deepseekOutputPerMillionTokensMicros: 4_000_000n,
+  };
+  await creditBalance(
+    pool,
+    secondUser,
+    10_000_000n,
+    'managed-media-test-credit',
+  );
+  const managedHandlers = createMediaProcessingHandlers(
+    pool,
+    store,
+    new MockMediaProcessingProvider(),
+    {
+      stageCostMicros(stage) {
+        if (stage === 'image_analyze') return 700_000n;
+        if (stage === 'video_transcribe') return 500_000n;
+        if (stage === 'video_analyze') return 100_000n;
+        return 0n;
+      },
+    },
+  );
+
+  const managedImage = await createManagedMediaProcessingRequest(
+    pool,
+    {
+      userId: secondUser,
+      sourceFileId: secondUserImage.id,
+      idempotencyKey: 'managed-image-envelope',
+    },
+    managedCatalog,
+  );
+  assert.equal(managedImage.request.status, 'awaiting_confirmation');
+  assert.equal(managedImage.request.estimatedCostMicros, '1200000');
+  assert.equal(managedImage.quote.confirmationRequired, true);
+  assert.equal(managedImage.quote.confirmedAt, null);
+  assert.equal(await ensureNextMediaProcessingJob(pool), null);
+  await confirmAndReserveManagedJobQuote(
+    pool,
+    secondUser,
+    managedImage.quote.jobId,
+  );
+  const managedImageJob = await ensureNextMediaProcessingJob(pool);
+  assert.ok(managedImageJob);
+  assert.deepEqual(
+    (
+      await pool.query(
+        `SELECT type, estimated_cost_micros, reserved_cost_micros,
+                quote_expires_at
+         FROM jobs WHERE id = $1`,
+        [managedImageJob],
+      )
+    ).rows[0],
+    {
+      type: 'media.image.analyze',
+      estimated_cost_micros: '0',
+      reserved_cost_micros: '0',
+      quote_expires_at: null,
+    },
+  );
+  await runNextJob(pool, 'managed-image-worker', managedHandlers, {
+    retryBaseMs: 0,
+  });
+  assert.match(await ensureNextMediaProcessingJob(pool), /^reconciled:/);
+  assert.equal(
+    (
+      await getUserMediaProcessingRequest(
+        pool,
+        secondUser,
+        managedImage.request.id,
+      )
+    ).status,
+    'settling',
+  );
+  assert.match(await ensureNextMediaProcessingJob(pool), /^finalized:/);
+  const completedManagedImage = await getUserMediaProcessingRequest(
+    pool,
+    secondUser,
+    managedImage.request.id,
+  );
+  assert.equal(completedManagedImage.status, 'succeeded');
+  assert.equal(completedManagedImage.actualCostMicros, '700000');
+
+  const managedVideo = await createManagedMediaProcessingRequest(
+    pool,
+    {
+      userId: secondUser,
+      sourceFileId: secondUserVideo.id,
+      idempotencyKey: 'managed-video-envelope',
+      durationSeconds: 60,
+    },
+    managedCatalog,
+  );
+  assert.equal(managedVideo.quote.confirmationRequired, true);
+  await confirmAndReserveManagedJobQuote(
+    pool,
+    secondUser,
+    managedVideo.quote.jobId,
+  );
+  const managedVideoTypes = [];
+  for (let index = 0; index < 3; index += 1) {
+    const jobId = await ensureNextMediaProcessingJob(pool);
+    assert.ok(jobId);
+    const internal = (
+      await pool.query(
+        `SELECT type, estimated_cost_micros, reserved_cost_micros,
+                quote_expires_at
+         FROM jobs WHERE id = $1`,
+        [jobId],
+      )
+    ).rows[0];
+    managedVideoTypes.push(internal.type);
+    assert.equal(internal.estimated_cost_micros, '0');
+    assert.equal(internal.reserved_cost_micros, '0');
+    assert.equal(internal.quote_expires_at, null);
+    await runNextJob(
+      pool,
+      `managed-video-worker-${index}`,
+      managedHandlers,
+      { retryBaseMs: 0 },
+    );
+    assert.match(await ensureNextMediaProcessingJob(pool), /^reconciled:/);
+  }
+  assert.deepEqual(managedVideoTypes, [
+    'media.video.prepare',
+    'media.video.transcribe',
+    'media.video.analyze',
+  ]);
+  assert.match(await ensureNextMediaProcessingJob(pool), /^finalized:/);
+  const completedManagedVideo = await getUserMediaProcessingRequest(
+    pool,
+    secondUser,
+    managedVideo.request.id,
+  );
+  assert.equal(completedManagedVideo.status, 'succeeded');
+  assert.equal(completedManagedVideo.actualCostMicros, '600000');
+
+  const cancelledManaged = await createManagedMediaProcessingRequest(
+    pool,
+    {
+      userId: secondUser,
+      sourceFileId: secondUserImage.id,
+      idempotencyKey: 'managed-cancel-release',
+    },
+    managedCatalog,
+  );
+  await confirmAndReserveManagedJobQuote(
+    pool,
+    secondUser,
+    cancelledManaged.quote.jobId,
+  );
+  const cancelledManagedJob = await ensureNextMediaProcessingJob(pool);
+  assert.ok(cancelledManagedJob);
+  await requestMediaProcessingCancellation(
+    pool,
+    secondUser,
+    cancelledManaged.request.id,
+  );
+  assert.equal(
+    (await processNextCancellation(pool)).jobId,
+    cancelledManagedJob,
+  );
+  assert.match(await ensureNextMediaProcessingJob(pool), /^reconciled:/);
+  assert.match(await ensureNextMediaProcessingJob(pool), /^finalized:/);
+  assert.equal(
+    (
+      await getUserMediaProcessingRequest(
+        pool,
+        secondUser,
+        cancelledManaged.request.id,
+      )
+    ).status,
+    'cancelled',
+  );
+
+  const managedAccount = await getBillingAccount(pool, secondUser);
+  assert.equal(managedAccount.balanceMicros, '8700000');
+  assert.equal(managedAccount.reservedMicros, '0');
+  const envelopeLedger = await pool.query(
+    `SELECT job_id, kind, amount_micros
+     FROM ledger_entries
+     WHERE user_id = $1 AND job_id IS NOT NULL
+     ORDER BY created_at, id`,
+    [secondUser],
+  );
+  assert.equal(
+    envelopeLedger.rows.filter((row) => row.kind === 'reserve').length,
+    3,
+  );
+  assert.equal(
+    envelopeLedger.rows.filter((row) => row.kind === 'settle').length,
+    2,
+  );
+  assert.equal(
+    new Set(envelopeLedger.rows.map((row) => row.job_id)).size,
+    3,
+  );
+
   console.log(
-    'media processing smoke test passed: tenant isolation, idempotency, image analysis, transcription retry, three-stage video pipeline, cancellation, temporary audio cleanup, source retention, and zero-cost mock execution',
+    'media processing smoke test passed: BYOK execution plus managed one-confirmation envelopes, multi-stage cost accumulation, final settlement, cancellation release, tenant isolation, retries, and temporary cleanup',
   );
 } finally {
   await pool.end();

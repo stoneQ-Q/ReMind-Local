@@ -9,6 +9,7 @@ const supportedJobTypes = new Set([
   'ai.image',
   'ai.video',
   'ai.transcription',
+  'media.pipeline',
 ]);
 
 export type ManagedJobQuote = {

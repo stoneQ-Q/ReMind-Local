@@ -5,8 +5,19 @@ import { join } from 'node:path';
 
 import type { Pool, PoolClient } from 'pg';
 
+import { releaseJobCost, settleJobCost } from './billing.js';
+import {
+  createManagedJobQuote,
+  type ManagedJobQuote,
+} from './job-quotes.js';
 import type { JobHandler, JobHandlers } from './jobs.js';
 import { requestJobCancellation } from './jobs.js';
+import {
+  estimateManagedImageCost,
+  estimateManagedTextCost,
+  estimateManagedTranscriptionCost,
+  type ManagedMediaPriceCatalog,
+} from './media-pricing.js';
 import {
   getUserObjectFileMetadata,
   materializeUserObjectFile,
@@ -28,11 +39,15 @@ type MediaStage =
   | 'video_transcribe'
   | 'video_analyze';
 type MediaStatus =
+  | 'awaiting_confirmation'
   | 'pending'
   | 'processing'
+  | 'settling'
+  | 'releasing'
   | 'succeeded'
   | 'failed'
   | 'cancelled';
+type MediaExecutionMode = 'bring_your_own_key' | 'managed';
 
 type MediaRequestRow = {
   id: string;
@@ -40,6 +55,7 @@ type MediaRequestRow = {
   source_file_id: string;
   media_kind: MediaKind;
   status: MediaStatus;
+  execution_mode: MediaExecutionMode;
   stage: MediaStage;
   generation: string;
   current_job_id: string | null;
@@ -47,6 +63,11 @@ type MediaRequestRow = {
   transcript: string | null;
   result_json: unknown;
   error_code: string | null;
+  billing_job_id: string | null;
+  duration_seconds: number | null;
+  estimated_cost_micros: string;
+  actual_cost_micros: string;
+  terminal_status: 'failed' | 'cancelled' | null;
   cancel_requested_at: Date | null;
   created_at: Date;
   updated_at: Date;
@@ -57,12 +78,17 @@ export type MediaRequestSnapshot = {
   sourceFileId: string;
   mediaKind: MediaKind;
   status: MediaStatus;
+  executionMode: MediaExecutionMode;
   stage: MediaStage;
   currentJobId: string | null;
   intermediateFileId: string | null;
   transcript: string | null;
   result: unknown;
   errorCode: string | null;
+  billingJobId: string | null;
+  durationSeconds: number | null;
+  estimatedCostMicros: string;
+  actualCostMicros: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -78,6 +104,11 @@ export class MediaRequestError extends Error {
     super(code);
   }
 }
+
+export type ManagedMediaRequestQuote = {
+  request: MediaRequestSnapshot;
+  quote: ManagedJobQuote;
+};
 
 export interface MediaProcessingProvider {
   prepareVideo(
@@ -277,6 +308,116 @@ export async function createByokMediaProcessingRequest(
   }
 }
 
+export async function createManagedMediaProcessingRequest(
+  pool: Pool,
+  input: {
+    userId: string;
+    sourceFileId: string;
+    idempotencyKey: string;
+    durationSeconds?: number;
+  },
+  catalog: ManagedMediaPriceCatalog,
+): Promise<ManagedMediaRequestQuote> {
+  requireUuid(input.userId);
+  requireUuid(input.sourceFileId);
+  const idempotencyKey = requireIdempotencyKey(input.idempotencyKey);
+  const source = await pool.query<{ media_kind: string }>(
+    `SELECT file.media_kind
+     FROM users AS owner
+     JOIN files AS file ON file.user_id = owner.id
+     WHERE owner.id = $1
+       AND owner.status = 'active'
+       AND owner.ai_mode = 'managed'
+       AND file.id = $2
+       AND file.purpose = 'source'
+       AND file.status = 'ready'
+       AND file.deleted_at IS NULL`,
+    [input.userId, input.sourceFileId],
+  );
+  const mediaKind = source.rows[0]?.media_kind;
+  if (!isMediaKind(mediaKind)) throw new Error('media_source_not_found');
+  const durationSeconds =
+    mediaKind === 'image'
+      ? null
+      : requireDurationSeconds(input.durationSeconds);
+  if (mediaKind === 'video') {
+    const deepseek = await pool.query<{ status: string }>(
+      `SELECT status FROM provider_health WHERE provider = 'deepseek'`,
+    );
+    if (deepseek.rows[0]?.status !== 'active') {
+      throw new Error('provider_paused');
+    }
+  }
+  const estimateMicros = managedMediaEstimate(
+    catalog,
+    mediaKind,
+    durationSeconds,
+  );
+  const stage = initialStage(mediaKind);
+  await pool.query(
+    `INSERT INTO media_processing_requests (
+       user_id, idempotency_key, source_file_id, media_kind, status, stage,
+       execution_mode, duration_seconds, estimated_cost_micros
+     ) VALUES ($1, $2, $3, $4, 'awaiting_confirmation', $5,
+               'managed', $6, $7)
+     ON CONFLICT (user_id, idempotency_key) DO NOTHING`,
+    [
+      input.userId,
+      idempotencyKey,
+      input.sourceFileId,
+      mediaKind,
+      stage,
+      durationSeconds,
+      estimateMicros.toString(),
+    ],
+  );
+  let request = requiredRow(
+    (
+      await pool.query<MediaRequestRow>(
+        `SELECT * FROM media_processing_requests
+         WHERE user_id = $1 AND idempotency_key = $2`,
+        [input.userId, idempotencyKey],
+      )
+    ).rows[0],
+  );
+  if (
+    request.execution_mode !== 'managed' ||
+    request.source_file_id !== input.sourceFileId ||
+    request.duration_seconds !== durationSeconds ||
+    BigInt(request.estimated_cost_micros) !== estimateMicros
+  ) {
+    throw new Error('media_idempotency_conflict');
+  }
+  const quote = await createManagedJobQuote(
+    pool,
+    input.userId,
+    'media.pipeline',
+    'zhipu',
+    estimateMicros,
+    `media-envelope:${request.id}`,
+    { requestId: request.id },
+  );
+  if (request.billing_job_id && request.billing_job_id !== quote.jobId) {
+    throw new Error('media_idempotency_conflict');
+  }
+  await pool.query(
+    `UPDATE media_processing_requests
+     SET billing_job_id = $1, updated_at = now()
+     WHERE user_id = $2 AND id = $3 AND billing_job_id IS NULL`,
+    [quote.jobId, input.userId, request.id],
+  );
+  request = requiredRow(
+    (
+      await pool.query<MediaRequestRow>(
+        `SELECT * FROM media_processing_requests
+         WHERE user_id = $1 AND id = $2`,
+        [input.userId, request.id],
+      )
+    ).rows[0],
+  );
+  return { request: mediaSnapshot(request), quote };
+}
+
 export async function getUserMediaProcessingRequest(
   pool: Pool,
   userId: string,
@@ -296,33 +437,78 @@ export async function requestMediaProcessingCancellation(
   userId: string,
   requestId: string,
 ): Promise<MediaRequestSnapshot | null> {
-  const result = await pool.query<{ current_job_id: string | null }>(
-    `UPDATE media_processing_requests
-     SET cancel_requested_at = COALESCE(cancel_requested_at, now()),
+  const result = await pool.query<{
+    current_job_id: string | null;
+    billing_job_id: string | null;
+  }>(
+    `UPDATE media_processing_requests AS request
+     SET cancel_requested_at = COALESCE(request.cancel_requested_at, now()),
          status = CASE
-           WHEN current_job_id IS NULL THEN 'cancelled'
-           ELSE status
+           WHEN request.execution_mode = 'managed'
+             AND envelope.status IN ('reserved', 'running')
+             AND request.current_job_id IS NULL
+           THEN 'releasing'
+           WHEN request.current_job_id IS NULL THEN 'cancelled'
+           ELSE request.status
+         END,
+         terminal_status = CASE
+           WHEN request.execution_mode = 'managed' THEN 'cancelled'
+           ELSE request.terminal_status
          END,
          finished_at = CASE
-           WHEN current_job_id IS NULL THEN now()
-           ELSE finished_at
+           WHEN request.current_job_id IS NULL
+             AND NOT (
+               request.execution_mode = 'managed'
+               AND envelope.status IN ('reserved', 'running')
+             )
+           THEN now()
+           ELSE request.finished_at
          END,
          updated_at = now()
-     WHERE user_id = $1 AND id = $2
-       AND status IN ('pending', 'processing')
-     RETURNING current_job_id`,
+     FROM jobs AS envelope
+     WHERE request.user_id = $1 AND request.id = $2
+       AND request.billing_job_id = envelope.id
+       AND request.status IN (
+         'awaiting_confirmation', 'pending', 'processing'
+       )
+     RETURNING request.current_job_id, request.billing_job_id`,
     [userId, requestId],
   );
-  const jobId = result.rows[0]?.current_job_id;
-  if (jobId) await requestJobCancellation(pool, userId, jobId);
+  let row = result.rows[0];
+  if (!row) {
+    const byok = await pool.query<{
+      current_job_id: string | null;
+      billing_job_id: string | null;
+    }>(
+      `UPDATE media_processing_requests
+       SET cancel_requested_at = COALESCE(cancel_requested_at, now()),
+           status = CASE WHEN current_job_id IS NULL THEN 'cancelled' ELSE status END,
+           finished_at = CASE WHEN current_job_id IS NULL THEN now() ELSE finished_at END,
+           updated_at = now()
+       WHERE user_id = $1 AND id = $2
+         AND execution_mode = 'bring_your_own_key'
+         AND status IN ('pending', 'processing')
+       RETURNING current_job_id, billing_job_id`,
+      [userId, requestId],
+    );
+    row = byok.rows[0];
+  }
+  if (row?.current_job_id) {
+    await requestJobCancellation(pool, userId, row.current_job_id);
+  } else if (row?.billing_job_id) {
+    await requestJobCancellation(pool, userId, row.billing_job_id);
+  }
   return getUserMediaProcessingRequest(pool, userId, requestId);
 }
 
 export async function ensureNextMediaProcessingJob(
   pool: Pool,
 ): Promise<string | null> {
+  const finalized = await finalizeNextMediaEnvelope(pool);
+  if (finalized) return finalized;
   const reconciled = await reconcileNextMediaJob(pool);
   if (reconciled) return reconciled;
+  await promoteNextManagedMediaRequest(pool);
 
   const client = await pool.connect();
   try {
@@ -342,7 +528,7 @@ export async function ensureNextMediaProcessingJob(
       await client.query('COMMIT');
       return null;
     }
-    const jobType = jobTypeForStage(request.stage);
+    const jobType = jobTypeForStage(request.stage, request.execution_mode);
     const job = await client.query<{ id: string }>(
       `INSERT INTO jobs (
          user_id, type, idempotency_key, input_json,
@@ -386,17 +572,124 @@ export async function ensureNextMediaProcessingJob(
   }
 }
 
+async function promoteNextManagedMediaRequest(pool: Pool): Promise<void> {
+  await pool.query(
+    `UPDATE media_processing_requests AS request
+     SET status = 'pending', updated_at = now()
+     FROM jobs AS envelope
+     WHERE request.execution_mode = 'managed'
+       AND request.status = 'awaiting_confirmation'
+       AND request.billing_job_id = envelope.id
+       AND envelope.user_id = request.user_id
+       AND envelope.status = 'reserved'
+       AND envelope.reserved_cost_micros = request.estimated_cost_micros
+       AND envelope.reserved_cost_micros > 0
+       AND request.id = (
+         SELECT candidate.id
+         FROM media_processing_requests AS candidate
+         JOIN jobs AS candidate_envelope
+           ON candidate_envelope.user_id = candidate.user_id
+          AND candidate_envelope.id = candidate.billing_job_id
+         WHERE candidate.execution_mode = 'managed'
+           AND candidate.status = 'awaiting_confirmation'
+           AND candidate.cancel_requested_at IS NULL
+           AND candidate_envelope.status = 'reserved'
+           AND candidate_envelope.reserved_cost_micros =
+               candidate.estimated_cost_micros
+         ORDER BY candidate.created_at, candidate.id
+         LIMIT 1
+       )`,
+  );
+}
+
+async function finalizeNextMediaEnvelope(
+  pool: Pool,
+): Promise<string | null> {
+  const result = await pool.query<{
+    id: string;
+    user_id: string;
+    status: 'settling' | 'releasing';
+    billing_job_id: string;
+    actual_cost_micros: string;
+    terminal_status: 'failed' | 'cancelled' | null;
+    envelope_status: string;
+  }>(
+    `SELECT request.id, request.user_id, request.status,
+            request.billing_job_id, request.actual_cost_micros,
+            request.terminal_status, envelope.status AS envelope_status
+     FROM media_processing_requests AS request
+     JOIN jobs AS envelope
+       ON envelope.user_id = request.user_id
+      AND envelope.id = request.billing_job_id
+     WHERE request.execution_mode = 'managed'
+       AND request.status IN ('settling', 'releasing')
+     ORDER BY request.created_at, request.id
+     LIMIT 1`,
+  );
+  const request = result.rows[0];
+  if (!request) return null;
+  if (request.status === 'settling') {
+    if (request.envelope_status !== 'succeeded') {
+      await settleJobCost(
+        pool,
+        request.user_id,
+        request.billing_job_id,
+        BigInt(request.actual_cost_micros),
+        `media-envelope:${request.id}`,
+      );
+    }
+    await pool.query(
+      `UPDATE media_processing_requests
+       SET status = 'succeeded', finished_at = now(), updated_at = now()
+       WHERE user_id = $1 AND id = $2 AND status = 'settling'`,
+      [request.user_id, request.id],
+    );
+  } else {
+    const terminalStatus = request.terminal_status ?? 'failed';
+    if (
+      request.envelope_status !== 'failed' &&
+      request.envelope_status !== 'cancelled'
+    ) {
+      await releaseJobCost(
+        pool,
+        request.user_id,
+        request.billing_job_id,
+        terminalStatus,
+        `media-envelope:${request.id}`,
+      );
+    }
+    await pool.query(
+      `UPDATE media_processing_requests
+       SET status = $1, finished_at = now(), updated_at = now()
+       WHERE user_id = $2 AND id = $3 AND status = 'releasing'`,
+      [terminalStatus, request.user_id, request.id],
+    );
+  }
+  return `finalized:${request.id}:${request.status}`;
+}
+
 export function createMediaProcessingHandlers(
   pool: Pool,
   store: ObjectStore,
   provider: MediaProcessingProvider = new MockMediaProcessingProvider(),
+  options: {
+    stageCostMicros?: (
+      stage: MediaStage,
+      result: unknown,
+      request: MediaRequestSnapshot,
+    ) => bigint;
+  } = {},
 ): JobHandlers {
-  const handler = createMediaHandler(pool, store, provider);
+  const handler = createMediaHandler(pool, store, provider, options);
   return new Map([
     ['media.video.prepare', handler],
     ['ai.image', handler],
     ['ai.transcription', handler],
     ['ai.text', handler],
+    ['media.image.analyze', handler],
+    ['media.audio.transcribe', handler],
+    ['media.video.transcribe', handler],
+    ['media.video.analyze', handler],
   ]);
 }
 
@@ -404,6 +697,13 @@ function createMediaHandler(
   pool: Pool,
   store: ObjectStore,
   provider: MediaProcessingProvider,
+  options: {
+    stageCostMicros?: (
+      stage: MediaStage,
+      result: unknown,
+      request: MediaRequestSnapshot,
+    ) => bigint;
+  },
 ): JobHandler {
   return async (job, signal) => {
     const input = parseMediaJobInput(job.input);
@@ -425,13 +725,17 @@ function createMediaHandler(
         job.userId,
         request.source_file_id,
       );
-      return sanitizeImageResult(
-        await provider.analyzeImage(
-          content,
-          signal,
-          providerContext(job),
-          metadata.contentType,
+      return withStageCost(
+        sanitizeImageResult(
+          await provider.analyzeImage(
+            content,
+            signal,
+            providerContext(job),
+            metadata.contentType,
+          ),
         ),
+        request,
+        options,
       );
     }
     if (request.stage === 'video_prepare') {
@@ -459,7 +763,7 @@ function createMediaHandler(
           });
           segmentFileIds.push(temporary.id);
         }
-        return { segmentFileIds };
+        return withStageCost({ segmentFileIds }, request, options);
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
@@ -486,7 +790,11 @@ function createMediaHandler(
           providerContext(job),
           metadata.contentType,
         );
-        return { transcript: sanitizeText(transcript, 100_000) };
+        return withStageCost(
+          { transcript: sanitizeText(transcript, 100_000) },
+          request,
+          options,
+        );
       }
       const segments = await loadVideoSegments(pool, request);
       const lines: string[] = [];
@@ -512,17 +820,25 @@ function createMediaHandler(
         }
       }
       if (!lines.length) throw new Error('media_transcript_empty');
-      return { transcript: lines.join('\n').slice(0, 100_000) };
+      return withStageCost(
+        { transcript: lines.join('\n').slice(0, 100_000) },
+        request,
+        options,
+      );
     }
     if (request.stage === 'video_analyze') {
       const transcript = request.transcript;
       if (!transcript) throw new Error('media_transcript_missing');
-      return sanitizeVideoResult(
-        await provider.analyzeVideoTranscript(
-          transcript,
-          signal,
-          providerContext(job),
+      return withStageCost(
+        sanitizeVideoResult(
+          await provider.analyzeVideoTranscript(
+            transcript,
+            signal,
+            providerContext(job),
+          ),
         ),
+        request,
+        options,
       );
     }
     throw new Error('unsupported_media_stage');
@@ -584,6 +900,18 @@ async function applySuccessfulStage(
   request: MediaRequestRow,
   result: unknown,
 ): Promise<void> {
+  const stageCostMicros = objectCostMicros(result);
+  const totalActualCostMicros =
+    BigInt(request.actual_cost_micros) + stageCostMicros;
+  if (totalActualCostMicros > BigInt(request.estimated_cost_micros)) {
+    await finishMediaRequest(
+      client,
+      request,
+      'failed',
+      'actual_cost_exceeds_envelope',
+    );
+    return;
+  }
   if (request.stage === 'video_prepare') {
     const segmentFileIds = objectStringArray(result, 'segmentFileIds', 800);
     if (!segmentFileIds.length) throw new Error('media_temporary_file_missing');
@@ -604,9 +932,13 @@ async function applySuccessfulStage(
       );
       if (inserted.rowCount !== 1) throw new Error('media_temporary_file_missing');
     }
-    await advanceStage(client, request, 'video_transcribe', {
-      intermediateFileId: segmentFileIds[0],
-    });
+    await advanceStage(
+      client,
+      request,
+      'video_transcribe',
+      { intermediateFileId: segmentFileIds[0] },
+      stageCostMicros,
+    );
     return;
   }
   if (
@@ -615,24 +947,48 @@ async function applySuccessfulStage(
   ) {
     const transcript = sanitizeText(objectString(result, 'transcript'), 100_000);
     if (request.stage === 'audio_transcribe') {
-      await succeedMediaRequest(client, request, transcript, { transcript });
+      await succeedMediaRequest(
+        client,
+        request,
+        transcript,
+        { transcript },
+        stageCostMicros,
+      );
     } else {
       await expireIntermediateFile(client, request);
-      await advanceStage(client, request, 'video_analyze', { transcript });
+      await advanceStage(
+        client,
+        request,
+        'video_analyze',
+        { transcript },
+        stageCostMicros,
+      );
     }
     return;
   }
   if (request.stage === 'image_analyze') {
     const imageResult = sanitizeImageResult(result);
-    await succeedMediaRequest(client, request, null, imageResult);
+    await succeedMediaRequest(
+      client,
+      request,
+      null,
+      imageResult,
+      stageCostMicros,
+    );
     return;
   }
   if (request.stage === 'video_analyze') {
     const videoResult = sanitizeVideoResult(result);
-    await succeedMediaRequest(client, request, request.transcript, {
-      transcript: request.transcript,
-      ...videoResult,
-    });
+    await succeedMediaRequest(
+      client,
+      request,
+      request.transcript,
+      {
+        transcript: request.transcript,
+        ...videoResult,
+      },
+      stageCostMicros,
+    );
     return;
   }
   throw new Error('unsupported_media_stage');
@@ -643,6 +999,7 @@ async function advanceStage(
   request: MediaRequestRow,
   nextStage: MediaStage,
   values: { intermediateFileId?: string; transcript?: string },
+  stageCostMicros: bigint,
 ): Promise<void> {
   await client.query(
     `UPDATE media_processing_requests
@@ -650,12 +1007,14 @@ async function advanceStage(
          current_job_id = NULL,
          intermediate_file_id = COALESCE($2, intermediate_file_id),
          transcript = COALESCE($3, transcript),
+         actual_cost_micros = actual_cost_micros + $4,
          updated_at = now()
-     WHERE user_id = $4 AND id = $5`,
+     WHERE user_id = $5 AND id = $6`,
     [
       nextStage,
       values.intermediateFileId ?? null,
       values.transcript ?? null,
+      stageCostMicros.toString(),
       request.user_id,
       request.id,
     ],
@@ -667,17 +1026,31 @@ async function succeedMediaRequest(
   request: MediaRequestRow,
   transcript: string | null,
   result: unknown,
+  stageCostMicros: bigint,
 ): Promise<void> {
   await client.query(
     `UPDATE media_processing_requests
-     SET status = 'succeeded',
+     SET status = CASE
+           WHEN execution_mode = 'managed' THEN 'settling'
+           ELSE 'succeeded'
+         END,
          transcript = $1,
          result_json = $2::jsonb,
          error_code = NULL,
-         finished_at = now(),
+         actual_cost_micros = actual_cost_micros + $3,
+         finished_at = CASE
+           WHEN execution_mode = 'managed' THEN NULL
+           ELSE now()
+         END,
          updated_at = now()
-     WHERE user_id = $3 AND id = $4`,
-    [transcript, JSON.stringify(result), request.user_id, request.id],
+     WHERE user_id = $4 AND id = $5`,
+    [
+      transcript,
+      JSON.stringify(result),
+      stageCostMicros.toString(),
+      request.user_id,
+      request.id,
+    ],
   );
 }
 
@@ -690,9 +1063,19 @@ async function finishMediaRequest(
   await expireIntermediateFile(client, request);
   await client.query(
     `UPDATE media_processing_requests
-     SET status = $1,
+     SET status = CASE
+           WHEN execution_mode = 'managed' THEN 'releasing'
+           ELSE $1
+         END,
+         terminal_status = CASE
+           WHEN execution_mode = 'managed' THEN $1
+           ELSE terminal_status
+         END,
          error_code = $2,
-         finished_at = now(),
+         finished_at = CASE
+           WHEN execution_mode = 'managed' THEN NULL
+           ELSE now()
+         END,
          updated_at = now()
      WHERE user_id = $3 AND id = $4`,
     [status, normalizeErrorCode(errorCode), request.user_id, request.id],
@@ -739,14 +1122,34 @@ async function loadActiveRequest(
   input: { requestId: string; generation: string; stage: MediaStage },
 ): Promise<MediaRequestRow> {
   const result = await pool.query<MediaRequestRow>(
-    `SELECT *
-     FROM media_processing_requests
-     WHERE user_id = $1 AND id = $2
-       AND generation = $3
-       AND stage = $4
-       AND status = 'processing'
-       AND current_job_id = $5
-       AND cancel_requested_at IS NULL`,
+    `SELECT request.*
+     FROM media_processing_requests AS request
+     JOIN users AS owner ON owner.id = request.user_id
+     LEFT JOIN jobs AS envelope
+       ON envelope.user_id = request.user_id
+      AND envelope.id = request.billing_job_id
+     WHERE request.user_id = $1 AND request.id = $2
+       AND request.generation = $3
+       AND request.stage = $4
+       AND request.status = 'processing'
+       AND request.current_job_id = $5
+       AND request.cancel_requested_at IS NULL
+       AND owner.status = 'active'
+       AND (
+         (
+           request.execution_mode = 'bring_your_own_key'
+           AND owner.ai_mode = 'bring_your_own_key'
+           AND request.billing_job_id IS NULL
+         )
+         OR (
+           request.execution_mode = 'managed'
+           AND owner.ai_mode = 'managed'
+           AND envelope.status = 'reserved'
+           AND envelope.reserved_cost_micros =
+               request.estimated_cost_micros
+           AND envelope.reserved_cost_micros > 0
+         )
+       )`,
     [userId, input.requestId, input.generation, input.stage, jobId],
   );
   const row = result.rows[0];
@@ -857,7 +1260,17 @@ function initialStage(kind: MediaKind): MediaStage {
   return 'video_prepare';
 }
 
-function jobTypeForStage(stage: MediaStage): string {
+function jobTypeForStage(
+  stage: MediaStage,
+  executionMode: MediaExecutionMode,
+): string {
+  if (executionMode === 'managed') {
+    if (stage === 'image_analyze') return 'media.image.analyze';
+    if (stage === 'audio_transcribe') return 'media.audio.transcribe';
+    if (stage === 'video_prepare') return 'media.video.prepare';
+    if (stage === 'video_transcribe') return 'media.video.transcribe';
+    return 'media.video.analyze';
+  }
   if (stage === 'image_analyze') return 'ai.image';
   if (stage === 'video_prepare') return 'media.video.prepare';
   if (stage === 'video_analyze') return 'ai.text';
@@ -913,6 +1326,67 @@ function providerContext(job: Parameters<JobHandler>[0]): MediaProviderContext {
   };
 }
 
+function withStageCost(
+  result: Record<string, unknown>,
+  request: MediaRequestRow,
+  options: {
+    stageCostMicros?: (
+      stage: MediaStage,
+      result: unknown,
+      request: MediaRequestSnapshot,
+    ) => bigint;
+  },
+): Record<string, unknown> {
+  const cost =
+    request.execution_mode === 'managed'
+      ? (options.stageCostMicros?.(
+          request.stage,
+          result,
+          mediaSnapshot(request),
+        ) ?? 0n)
+      : 0n;
+  if (cost < 0n) throw new Error('invalid_media_stage_cost');
+  return { ...result, actualCostMicros: cost.toString() };
+}
+
+function objectCostMicros(value: unknown): bigint {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('invalid_media_job_result');
+  }
+  const cost = (value as Record<string, unknown>).actualCostMicros;
+  if (cost === undefined) return 0n;
+  if (typeof cost !== 'string' || !/^[0-9]{1,18}$/.test(cost)) {
+    throw new Error('invalid_media_stage_cost');
+  }
+  return BigInt(cost);
+}
+
+function managedMediaEstimate(
+  catalog: ManagedMediaPriceCatalog,
+  mediaKind: MediaKind,
+  durationSeconds: number | null,
+): bigint {
+  if (mediaKind === 'image') return estimateManagedImageCost(catalog);
+  if (durationSeconds === null) throw new Error('invalid_media_duration');
+  const transcription = estimateManagedTranscriptionCost(
+    catalog,
+    durationSeconds,
+  );
+  if (mediaKind === 'audio') return transcription;
+  const conservativeTranscriptTokens = Math.ceil(durationSeconds * 4);
+  return (
+    transcription +
+    estimateManagedTextCost(catalog, conservativeTranscriptTokens, 1_500)
+  );
+}
+
+function requireDurationSeconds(value: number | undefined): number {
+  if (!Number.isInteger(value) || value === undefined || value < 1 || value > 21_600) {
+    throw new Error('invalid_media_duration');
+  }
+  return value;
+}
+
 async function requiredFileMetadata(
   pool: Pool,
   userId: string,
@@ -945,12 +1419,17 @@ function mediaSnapshot(row: MediaRequestRow): MediaRequestSnapshot {
     sourceFileId: row.source_file_id,
     mediaKind: row.media_kind,
     status: row.status,
+    executionMode: row.execution_mode,
     stage: row.stage,
     currentJobId: row.current_job_id,
     intermediateFileId: row.intermediate_file_id,
     transcript: row.transcript,
     result: row.result_json,
     errorCode: row.error_code,
+    billingJobId: row.billing_job_id,
+    durationSeconds: row.duration_seconds,
+    estimatedCostMicros: row.estimated_cost_micros,
+    actualCostMicros: row.actual_cost_micros,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
