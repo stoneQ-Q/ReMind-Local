@@ -8,6 +8,7 @@
     "migrate": "node dist/migrate.js",
     "rotate:credentials": "node dist/rotate-credentials.js",
     "smoke:billing": "node scripts/billing-smoke-runner.mjs",
+    "smoke:worker": "node scripts/worker-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

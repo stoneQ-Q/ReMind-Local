@@ -379,7 +379,12 @@ export async function releaseJobCost(
 
     const account = await requireAccount(client, userId);
     const job = await requireJob(client, userId, jobId);
-    if (job.status !== 'reserved' && job.status !== 'running') {
+    if (
+      job.status !== 'reserved' &&
+      job.status !== 'running' &&
+      job.status !== 'failed' &&
+      job.status !== 'cancelled'
+    ) {
       throw new BillingError('job_not_releasable');
     }
     const jobReserved = BigInt(job.reserved_cost_micros);

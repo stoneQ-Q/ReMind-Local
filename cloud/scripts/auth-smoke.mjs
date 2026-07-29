@@ -47,6 +47,35 @@ try {
   );
   assert.deepEqual(firstLedger.entries, []);
 
+  const cancellableJob = await pool.query(
+    `INSERT INTO jobs (user_id, type, idempotency_key, input_json)
+     VALUES ($1, 'test.api-cancel', 'auth-smoke-cancel', '{"keep":true}')
+     RETURNING id`,
+    [first.userId],
+  );
+  const cancellableJobId = cancellableJob.rows[0].id;
+  const ownJob = await authenticatedRequest(
+    'GET',
+    `/api/v1/jobs/${cancellableJobId}`,
+    first.accessToken,
+  );
+  assert.equal(ownJob.status, 200);
+  assert.equal(ownJob.body.id, cancellableJobId);
+  const otherUsersJob = await authenticatedRequest(
+    'GET',
+    `/api/v1/jobs/${cancellableJobId}`,
+    second.accessToken,
+  );
+  assert.equal(otherUsersJob.status, 404);
+  const cancellation = await authenticatedRequest(
+    'POST',
+    `/api/v1/jobs/${cancellableJobId}/cancel`,
+    first.accessToken,
+  );
+  assert.equal(cancellation.status, 202);
+  assert.ok(cancellation.body.cancelRequestedAt);
+  await waitForJobStatus(cancellableJobId, 'cancelled');
+
   const refreshed = await requestJson('/api/v1/auth/refresh', {
     deviceId: first.deviceId,
     deviceSecret: first.deviceSecret,
@@ -230,13 +259,25 @@ try {
   assert.equal(storedSecrets.rows[0].devices_hashed, true);
 
   console.log(
-    'cloud smoke test passed: auth, renewal, recovery, AI settings, encrypted credentials, and two-user isolation',
+    'cloud smoke test passed: auth, renewal, recovery, AI settings, encrypted credentials, tenant-isolated job status, and cancellation',
   );
 } finally {
   if (createdUserIds.length) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query(
+        `DELETE FROM job_attempts WHERE user_id = ANY($1::uuid[])`,
+        [createdUserIds],
+      );
+      await client.query(
+        `DELETE FROM jobs WHERE user_id = ANY($1::uuid[])`,
+        [createdUserIds],
+      );
+      await client.query(
+        `DELETE FROM worker_user_fairness WHERE user_id = ANY($1::uuid[])`,
+        [createdUserIds],
+      );
       await client.query(
         `DELETE FROM billing_accounts
          WHERE user_id = ANY($1::uuid[])
@@ -259,6 +300,18 @@ try {
     }
   }
   await pool.end();
+}
+
+async function waitForJobStatus(jobId, expectedStatus) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await pool.query('SELECT status FROM jobs WHERE id = $1', [
+      jobId,
+    ]);
+    if (result.rows[0]?.status === expectedStatus) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail(`job ${jobId} did not reach ${expectedStatus}`);
 }
 
 async function register(displayName) {

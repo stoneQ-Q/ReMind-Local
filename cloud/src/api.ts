@@ -31,6 +31,7 @@ import {
   getManagedJobQuote,
   JobQuoteError,
 } from './job-quotes.js';
+import { getUserJob, requestJobCancellation } from './jobs.js';
 import { ProviderPausedError } from './provider-health.js';
 
 const port = apiPort();
@@ -265,6 +266,56 @@ const server = createServer(async (request, response) => {
           jobConfirmationMatch[1] ?? '',
         ),
       );
+      return;
+    }
+
+    const jobStatusMatch = request.url?.match(
+      /^\/api\/v1\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i,
+    );
+    if (jobStatusMatch && request.method === 'GET') {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const job = await getUserJob(
+        database,
+        account.userId,
+        jobStatusMatch[1] ?? '',
+      );
+      if (!job) {
+        sendJson(response, 404, { error: 'job_not_found' });
+        return;
+      }
+      sendJson(response, 200, job);
+      return;
+    }
+
+    const jobCancellationMatch = request.url?.match(
+      /^\/api\/v1\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/cancel$/i,
+    );
+    if (jobCancellationMatch && request.method === 'POST') {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const job = await requestJobCancellation(
+        database,
+        account.userId,
+        jobCancellationMatch[1] ?? '',
+      );
+      if (!job) {
+        sendJson(response, 404, { error: 'job_not_found' });
+        return;
+      }
+      sendJson(response, 202, job);
       return;
     }
 
