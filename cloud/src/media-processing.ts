@@ -18,6 +18,7 @@ import {
   estimateManagedTranscriptionCost,
   type ManagedMediaPriceCatalog,
 } from './media-pricing.js';
+import { assertProviderAvailable } from './provider-health.js';
 import {
   getUserObjectFileMetadata,
   materializeUserObjectFile,
@@ -28,6 +29,7 @@ import type { ObjectStore } from './object-store.js';
 import {
   extractVideoAudioSegments,
   formatMediaTimestamp,
+  probeMediaDurationSeconds,
   type ExtractedAudioSegment,
 } from './video-audio-segments.js';
 
@@ -97,9 +99,11 @@ export class MediaRequestError extends Error {
   constructor(
     readonly code:
       | 'byok_mode_required'
+      | 'managed_mode_required'
       | 'media_provider_credential_required'
       | 'media_source_not_found'
-      | 'media_idempotency_conflict',
+      | 'media_idempotency_conflict'
+      | 'invalid_media_duration',
   ) {
     super(code);
   }
@@ -111,83 +115,112 @@ export type ManagedMediaRequestQuote = {
 };
 
 export interface MediaProcessingProvider {
+  readonly requiresTrustedDuration?: boolean;
   prepareVideo(
     sourcePath: string,
     signal: AbortSignal,
-  ): Promise<ExtractedAudioSegment[]>;
+  ): Promise<MediaProviderStageResult<ExtractedAudioSegment[]>>;
   transcribeAudio(
     content: Buffer,
     signal: AbortSignal,
     context?: MediaProviderContext,
     contentType?: string,
-  ): Promise<string>;
+  ): Promise<MediaProviderStageResult<string>>;
   analyzeImage(
     content: Buffer,
     signal: AbortSignal,
     context?: MediaProviderContext,
     contentType?: string,
-  ): Promise<{ description: string; tags: string[] }>;
+  ): Promise<
+    MediaProviderStageResult<{ description: string; tags: string[] }>
+  >;
   analyzeVideoTranscript(
     transcript: string,
     signal: AbortSignal,
     context?: MediaProviderContext,
-  ): Promise<{ summary: string; highlights: string[] }>;
+  ): Promise<
+    MediaProviderStageResult<{ summary: string; highlights: string[] }>
+  >;
 }
+
+export type MediaProviderStageResult<T> = {
+  output: T;
+  actualCostMicros: bigint;
+};
 
 export type MediaProviderContext = {
   userId: string;
   reservedCostMicros: bigint;
+  durationSeconds: number | null;
 };
 
 export class MockMediaProcessingProvider implements MediaProcessingProvider {
   async prepareVideo(
     sourcePath: string,
     signal: AbortSignal,
-  ): Promise<ExtractedAudioSegment[]> {
+  ): Promise<MediaProviderStageResult<ExtractedAudioSegment[]>> {
     throwIfAborted(signal);
-    return [
-      {
-        sequenceNumber: 0,
-        startSeconds: 0,
-        content: Buffer.from(`mock-audio:${shortDigest(Buffer.from(sourcePath))}`),
-      },
-      {
-        sequenceNumber: 1,
-        startSeconds: 28,
-        content: Buffer.from(
-          `mock-audio-2:${shortDigest(Buffer.from(sourcePath))}`,
-        ),
-      },
-    ];
+    return {
+      output: [
+        {
+          sequenceNumber: 0,
+          startSeconds: 0,
+          content: Buffer.from(
+            `mock-audio:${shortDigest(Buffer.from(sourcePath))}`,
+          ),
+        },
+        {
+          sequenceNumber: 1,
+          startSeconds: 28,
+          content: Buffer.from(
+            `mock-audio-2:${shortDigest(Buffer.from(sourcePath))}`,
+          ),
+        },
+      ],
+      actualCostMicros: 0n,
+    };
   }
 
   async transcribeAudio(
     content: Buffer,
     signal: AbortSignal,
-  ): Promise<string> {
+  ): Promise<MediaProviderStageResult<string>> {
     throwIfAborted(signal);
-    return `模拟转写 ${shortDigest(content)}`;
+    return {
+      output: `模拟转写 ${shortDigest(content)}`,
+      actualCostMicros: 0n,
+    };
   }
 
   async analyzeImage(
     content: Buffer,
     signal: AbortSignal,
-  ): Promise<{ description: string; tags: string[] }> {
+  ): Promise<
+    MediaProviderStageResult<{ description: string; tags: string[] }>
+  > {
     throwIfAborted(signal);
     return {
-      description: `模拟图片分析 ${shortDigest(content)}`,
-      tags: ['模拟', '图片'],
+      output: {
+        description: `模拟图片分析 ${shortDigest(content)}`,
+        tags: ['模拟', '图片'],
+      },
+      actualCostMicros: 0n,
     };
   }
 
   async analyzeVideoTranscript(
     transcript: string,
     signal: AbortSignal,
-  ): Promise<{ summary: string; highlights: string[] }> {
+  ): Promise<
+    MediaProviderStageResult<{ summary: string; highlights: string[] }>
+  > {
     throwIfAborted(signal);
     return {
-      summary: `模拟视频总结：${transcript}`,
-      highlights: ['已完成临时音轨处理', '已完成分步转写'],
+      output: {
+        summary: `模拟视频总结：${transcript}`,
+        highlights: ['已完成临时音轨处理', '已完成分步转写'],
+      },
+      actualCostMicros: 0n,
     };
   }
 }
@@ -196,8 +229,11 @@ export class FfmpegMediaProcessingProvider extends MockMediaProcessingProvider {
   override prepareVideo(
     sourcePath: string,
     signal: AbortSignal,
-  ): Promise<ExtractedAudioSegment[]> {
-    return extractVideoAudioSegments(sourcePath, signal);
+  ): Promise<MediaProviderStageResult<ExtractedAudioSegment[]>> {
+    return extractVideoAudioSegments(sourcePath, signal).then((output) => ({
+      output,
+      actualCostMicros: 0n,
+    }));
   }
 }
 
@@ -222,7 +258,16 @@ export async function createMediaProcessingRequest(
     [input.userId, input.sourceFileId],
   );
   const mediaKind = source.rows[0]?.media_kind;
-  if (!isMediaKind(mediaKind)) throw new Error('media_source_not_found');
+  if (!isMediaKind(mediaKind)) {
+    const mode = await pool.query<{ ai_mode: string }>(
+      'SELECT ai_mode FROM users WHERE id = $1',
+      [input.userId],
+    );
+    if (mode.rows[0]?.ai_mode !== 'managed') {
+      throw new MediaRequestError('managed_mode_required');
+    }
+    throw new MediaRequestError('media_source_not_found');
+  }
   const stage = initialStage(mediaKind);
   await pool.query(
     `INSERT INTO media_processing_requests (
@@ -341,11 +386,11 @@ export async function createManagedMediaProcessingRequest(
       ? null
       : requireDurationSeconds(input.durationSeconds);
   if (mediaKind === 'video') {
-    const deepseek = await pool.query<{ status: string }>(
-      `SELECT status FROM provider_health WHERE provider = 'deepseek'`,
-    );
-    if (deepseek.rows[0]?.status !== 'active') {
-      throw new Error('provider_paused');
+    const client = await pool.connect();
+    try {
+      await assertProviderAvailable(client, 'deepseek');
+    } finally {
+      client.release();
     }
   }
   const estimateMicros = managedMediaEstimate(
@@ -386,7 +431,7 @@ export async function createManagedMediaProcessingRequest(
     request.duration_seconds !== durationSeconds ||
     BigInt(request.estimated_cost_micros) !== estimateMicros
   ) {
-    throw new Error('media_idempotency_conflict');
+    throw new MediaRequestError('media_idempotency_conflict');
   }
   const quote = await createManagedJobQuote(
     pool,
@@ -398,7 +443,7 @@ export async function createManagedMediaProcessingRequest(
     { requestId: request.id },
   );
   if (request.billing_job_id && request.billing_job_id !== quote.jobId) {
-    throw new Error('media_idempotency_conflict');
+    throw new MediaRequestError('media_idempotency_conflict');
   }
   await pool.query(
     `UPDATE media_processing_requests
@@ -725,15 +770,15 @@ function createMediaHandler(
         job.userId,
         request.source_file_id,
       );
+      const analyzed = await provider.analyzeImage(
+        content,
+        signal,
+        providerContext(job, request),
+        metadata.contentType,
+      );
       return withStageCost(
-        sanitizeImageResult(
-          await provider.analyzeImage(
-            content,
-            signal,
-            providerContext(job),
-            metadata.contentType,
-          ),
-        ),
+        sanitizeImageResult(analyzed.output),
+        analyzed.actualCostMicros,
         request,
         options,
       );
@@ -749,9 +794,19 @@ function createMediaHandler(
           request.source_file_id,
           sourcePath,
         );
+        if (
+          request.execution_mode === 'managed' &&
+          provider.requiresTrustedDuration
+        ) {
+          const measuredDuration = await probeMediaDurationSeconds(
+            sourcePath,
+            signal,
+          );
+          await saveTrustedDuration(pool, request, measuredDuration);
+        }
         const prepared = await provider.prepareVideo(sourcePath, signal);
         const segmentFileIds: string[] = [];
-        for (const segment of prepared) {
+        for (const segment of prepared.output) {
           throwIfAborted(signal);
           const temporary = await saveObjectFile(pool, store, {
             userId: job.userId,
@@ -763,7 +818,12 @@ function createMediaHandler(
           });
           segmentFileIds.push(temporary.id);
         }
-        return withStageCost({ segmentFileIds }, request, options);
+        return withStageCost(
+          { segmentFileIds },
+          prepared.actualCostMicros,
+          request,
+          options,
+        );
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
@@ -773,6 +833,32 @@ function createMediaHandler(
       request.stage === 'video_transcribe'
     ) {
       if (request.stage === 'audio_transcribe') {
+        let trustedDuration = request.duration_seconds;
+        if (
+          request.execution_mode === 'managed' &&
+          provider.requiresTrustedDuration
+        ) {
+          const directory = await mkdtemp(
+            join(tmpdir(), 'remind-audio-source-'),
+          );
+          try {
+            const sourcePath = join(directory, 'source-audio');
+            await materializeUserObjectFile(
+              pool,
+              store,
+              job.userId,
+              request.source_file_id,
+              sourcePath,
+            );
+            trustedDuration = await probeMediaDurationSeconds(
+              sourcePath,
+              signal,
+            );
+            await saveTrustedDuration(pool, request, trustedDuration);
+          } finally {
+            await rm(directory, { recursive: true, force: true });
+          }
+        }
         const content = await readUserObjectFile(
           pool,
           store,
@@ -784,20 +870,22 @@ function createMediaHandler(
           job.userId,
           request.source_file_id,
         );
-        const transcript = await provider.transcribeAudio(
+        const transcription = await provider.transcribeAudio(
           content,
           signal,
-          providerContext(job),
+          providerContext(job, request, trustedDuration),
           metadata.contentType,
         );
         return withStageCost(
-          { transcript: sanitizeText(transcript, 100_000) },
+          { transcript: sanitizeText(transcription.output, 100_000) },
+          transcription.actualCostMicros,
           request,
           options,
         );
       }
       const segments = await loadVideoSegments(pool, request);
       const lines: string[] = [];
+      let actualCostMicros = 0n;
       for (const segment of segments) {
         throwIfAborted(signal);
         const content = await readUserObjectFile(
@@ -806,15 +894,18 @@ function createMediaHandler(
           job.userId,
           segment.file_id,
         );
-        const text = sanitizeText(
-          await provider.transcribeAudio(
-            content,
-            signal,
-            providerContext(job),
-            'audio/mpeg',
+        const transcription = await provider.transcribeAudio(
+          content,
+          signal,
+          providerContext(
+            job,
+            request,
+            segmentDurationSeconds(request, segment.start_seconds),
           ),
-          10_000,
+          'audio/mpeg',
         );
+        actualCostMicros += transcription.actualCostMicros;
+        const text = sanitizeText(transcription.output, 10_000);
         if (text) {
           lines.push(`[${formatMediaTimestamp(segment.start_seconds)}] ${text}`);
         }
@@ -822,6 +913,7 @@ function createMediaHandler(
       if (!lines.length) throw new Error('media_transcript_empty');
       return withStageCost(
         { transcript: lines.join('\n').slice(0, 100_000) },
+        actualCostMicros,
         request,
         options,
       );
@@ -829,14 +921,14 @@ function createMediaHandler(
     if (request.stage === 'video_analyze') {
       const transcript = request.transcript;
       if (!transcript) throw new Error('media_transcript_missing');
+      const analyzed = await provider.analyzeVideoTranscript(
+        transcript,
+        signal,
+        providerContext(job, request),
+      );
       return withStageCost(
-        sanitizeVideoResult(
-          await provider.analyzeVideoTranscript(
-            transcript,
-            signal,
-            providerContext(job),
-          ),
-        ),
+        sanitizeVideoResult(analyzed.output),
+        analyzed.actualCostMicros,
         request,
         options,
       );
@@ -1319,15 +1411,25 @@ function shortDigest(content: Uint8Array): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 12);
 }
 
-function providerContext(job: Parameters<JobHandler>[0]): MediaProviderContext {
+function providerContext(
+  job: Parameters<JobHandler>[0],
+  request: MediaRequestRow,
+  durationSeconds = request.duration_seconds,
+): MediaProviderContext {
   return {
     userId: job.userId,
-    reservedCostMicros: BigInt(job.reservedCostMicros),
+    reservedCostMicros:
+      request.execution_mode === 'managed'
+        ? BigInt(request.estimated_cost_micros) -
+          BigInt(request.actual_cost_micros)
+        : BigInt(job.reservedCostMicros),
+    durationSeconds,
   };
 }
 
 function withStageCost(
   result: Record<string, unknown>,
+  providerCostMicros: bigint,
   request: MediaRequestRow,
   options: {
     stageCostMicros?: (
@@ -1339,14 +1441,43 @@ function withStageCost(
 ): Record<string, unknown> {
   const cost =
     request.execution_mode === 'managed'
-      ? (options.stageCostMicros?.(
+        ? (options.stageCostMicros?.(
           request.stage,
           result,
           mediaSnapshot(request),
-        ) ?? 0n)
+        ) ?? providerCostMicros)
       : 0n;
   if (cost < 0n) throw new Error('invalid_media_stage_cost');
   return { ...result, actualCostMicros: cost.toString() };
+}
+
+function segmentDurationSeconds(
+  request: MediaRequestRow,
+  startSeconds: number,
+): number | null {
+  if (request.duration_seconds === null) return null;
+  return Math.max(1, Math.min(28, request.duration_seconds - startSeconds));
+}
+
+async function saveTrustedDuration(
+  pool: Pool,
+  request: MediaRequestRow,
+  measuredDurationSeconds: number,
+): Promise<void> {
+  if (
+    request.duration_seconds === null ||
+    measuredDurationSeconds > request.duration_seconds
+  ) {
+    throw new Error('media_duration_exceeds_quote');
+  }
+  await pool.query(
+    `UPDATE media_processing_requests
+     SET duration_seconds = $1, updated_at = now()
+     WHERE user_id = $2 AND id = $3
+       AND execution_mode = 'managed'
+       AND status = 'processing'`,
+    [measuredDurationSeconds, request.user_id, request.id],
+  );
 }
 
 function objectCostMicros(value: unknown): bigint {
@@ -1368,21 +1499,25 @@ function managedMediaEstimate(
 ): bigint {
   if (mediaKind === 'image') return estimateManagedImageCost(catalog);
   if (durationSeconds === null) throw new Error('invalid_media_duration');
-  const transcription = estimateManagedTranscriptionCost(
-    catalog,
-    durationSeconds,
-  );
-  if (mediaKind === 'audio') return transcription;
-  const conservativeTranscriptTokens = Math.ceil(durationSeconds * 4);
+  if (mediaKind === 'audio') {
+    return estimateManagedTranscriptionCost(catalog, durationSeconds);
+  }
+  let transcription = 0n;
+  for (let start = 0; start < durationSeconds; start += 28) {
+    transcription += estimateManagedTranscriptionCost(
+      catalog,
+      Math.min(28, durationSeconds - start),
+    );
+  }
   return (
     transcription +
-    estimateManagedTextCost(catalog, conservativeTranscriptTokens, 1_500)
+    estimateManagedTextCost(catalog, 120_000, 1_500)
   );
 }
 
 function requireDurationSeconds(value: number | undefined): number {
   if (!Number.isInteger(value) || value === undefined || value < 1 || value > 21_600) {
-    throw new Error('invalid_media_duration');
+    throw new MediaRequestError('invalid_media_duration');
   }
   return value;
 }

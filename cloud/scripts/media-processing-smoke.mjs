@@ -10,7 +10,10 @@ import {
   saveApiCredential,
 } from '../dist/ai-settings.js';
 import { creditBalance, getBillingAccount } from '../dist/billing.js';
-import { ByokMediaProcessingProvider } from '../dist/byok-media-provider.js';
+import {
+  ByokMediaProcessingProvider,
+  RemoteMediaProcessingProvider,
+} from '../dist/byok-media-provider.js';
 import { LocalAesGcmCredentialCipher } from '../dist/credential-cipher.js';
 import { processNextCancellation, runNextJob } from '../dist/jobs.js';
 import { confirmAndReserveManagedJobQuote } from '../dist/job-quotes.js';
@@ -28,6 +31,7 @@ import {
   MediaProviderAuthorizationError,
   resolveMediaProviderCredential,
 } from '../dist/media-provider-routing.js';
+import { MediaProviderHttpError } from '../dist/media-provider-clients.js';
 import {
   cleanupNextExpiredObject,
   saveObjectFile,
@@ -300,7 +304,11 @@ try {
       },
     },
   );
-  const providerContext = { userId: firstUser, reservedCostMicros: 0n };
+  const providerContext = {
+    userId: firstUser,
+    reservedCostMicros: 0n,
+    durationSeconds: null,
+  };
   assert.equal(
     (
       await routedProvider.analyzeImage(
@@ -309,16 +317,18 @@ try {
         providerContext,
         'image/png',
       )
-    ).description,
+    ).output.description,
     '路由图片结果',
   );
   assert.equal(
-    await routedProvider.transcribeAudio(
+    (
+      await routedProvider.transcribeAudio(
       Buffer.from('audio'),
       new AbortController().signal,
       providerContext,
       'audio/mpeg',
-    ),
+      )
+    ).output,
     '路由转写结果',
   );
   assert.equal(
@@ -328,13 +338,84 @@ try {
         new AbortController().signal,
         providerContext,
       )
-    ).summary,
+    ).output.summary,
     '路由视频结果',
   );
   assert.deepEqual(routedCalls, [
     ['image', 'user-zhipu-test-key-123456'],
     ['audio', 'user-zhipu-test-key-123456'],
     ['video', 'user-deepseek-test-key-123456'],
+  ]);
+  const managedRoutedCalls = [];
+  const managedProvider = new RemoteMediaProcessingProvider(
+    pool,
+    cipher,
+    {
+      managedCredentials: {
+        zhipu: 'platform-zhipu-test-key-123456',
+        deepseek: 'platform-deepseek-test-key-123456',
+      },
+      managedPriceCatalog: {
+        zhipuVisionPerImageMicros: 1_200_000n,
+        zhipuAsrPerMinuteMicros: 1_200_000n,
+        deepseekInputPerMillionTokensMicros: 2_000_000n,
+        deepseekOutputPerMillionTokensMicros: 4_000_000n,
+      },
+    },
+    {
+      async analyzeImage(key) {
+        managedRoutedCalls.push(['image', key]);
+        return { description: '托管图片结果', tags: [], model: 'test-vision' };
+      },
+      async transcribeAudio(key) {
+        managedRoutedCalls.push(['audio', key]);
+        return { transcript: '托管转写结果', model: 'test-asr' };
+      },
+    },
+    {
+      async summarizeVideoTranscript(key) {
+        managedRoutedCalls.push(['video', key]);
+        return {
+          summary: '托管视频结果',
+          highlights: [],
+          model: 'test-text',
+          usage: { promptTokens: 100, completionTokens: 50 },
+        };
+      },
+    },
+  );
+  const managedProviderContext = {
+    userId: secondUser,
+    reservedCostMicros: 2_000_000n,
+    durationSeconds: 30,
+  };
+  const managedImageResult = await managedProvider.analyzeImage(
+    Buffer.from('image'),
+    new AbortController().signal,
+    managedProviderContext,
+    'image/png',
+  );
+  assert.equal(managedImageResult.output.description, '托管图片结果');
+  assert.equal(managedImageResult.actualCostMicros, 1_200_000n);
+  const managedAudioResult = await managedProvider.transcribeAudio(
+    Buffer.from('audio'),
+    new AbortController().signal,
+    managedProviderContext,
+    'audio/mpeg',
+  );
+  assert.equal(managedAudioResult.output, '托管转写结果');
+  assert.equal(managedAudioResult.actualCostMicros, 600_000n);
+  const managedVideoResult = await managedProvider.analyzeVideoTranscript(
+    'transcript',
+    new AbortController().signal,
+    managedProviderContext,
+  );
+  assert.equal(managedVideoResult.output.summary, '托管视频结果');
+  assert.equal(managedVideoResult.actualCostMicros, 400n);
+  assert.deepEqual(managedRoutedCalls, [
+    ['image', 'platform-zhipu-test-key-123456'],
+    ['audio', 'platform-zhipu-test-key-123456'],
+    ['video', 'platform-deepseek-test-key-123456'],
   ]);
   const videoRequest = await createByokMediaProcessingRequest(pool, {
     userId: firstUser,
@@ -664,8 +745,62 @@ try {
     3,
   );
 
+  const failingManagedProvider = new RemoteMediaProcessingProvider(
+    pool,
+    cipher,
+    {
+      managedCredentials: {
+        zhipu: 'platform-zhipu-test-key-123456',
+        deepseek: 'platform-deepseek-test-key-123456',
+      },
+      managedPriceCatalog: managedCatalog,
+    },
+    {
+      async analyzeImage() {
+        throw new MediaProviderHttpError('zhipu', 401);
+      },
+    },
+  );
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await assert.rejects(
+      failingManagedProvider.analyzeImage(
+        Buffer.from('image'),
+        new AbortController().signal,
+        {
+          userId: secondUser,
+          reservedCostMicros: 1_200_000n,
+          durationSeconds: null,
+        },
+        'image/png',
+      ),
+      /zhipu_http_401/,
+    );
+  }
+  assert.deepEqual(
+    (
+      await pool.query(
+        `SELECT status, pause_reason
+         FROM provider_health WHERE provider = 'zhipu'`,
+      )
+    ).rows[0],
+    {
+      status: 'paused',
+      pause_reason: 'consecutive_failures:zhipu_http_401',
+    },
+  );
+  assert.equal(
+    (
+      await pool.query(
+        `SELECT count(*)::int AS count
+         FROM operational_alerts
+         WHERE provider = 'zhipu' AND acknowledged_at IS NULL`,
+      )
+    ).rows[0].count,
+    1,
+  );
+
   console.log(
-    'media processing smoke test passed: BYOK execution plus managed one-confirmation envelopes, multi-stage cost accumulation, final settlement, cancellation release, tenant isolation, retries, and temporary cleanup',
+    'media processing smoke test passed: BYOK execution plus managed platform credential routing, provider usage pricing, one-confirmation envelopes, final settlement, cancellation release, managed credential circuit breaking, retries, and temporary cleanup',
   );
 } finally {
   await pool.end();

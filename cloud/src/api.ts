@@ -35,14 +35,23 @@ import { getUserJob, requestJobCancellation } from './jobs.js';
 import { ProviderPausedError } from './provider-health.js';
 import {
   createByokMediaProcessingRequest,
+  createManagedMediaProcessingRequest,
   getUserMediaProcessingRequest,
   MediaRequestError,
   requestMediaProcessingCancellation,
 } from './media-processing.js';
+import {
+  managedMediaPriceCatalogFromEnvironment,
+  ManagedMediaPricingUnavailableError,
+} from './media-pricing.js';
 
 const port = apiPort();
 const credentialCipher = credentialCipherFromEnvironment();
 const configuredMediaProvider = mediaProviderMode();
+const managedMediaPriceCatalog =
+  configuredMediaProvider === 'remote'
+    ? managedMediaPriceCatalogFromEnvironment()
+    : null;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 const allowedPlatforms = new Set<DevicePlatform>([
   'android',
@@ -239,10 +248,6 @@ const server = createServer(async (request, response) => {
         sendJson(response, 401, { error: 'unauthorized' });
         return;
       }
-      if (configuredMediaProvider !== 'byok') {
-        sendJson(response, 503, { error: 'media_processing_unavailable' });
-        return;
-      }
       const body = await readJsonBody(request);
       const sourceFileId =
         isRecord(body) && typeof body.sourceFileId === 'string'
@@ -252,19 +257,50 @@ const server = createServer(async (request, response) => {
         isRecord(body) && typeof body.idempotencyKey === 'string'
           ? body.idempotencyKey
           : '';
+      const durationSeconds =
+        isRecord(body) && typeof body.durationSeconds === 'number'
+          ? body.durationSeconds
+          : undefined;
       if (!isUuid(sourceFileId) || !idempotencyKey) {
         sendJson(response, 400, { error: 'invalid_request' });
         return;
       }
-      sendJson(
-        response,
-        201,
-        await createByokMediaProcessingRequest(database, {
-          userId: account.userId,
-          sourceFileId,
-          idempotencyKey,
-        }),
-      );
+      if (account.aiMode === 'bring_your_own_key') {
+        if (
+          configuredMediaProvider !== 'byok' &&
+          configuredMediaProvider !== 'remote'
+        ) {
+          sendJson(response, 503, { error: 'media_processing_unavailable' });
+          return;
+        }
+        sendJson(response, 201, await createByokMediaProcessingRequest(
+          database,
+          {
+            userId: account.userId,
+            sourceFileId,
+            idempotencyKey,
+          },
+        ));
+        return;
+      }
+      if (
+        account.aiMode === 'managed' &&
+        configuredMediaProvider === 'remote' &&
+        managedMediaPriceCatalog
+      ) {
+        sendJson(response, 201, await createManagedMediaProcessingRequest(
+          database,
+          {
+            userId: account.userId,
+            sourceFileId,
+            idempotencyKey,
+            durationSeconds,
+          },
+          managedMediaPriceCatalog,
+        ));
+        return;
+      }
+      sendJson(response, 503, { error: 'media_processing_unavailable' });
       return;
     }
 
@@ -546,9 +582,17 @@ const server = createServer(async (request, response) => {
     if (error instanceof MediaRequestError) {
       sendJson(
         response,
-        error.code === 'media_source_not_found' ? 404 : 409,
+        error.code === 'media_source_not_found'
+          ? 404
+          : error.code === 'invalid_media_duration'
+            ? 400
+            : 409,
         { error: error.code },
       );
+      return;
+    }
+    if (error instanceof ManagedMediaPricingUnavailableError) {
+      sendJson(response, 503, { error: error.message });
       return;
     }
     console.error(

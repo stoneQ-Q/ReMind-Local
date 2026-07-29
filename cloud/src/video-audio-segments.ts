@@ -70,6 +70,31 @@ export async function extractVideoAudioSegments(
   }
 }
 
+export async function probeMediaDurationSeconds(
+  sourcePath: string,
+  signal: AbortSignal,
+  executable = 'ffprobe',
+): Promise<number> {
+  const output = await runProcess(
+    executable,
+    [
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration',
+      '-of',
+      'default=noprint_wrappers=1:nokey=1',
+      sourcePath,
+    ],
+    signal,
+  );
+  const duration = Number(output.trim());
+  if (!Number.isFinite(duration) || duration <= 0 || duration > 21_600) {
+    throw new Error('invalid_media_duration');
+  }
+  return Math.ceil(duration);
+}
+
 export function formatMediaTimestamp(seconds: number): string {
   const safe = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(safe / 60);
@@ -107,6 +132,52 @@ function runFfmpeg(
     child.once('close', (code) => {
       if (code === 0) finish();
       else finish(new Error(`ffmpeg_failed_${code ?? 'unknown'}:${safeError(errorText)}`));
+    });
+  });
+}
+
+function runProcess(
+  executable: string,
+  arguments_: string[],
+  signal: AbortSignal,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    throwIfAborted(signal);
+    const child = spawn(executable, arguments_, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let settled = false;
+    let output = '';
+    let errorText = '';
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      error ? reject(error) : resolve(output);
+    };
+    const abort = () => {
+      child.kill('SIGTERM');
+      finish(new Error('job_cancelled'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      output = (output + chunk).slice(-1_000);
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      errorText = (errorText + chunk).slice(-1_000);
+    });
+    child.once('error', (error) => finish(error));
+    child.once('close', (code) => {
+      if (code === 0) finish();
+      else {
+        finish(
+          new Error(
+            `ffprobe_failed_${code ?? 'unknown'}:${safeError(errorText)}`,
+          ),
+        );
+      }
     });
   });
 }

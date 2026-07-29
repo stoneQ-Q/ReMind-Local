@@ -1,6 +1,9 @@
 import { hostname } from 'node:os';
 
-import { ByokMediaProcessingProvider } from './byok-media-provider.js';
+import {
+  ByokMediaProcessingProvider,
+  RemoteMediaProcessingProvider,
+} from './byok-media-provider.js';
 import { mediaProviderMode, workerPollMs } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
@@ -18,6 +21,10 @@ import {
   createMediaProcessingHandlers,
   ensureNextMediaProcessingJob,
 } from './media-processing.js';
+import { managedMediaPriceCatalogFromEnvironment } from './media-pricing.js';
+import {
+  requiredManagedProviderCredentialsFromEnvironment,
+} from './media-provider-routing.js';
 import { cleanupNextExpiredObject } from './object-files.js';
 import { objectStoreFromEnvironment } from './object-store.js';
 import {
@@ -39,6 +46,21 @@ const mediaHandlers: JobHandlers =
           objectStore,
           new ByokMediaProcessingProvider(database, credentialCipher),
         )
+      : mediaMode === 'remote'
+        ? createMediaProcessingHandlers(
+            database,
+            objectStore,
+            new RemoteMediaProcessingProvider(
+              database,
+              credentialCipher,
+              {
+                managedCredentials:
+                  requiredManagedProviderCredentialsFromEnvironment(),
+                managedPriceCatalog:
+                  managedMediaPriceCatalogFromEnvironment(),
+              },
+            ),
+          )
     : new Map();
 const handlers: JobHandlers = new Map([
   [

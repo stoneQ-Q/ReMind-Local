@@ -98,7 +98,7 @@ PostgreSQL 备份只包含对象元数据，不包含 `remind-object-data` 中�
 - 视频临时音轨完成转写后立即到期，由对象清理 Worker 删除；源文件不会被临时清理；
 - 整个请求支持取消、跨用户隔离和幂等创建。
 
-媒体处理默认关闭。`REMIND_MEDIA_PROVIDER=mock` 只用于无网络、零费用的故障测试；`REMIND_MEDIA_PROVIDER=byok` 才会注册真实 BYOK 处理器。未知配置会使 API 和 Worker 拒绝启动，因此不会把模拟结果误当作真实分析返回给用户。
+媒体处理默认关闭。`REMIND_MEDIA_PROVIDER=mock` 只用于无网络、零费用的故障测试；`REMIND_MEDIA_PROVIDER=byok` 只注册真实 BYOK 处理器；`REMIND_MEDIA_PROVIDER=remote` 同时启用 BYOK 和托管处理，但要求 Worker 具备两家平台密钥、API 与 Worker 具备完整价格表。平台密钥只传给 Worker，API 不持有。未知配置或托管配置缺失会使服务拒绝启动，因此不会把模拟结果误当作真实分析返回给用户。
 
 真实供应商的网络与凭据边界已经接入 BYOK Worker：
 

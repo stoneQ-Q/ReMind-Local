@@ -106,3 +106,18 @@ export function managedProviderCredentialsFromEnvironment(
     ...(zhipu ? { zhipu } : {}),
   };
 }
+
+export function requiredManagedProviderCredentialsFromEnvironment(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Required<ManagedProviderCredentials> {
+  const credentials = managedProviderCredentialsFromEnvironment(environment);
+  if (!credentials.deepseek || !credentials.zhipu) {
+    throw new MediaProviderAuthorizationError(
+      'managed_provider_credential_required',
+    );
+  }
+  return {
+    deepseek: credentials.deepseek,
+    zhipu: credentials.zhipu,
+  };
+}

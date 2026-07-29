@@ -37,6 +37,9 @@ try {
   await runNode(['scripts/object-storage-smoke.mjs'], {
     REMIND_BILLING_TEST_DATABASE_URL: testUrl,
   });
+  await runNode(['scripts/managed-media-api-smoke.mjs'], {
+    REMIND_BILLING_TEST_DATABASE_URL: testUrl,
+  });
   await runNode(['scripts/media-processing-smoke.mjs'], {
     REMIND_BILLING_TEST_DATABASE_URL: testUrl,
   });
