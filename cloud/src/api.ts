@@ -5,6 +5,7 @@ import {
   createAnonymousAccount,
   listUserDevices,
   recoverAnonymousAccount,
+  refreshDeviceSession,
   type DevicePlatform,
   type DeviceRegistration,
 } from './auth.js';
@@ -79,6 +80,36 @@ const server = createServer(async (request, response) => {
       );
       if (!session) {
         sendJson(response, 401, { error: 'invalid_recovery_code' });
+        return;
+      }
+      sendJson(response, 201, session);
+      return;
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/auth/refresh'
+    ) {
+      const body = await readJsonBody(request);
+      const deviceId =
+        isRecord(body) && typeof body.deviceId === 'string'
+          ? body.deviceId
+          : '';
+      const deviceSecret =
+        isRecord(body) && typeof body.deviceSecret === 'string'
+          ? body.deviceSecret
+          : '';
+      if (!deviceId || !deviceSecret) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      const session = await refreshDeviceSession(
+        database,
+        deviceId,
+        deviceSecret,
+      );
+      if (!session) {
+        sendJson(response, 401, { error: 'invalid_device_credentials' });
         return;
       }
       sendJson(response, 201, session);

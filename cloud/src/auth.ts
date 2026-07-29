@@ -112,6 +112,62 @@ export async function recoverAnonymousAccount(
   }
 }
 
+export async function refreshDeviceSession(
+  pool: Pool,
+  deviceId: string,
+  deviceSecret: string,
+): Promise<AuthSession | null> {
+  if (!deviceId || !deviceSecret.startsWith('rmd_')) return null;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const device = await client.query<{ user_id: string }>(
+      `SELECT device.user_id
+       FROM devices AS device
+       JOIN users AS account ON account.id = device.user_id
+       WHERE device.id = $1
+         AND device.secret_hash = $2
+         AND device.revoked_at IS NULL
+         AND account.status = 'active'
+       FOR UPDATE OF device`,
+      [deviceId, hashSecret(deviceSecret)],
+    );
+    const userId = device.rows[0]?.user_id;
+    if (!userId) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    await client.query(
+      `UPDATE user_sessions
+       SET revoked_at = now()
+       WHERE user_id = $1
+         AND device_id = $2
+         AND revoked_at IS NULL`,
+      [userId, deviceId],
+    );
+    await client.query(
+      `UPDATE devices SET last_seen_at = now()
+       WHERE user_id = $1 AND id = $2`,
+      [userId, deviceId],
+    );
+    const session = await createSession(
+      client,
+      userId,
+      deviceId,
+      deviceSecret,
+    );
+    await client.query('COMMIT');
+    return session;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function authenticateAccessToken(
   pool: Pool,
   authorization: string | undefined,
@@ -219,6 +275,15 @@ async function createDeviceSession(
     ],
   );
   const deviceId = requiredRow(device.rows[0], 'device');
+  return createSession(client, userId, deviceId, deviceSecret);
+}
+
+async function createSession(
+  client: PoolClient,
+  userId: string,
+  deviceId: string,
+  deviceSecret: string,
+): Promise<AuthSession> {
   const accessToken = createOpaqueSecret('rms');
   const accessTokenExpiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
   await client.query(

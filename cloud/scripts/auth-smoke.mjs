@@ -30,6 +30,30 @@ try {
   assert.equal(firstProfile.id, first.userId);
   assert.equal(secondProfile.id, second.userId);
 
+  const refreshed = await requestJson('/api/v1/auth/refresh', {
+    deviceId: first.deviceId,
+    deviceSecret: first.deviceSecret,
+  });
+  assert.equal(refreshed.status, 201);
+  assert.equal(refreshed.body.userId, first.userId);
+  assert.equal(refreshed.body.deviceId, first.deviceId);
+  assert.notEqual(refreshed.body.accessToken, first.accessToken);
+
+  const oldSession = await fetch(`${apiBaseUrl}/api/v1/users/me`, {
+    headers: { Authorization: `Bearer ${first.accessToken}` },
+  });
+  assert.equal(oldSession.status, 401);
+  const refreshedProfile = await authenticatedJson(
+    '/api/v1/users/me',
+    refreshed.body.accessToken,
+  );
+  assert.equal(refreshedProfile.id, first.userId);
+  const invalidRefresh = await requestJson('/api/v1/auth/refresh', {
+    deviceId: first.deviceId,
+    deviceSecret: 'rmd_invalid',
+  });
+  assert.equal(invalidRefresh.status, 401);
+
   const recovered = await requestJson('/api/v1/auth/recover', {
     recoveryCode: first.recoveryCode.toLowerCase().replaceAll('-', ' '),
     platform: 'ios',
@@ -84,7 +108,7 @@ try {
   assert.equal(storedSecrets.rows[0].devices_hashed, true);
 
   console.log(
-    'anonymous auth smoke test passed: registration, recovery, sessions, and two-user isolation',
+    'anonymous auth smoke test passed: registration, renewal, recovery, sessions, and two-user isolation',
   );
 } finally {
   if (createdUserIds.length) {
