@@ -5,6 +5,7 @@ node_modules/
 server/.wrangler/
 server/.dev.vars
 gateway/.env
+cloud/.env
 
 # Expo
 .expo/

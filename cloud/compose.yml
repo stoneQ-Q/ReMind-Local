@@ -1,0 +1,26 @@
+name: remind-cloud
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${REMIND_POSTGRES_DB:-remind}
+      POSTGRES_USER: ${REMIND_POSTGRES_USER:-remind}
+      POSTGRES_PASSWORD: ${REMIND_POSTGRES_PASSWORD:?set REMIND_POSTGRES_PASSWORD in cloud/.env}
+    ports:
+      - "127.0.0.1:${REMIND_DB_PORT:-5432}:5432"
+    volumes:
+      - remind-postgres-data:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  remind-postgres-data:
