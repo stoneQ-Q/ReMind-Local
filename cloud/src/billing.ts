@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 
+import { assertProviderAvailable } from './provider-health.js';
+
 const BILLING_GLOBAL_LOCK_ID = 7_214_306_302;
 
 export type BillingErrorCode =
@@ -16,6 +18,9 @@ export type BillingErrorCode =
   | 'platform_daily_limit_exceeded'
   | 'platform_monthly_limit_exceeded'
   | 'actual_cost_exceeds_reservation'
+  | 'high_cost_confirmation_required'
+  | 'quote_amount_mismatch'
+  | 'quote_expired'
   | 'idempotency_conflict';
 
 export class BillingError extends Error {
@@ -60,11 +65,17 @@ type JobRow = {
   id: string;
   user_id: string;
   status: 'queued' | 'reserved' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  estimated_cost_micros: string;
   reserved_cost_micros: string;
+  provider: string | null;
+  confirmation_required: boolean;
+  confirmed_at: Date | null;
+  quote_expires_at: Date | null;
 };
 
 type PolicyRow = {
   max_job_cost_micros: string;
+  high_cost_confirmation_threshold_micros: string;
   platform_daily_limit_micros: string;
   platform_monthly_limit_micros: string;
 };
@@ -190,10 +201,30 @@ export async function reserveJobCost(
     const account = await requireAccount(client, userId);
     const job = await requireJob(client, userId, jobId);
     if (job.status !== 'queued') throw new BillingError('job_not_reservable');
+    if (job.quote_expires_at && job.quote_expires_at.getTime() <= Date.now()) {
+      throw new BillingError('quote_expired');
+    }
+    if (
+      job.quote_expires_at &&
+      BigInt(job.estimated_cost_micros) !== estimateMicros
+    ) {
+      throw new BillingError('quote_amount_mismatch');
+    }
+    if (job.provider) {
+      await assertProviderAvailable(client, job.provider);
+    }
 
     const policy = await requirePolicy(client);
     if (estimateMicros > BigInt(policy.max_job_cost_micros)) {
       throw new BillingError('job_cost_limit_exceeded');
+    }
+    if (
+      (job.confirmation_required ||
+        estimateMicros >=
+          BigInt(policy.high_cost_confirmation_threshold_micros)) &&
+      !job.confirmed_at
+    ) {
+      throw new BillingError('high_cost_confirmation_required');
     }
     const balance = BigInt(account.balance_micros);
     const reserved = BigInt(account.reserved_micros);
@@ -422,7 +453,9 @@ async function requireJob(
   jobId: string,
 ): Promise<JobRow> {
   const result = await client.query<JobRow>(
-    `SELECT id, user_id, status, reserved_cost_micros
+    `SELECT id, user_id, status, estimated_cost_micros,
+            reserved_cost_micros, provider, confirmation_required,
+            confirmed_at, quote_expires_at
      FROM jobs
      WHERE user_id = $1 AND id = $2
      FOR UPDATE`,
@@ -435,8 +468,9 @@ async function requireJob(
 
 async function requirePolicy(client: PoolClient): Promise<PolicyRow> {
   const result = await client.query<PolicyRow>(
-    `SELECT max_job_cost_micros, platform_daily_limit_micros,
-            platform_monthly_limit_micros
+    `SELECT max_job_cost_micros,
+            high_cost_confirmation_threshold_micros,
+            platform_daily_limit_micros, platform_monthly_limit_micros
      FROM billing_policy
      WHERE singleton = true`,
   );

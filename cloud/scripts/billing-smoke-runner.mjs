@@ -22,6 +22,9 @@ try {
   await runNode(['scripts/billing-smoke.mjs'], {
     REMIND_BILLING_TEST_DATABASE_URL: testUrl,
   });
+  await runNode(['scripts/cost-controls-smoke.mjs'], {
+    REMIND_BILLING_TEST_DATABASE_URL: testUrl,
+  });
 } finally {
   await admin.query(
     `SELECT pg_terminate_backend(pid)

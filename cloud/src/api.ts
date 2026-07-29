@@ -18,10 +18,20 @@ import {
   saveApiCredential,
   updateAiMode,
 } from './ai-settings.js';
-import { getBillingAccount, listLedgerEntries } from './billing.js';
+import {
+  BillingError,
+  getBillingAccount,
+  listLedgerEntries,
+} from './billing.js';
 import { apiPort } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
+import {
+  confirmAndReserveManagedJobQuote,
+  getManagedJobQuote,
+  JobQuoteError,
+} from './job-quotes.js';
+import { ProviderPausedError } from './provider-health.js';
 
 const port = apiPort();
 const credentialCipher = credentialCipherFromEnvironment();
@@ -205,6 +215,59 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const jobQuoteMatch = request.url?.match(
+      /^\/api\/v1\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/quote$/i,
+    );
+    if (jobQuoteMatch && request.method === 'GET') {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const quote = await getManagedJobQuote(
+        database,
+        account.userId,
+        jobQuoteMatch[1] ?? '',
+      );
+      if (!quote) {
+        sendJson(response, 404, { error: 'quote_not_found' });
+        return;
+      }
+      sendJson(response, 200, quote);
+      return;
+    }
+
+    const jobConfirmationMatch = request.url?.match(
+      /^\/api\/v1\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/confirm$/i,
+    );
+    if (jobConfirmationMatch && request.method === 'POST') {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      if (account.aiMode !== 'managed') {
+        sendJson(response, 409, { error: 'managed_mode_required' });
+        return;
+      }
+      sendJson(
+        response,
+        200,
+        await confirmAndReserveManagedJobQuote(
+          database,
+          account.userId,
+          jobConfirmationMatch[1] ?? '',
+        ),
+      );
+      return;
+    }
+
     if (
       request.method === 'GET' &&
       request.url === '/api/v1/ai/settings'
@@ -313,6 +376,22 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     if (error instanceof RequestBodyError) {
       sendJson(response, error.status, { error: error.code });
+      return;
+    }
+    if (error instanceof ProviderPausedError) {
+      sendJson(response, 503, { error: error.code });
+      return;
+    }
+    if (error instanceof JobQuoteError) {
+      sendJson(response, error.code === 'quote_not_found' ? 404 : 409, {
+        error: error.code,
+      });
+      return;
+    }
+    if (error instanceof BillingError) {
+      sendJson(response, error.code === 'invalid_amount' ? 400 : 409, {
+        error: error.code,
+      });
       return;
     }
     console.error(

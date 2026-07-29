@@ -269,8 +269,8 @@ async function createUser() {
 
 async function createJob(userId, key) {
   const result = await pool.query(
-    `INSERT INTO jobs (user_id, type, idempotency_key)
-     VALUES ($1, 'billing.smoke', $2)
+    `INSERT INTO jobs (user_id, type, idempotency_key, confirmed_at)
+     VALUES ($1, 'billing.smoke', $2, now())
      RETURNING id`,
     [userId, key],
   );
