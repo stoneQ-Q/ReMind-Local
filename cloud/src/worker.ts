@@ -13,6 +13,8 @@ import {
   createLinkParseHandler,
   ensureNextLinkParseJob,
 } from './link-processing.js';
+import { cleanupNextExpiredObject } from './object-files.js';
+import { objectStoreFromEnvironment } from './object-store.js';
 import {
   createWechatPollHandler,
   ensureNextWechatPollJob,
@@ -21,6 +23,7 @@ import {
 const pollMs = workerPollMs();
 const workerId = `${hostname()}:${process.pid}`;
 const credentialCipher = credentialCipherFromEnvironment();
+const objectStore = objectStoreFromEnvironment();
 const handlers: JobHandlers = new Map([
   [
     'system.noop',
@@ -42,6 +45,7 @@ void run().finally(async () => {
 async function run(): Promise<void> {
   while (!stopping) {
     try {
+      await cleanupNextExpiredObject(database, objectStore);
       if (await ensureNextWechatPollJob(database)) continue;
       if (await ensureNextLinkParseJob(database)) continue;
       if (await recoverNextExpiredLease(database)) continue;

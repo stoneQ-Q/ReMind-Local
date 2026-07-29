@@ -69,6 +69,9 @@ services:
       REMIND_CREDENTIAL_KEY_VERSION: ${REMIND_CREDENTIAL_KEY_VERSION}
       REMIND_CREDENTIAL_KEY_BASE64: ${REMIND_CREDENTIAL_KEY_BASE64}
       REMIND_CREDENTIAL_KEY_RING_JSON: ${REMIND_CREDENTIAL_KEY_RING_JSON:-}
+      REMIND_OBJECT_STORE_ROOT: /var/lib/remind/objects
+    volumes:
+      - remind-object-data:/var/lib/remind/objects
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -94,3 +97,4 @@ services:
 
 volumes:
   remind-postgres-data:
+  remind-object-data:

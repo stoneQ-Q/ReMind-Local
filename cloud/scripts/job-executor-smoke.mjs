@@ -85,6 +85,7 @@ try {
   ]);
   await runNextJob(pool, 'retry-worker', retryHandlers, { retryBaseMs: 0 });
   assert.equal((await getUserJob(pool, firstUser, retryJob)).status, 'queued');
+  await wait(20);
   await runNextJob(pool, 'retry-worker', retryHandlers, { retryBaseMs: 0 });
   assert.equal((await getUserJob(pool, firstUser, retryJob)).status, 'succeeded');
   assert.equal(retryCalls, 2);
