@@ -1,14 +1,24 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { Pool, PoolClient } from 'pg';
 
 import type { JobHandler, JobHandlers } from './jobs.js';
 import { requestJobCancellation } from './jobs.js';
 import {
+  getUserObjectFileMetadata,
+  materializeUserObjectFile,
   readUserObjectFile,
   saveObjectFile,
 } from './object-files.js';
 import type { ObjectStore } from './object-store.js';
+import {
+  extractVideoAudioSegments,
+  formatMediaTimestamp,
+  type ExtractedAudioSegment,
+} from './video-audio-segments.js';
 
 type MediaKind = 'image' | 'audio' | 'video';
 type MediaStage =
@@ -57,34 +67,67 @@ export type MediaRequestSnapshot = {
   updatedAt: string;
 };
 
+export class MediaRequestError extends Error {
+  constructor(
+    readonly code:
+      | 'byok_mode_required'
+      | 'media_provider_credential_required'
+      | 'media_source_not_found'
+      | 'media_idempotency_conflict',
+  ) {
+    super(code);
+  }
+}
+
 export interface MediaProcessingProvider {
   prepareVideo(
+    sourcePath: string,
+    signal: AbortSignal,
+  ): Promise<ExtractedAudioSegment[]>;
+  transcribeAudio(
     content: Buffer,
     signal: AbortSignal,
-  ): Promise<{ audioContent: Uint8Array; contentType: 'audio/mpeg' }>;
-  transcribeAudio(content: Buffer, signal: AbortSignal): Promise<string>;
+    context?: MediaProviderContext,
+    contentType?: string,
+  ): Promise<string>;
   analyzeImage(
     content: Buffer,
     signal: AbortSignal,
+    context?: MediaProviderContext,
+    contentType?: string,
   ): Promise<{ description: string; tags: string[] }>;
   analyzeVideoTranscript(
     transcript: string,
     signal: AbortSignal,
+    context?: MediaProviderContext,
   ): Promise<{ summary: string; highlights: string[] }>;
 }
 
+export type MediaProviderContext = {
+  userId: string;
+  reservedCostMicros: bigint;
+};
+
 export class MockMediaProcessingProvider implements MediaProcessingProvider {
   async prepareVideo(
-    content: Buffer,
+    sourcePath: string,
     signal: AbortSignal,
-  ): Promise<{ audioContent: Uint8Array; contentType: 'audio/mpeg' }> {
+  ): Promise<ExtractedAudioSegment[]> {
     throwIfAborted(signal);
-    return {
-      audioContent: Buffer.from(
-        `mock-audio:${createHash('sha256').update(content).digest('hex')}`,
-      ),
-      contentType: 'audio/mpeg',
-    };
+    return [
+      {
+        sequenceNumber: 0,
+        startSeconds: 0,
+        content: Buffer.from(`mock-audio:${shortDigest(Buffer.from(sourcePath))}`),
+      },
+      {
+        sequenceNumber: 1,
+        startSeconds: 28,
+        content: Buffer.from(
+          `mock-audio-2:${shortDigest(Buffer.from(sourcePath))}`,
+        ),
+      },
+    ];
   }
 
   async transcribeAudio(
@@ -115,6 +158,15 @@ export class MockMediaProcessingProvider implements MediaProcessingProvider {
       summary: `模拟视频总结：${transcript}`,
       highlights: ['已完成临时音轨处理', '已完成分步转写'],
     };
+  }
+}
+
+export class FfmpegMediaProcessingProvider extends MockMediaProcessingProvider {
+  override prepareVideo(
+    sourcePath: string,
+    signal: AbortSignal,
+  ): Promise<ExtractedAudioSegment[]> {
+    return extractVideoAudioSegments(sourcePath, signal);
   }
 }
 
@@ -159,6 +211,70 @@ export async function createMediaProcessingRequest(
     throw new Error('media_idempotency_conflict');
   }
   return mediaSnapshot(row);
+}
+
+export async function createByokMediaProcessingRequest(
+  pool: Pool,
+  input: {
+    userId: string;
+    sourceFileId: string;
+    idempotencyKey: string;
+  },
+): Promise<MediaRequestSnapshot> {
+  const source = await pool.query<{ media_kind: string }>(
+    `SELECT file.media_kind
+     FROM users AS owner
+     JOIN files AS file ON file.user_id = owner.id
+     WHERE owner.id = $1
+       AND owner.status = 'active'
+       AND owner.ai_mode = 'bring_your_own_key'
+       AND file.id = $2
+       AND file.purpose = 'source'
+       AND file.status = 'ready'
+       AND file.deleted_at IS NULL`,
+    [input.userId, input.sourceFileId],
+  );
+  const mediaKind = source.rows[0]?.media_kind;
+  if (!isMediaKind(mediaKind)) {
+    const mode = await pool.query<{ ai_mode: string }>(
+      'SELECT ai_mode FROM users WHERE id = $1',
+      [input.userId],
+    );
+    if (mode.rows[0]?.ai_mode !== 'bring_your_own_key') {
+      throw new MediaRequestError('byok_mode_required');
+    }
+    throw new MediaRequestError('media_source_not_found');
+  }
+  const requiredProviders =
+    mediaKind === 'video' ? ['zhipu', 'deepseek'] : ['zhipu'];
+  const credentials = await pool.query<{ provider: string }>(
+    `SELECT provider
+     FROM api_credentials
+     WHERE user_id = $1
+       AND provider = ANY($2::text[])
+       AND revoked_at IS NULL`,
+    [input.userId, requiredProviders],
+  );
+  if (
+    new Set(credentials.rows.map((row) => row.provider)).size !==
+    requiredProviders.length
+  ) {
+    throw new MediaRequestError('media_provider_credential_required');
+  }
+  try {
+    return await createMediaProcessingRequest(pool, input);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'media_source_not_found') {
+      throw new MediaRequestError('media_source_not_found');
+    }
+    if (
+      error instanceof Error &&
+      error.message === 'media_idempotency_conflict'
+    ) {
+      throw new MediaRequestError('media_idempotency_conflict');
+    }
+    throw error;
+  }
 }
 
 export async function getUserMediaProcessingRequest(
@@ -298,55 +414,115 @@ function createMediaHandler(
       input,
     );
     if (request.stage === 'image_analyze') {
+      const metadata = await requiredFileMetadata(
+        pool,
+        job.userId,
+        request.source_file_id,
+      );
       const content = await readUserObjectFile(
         pool,
         store,
         job.userId,
         request.source_file_id,
       );
-      return sanitizeImageResult(await provider.analyzeImage(content, signal));
+      return sanitizeImageResult(
+        await provider.analyzeImage(
+          content,
+          signal,
+          providerContext(job),
+          metadata.contentType,
+        ),
+      );
     }
     if (request.stage === 'video_prepare') {
-      const content = await readUserObjectFile(
-        pool,
-        store,
-        job.userId,
-        request.source_file_id,
-      );
-      const prepared = await provider.prepareVideo(content, signal);
-      throwIfAborted(signal);
-      const temporary = await saveObjectFile(pool, store, {
-        userId: job.userId,
-        contentType: prepared.contentType,
-        content: prepared.audioContent,
-        purpose: 'temporary',
-        originalName: 'video-audio.mp3',
-        temporaryTtlSeconds: 300,
-      });
-      return { temporaryAudioFileId: temporary.id };
+      const directory = await mkdtemp(join(tmpdir(), 'remind-video-source-'));
+      try {
+        const sourcePath = join(directory, 'source-video');
+        await materializeUserObjectFile(
+          pool,
+          store,
+          job.userId,
+          request.source_file_id,
+          sourcePath,
+        );
+        const prepared = await provider.prepareVideo(sourcePath, signal);
+        const segmentFileIds: string[] = [];
+        for (const segment of prepared) {
+          throwIfAborted(signal);
+          const temporary = await saveObjectFile(pool, store, {
+            userId: job.userId,
+            contentType: 'audio/mpeg',
+            content: segment.content,
+            purpose: 'temporary',
+            originalName: `video-audio-${segment.sequenceNumber}.mp3`,
+            temporaryTtlSeconds: 300,
+          });
+          segmentFileIds.push(temporary.id);
+        }
+        return { segmentFileIds };
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
     }
     if (
       request.stage === 'audio_transcribe' ||
       request.stage === 'video_transcribe'
     ) {
-      const fileId =
-        request.stage === 'audio_transcribe'
-          ? request.source_file_id
-          : requiredIntermediateFile(request);
-      const content = await readUserObjectFile(
-        pool,
-        store,
-        job.userId,
-        fileId,
-      );
-      const transcript = await provider.transcribeAudio(content, signal);
-      return { transcript: sanitizeText(transcript, 100_000) };
+      if (request.stage === 'audio_transcribe') {
+        const content = await readUserObjectFile(
+          pool,
+          store,
+          job.userId,
+          request.source_file_id,
+        );
+        const metadata = await requiredFileMetadata(
+          pool,
+          job.userId,
+          request.source_file_id,
+        );
+        const transcript = await provider.transcribeAudio(
+          content,
+          signal,
+          providerContext(job),
+          metadata.contentType,
+        );
+        return { transcript: sanitizeText(transcript, 100_000) };
+      }
+      const segments = await loadVideoSegments(pool, request);
+      const lines: string[] = [];
+      for (const segment of segments) {
+        throwIfAborted(signal);
+        const content = await readUserObjectFile(
+          pool,
+          store,
+          job.userId,
+          segment.file_id,
+        );
+        const text = sanitizeText(
+          await provider.transcribeAudio(
+            content,
+            signal,
+            providerContext(job),
+            'audio/mpeg',
+          ),
+          10_000,
+        );
+        if (text) {
+          lines.push(`[${formatMediaTimestamp(segment.start_seconds)}] ${text}`);
+        }
+      }
+      if (!lines.length) throw new Error('media_transcript_empty');
+      return { transcript: lines.join('\n').slice(0, 100_000) };
     }
     if (request.stage === 'video_analyze') {
       const transcript = request.transcript;
       if (!transcript) throw new Error('media_transcript_missing');
       return sanitizeVideoResult(
-        await provider.analyzeVideoTranscript(transcript, signal),
+        await provider.analyzeVideoTranscript(
+          transcript,
+          signal,
+          providerContext(job),
+        ),
       );
     }
     throw new Error('unsupported_media_stage');
@@ -409,17 +585,27 @@ async function applySuccessfulStage(
   result: unknown,
 ): Promise<void> {
   if (request.stage === 'video_prepare') {
-    const temporaryAudioFileId = objectString(result, 'temporaryAudioFileId');
-    const file = await client.query(
-      `SELECT 1 FROM files
-       WHERE user_id = $1 AND id = $2
-         AND purpose = 'temporary' AND media_kind = 'audio'
-         AND status = 'ready' AND deleted_at IS NULL`,
-      [request.user_id, temporaryAudioFileId],
-    );
-    if (file.rowCount !== 1) throw new Error('media_temporary_file_missing');
+    const segmentFileIds = objectStringArray(result, 'segmentFileIds', 800);
+    if (!segmentFileIds.length) throw new Error('media_temporary_file_missing');
+    for (let index = 0; index < segmentFileIds.length; index += 1) {
+      const fileId = segmentFileIds[index] ?? '';
+      requireUuid(fileId);
+      const inserted = await client.query(
+        `INSERT INTO media_processing_segments (
+           user_id, request_id, sequence_number, start_seconds, file_id
+         )
+         SELECT $1, $2, $3, $4, file.id
+         FROM files AS file
+         WHERE file.user_id = $1 AND file.id = $5
+           AND file.purpose = 'temporary' AND file.media_kind = 'audio'
+           AND file.status = 'ready' AND file.deleted_at IS NULL
+         ON CONFLICT (user_id, request_id, sequence_number) DO NOTHING`,
+        [request.user_id, request.id, index, index * 28, fileId],
+      );
+      if (inserted.rowCount !== 1) throw new Error('media_temporary_file_missing');
+    }
     await advanceStage(client, request, 'video_transcribe', {
-      intermediateFileId: temporaryAudioFileId,
+      intermediateFileId: segmentFileIds[0],
     });
     return;
   }
@@ -517,14 +703,33 @@ async function expireIntermediateFile(
   client: PoolClient,
   request: MediaRequestRow,
 ): Promise<void> {
-  if (!request.intermediate_file_id) return;
   await client.query(
     `UPDATE files
      SET expires_at = LEAST(expires_at, now()), updated_at = now()
-     WHERE user_id = $1 AND id = $2
+     WHERE user_id = $1
+       AND id IN (
+         SELECT file_id
+         FROM media_processing_segments
+         WHERE user_id = $1 AND request_id = $2
+       )
        AND purpose = 'temporary' AND status = 'ready'`,
-    [request.user_id, request.intermediate_file_id],
+    [request.user_id, request.id],
   );
+}
+
+async function loadVideoSegments(
+  pool: Pool,
+  request: MediaRequestRow,
+): Promise<Array<{ file_id: string; start_seconds: number }>> {
+  const result = await pool.query<{ file_id: string; start_seconds: number }>(
+    `SELECT file_id, start_seconds
+     FROM media_processing_segments
+     WHERE user_id = $1 AND request_id = $2
+     ORDER BY sequence_number`,
+    [request.user_id, request.id],
+  );
+  if (!result.rowCount) throw new Error('media_audio_missing');
+  return result.rows;
 }
 
 async function loadActiveRequest(
@@ -627,6 +832,25 @@ function objectString(value: unknown, key: string): string {
   return property;
 }
 
+function objectStringArray(
+  value: unknown,
+  key: string,
+  maximumLength: number,
+): string[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('invalid_media_job_result');
+  }
+  const property = (value as Record<string, unknown>)[key];
+  if (
+    !Array.isArray(property) ||
+    property.length > maximumLength ||
+    !property.every((item) => typeof item === 'string')
+  ) {
+    throw new Error('invalid_media_job_result');
+  }
+  return property;
+}
+
 function initialStage(kind: MediaKind): MediaStage {
   if (kind === 'image') return 'image_analyze';
   if (kind === 'audio') return 'audio_transcribe';
@@ -644,11 +868,6 @@ function timeoutForStage(stage: MediaStage): number {
   if (stage === 'video_prepare') return 600;
   if (stage === 'audio_transcribe' || stage === 'video_transcribe') return 900;
   return 120;
-}
-
-function requiredIntermediateFile(request: MediaRequestRow): string {
-  if (!request.intermediate_file_id) throw new Error('media_audio_missing');
-  return request.intermediate_file_id;
 }
 
 function isMediaKind(value: unknown): value is MediaKind {
@@ -685,6 +904,25 @@ function requireUuid(value: string): void {
 
 function shortDigest(content: Uint8Array): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 12);
+}
+
+function providerContext(job: Parameters<JobHandler>[0]): MediaProviderContext {
+  return {
+    userId: job.userId,
+    reservedCostMicros: BigInt(job.reservedCostMicros),
+  };
+}
+
+async function requiredFileMetadata(
+  pool: Pool,
+  userId: string,
+  fileId: string,
+): Promise<{ contentType: string; mediaKind: MediaKind }> {
+  const metadata = await getUserObjectFileMetadata(pool, userId, fileId);
+  if (!metadata || !isMediaKind(metadata.mediaKind)) {
+    throw new Error('media_source_not_found');
+  }
+  return { contentType: metadata.contentType, mediaKind: metadata.mediaKind };
 }
 
 function throwIfAborted(signal: AbortSignal): void {

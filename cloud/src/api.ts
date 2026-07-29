@@ -23,7 +23,7 @@ import {
   getBillingAccount,
   listLedgerEntries,
 } from './billing.js';
-import { apiPort } from './config.js';
+import { apiPort, mediaProviderMode } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 import {
@@ -33,9 +33,16 @@ import {
 } from './job-quotes.js';
 import { getUserJob, requestJobCancellation } from './jobs.js';
 import { ProviderPausedError } from './provider-health.js';
+import {
+  createByokMediaProcessingRequest,
+  getUserMediaProcessingRequest,
+  MediaRequestError,
+  requestMediaProcessingCancellation,
+} from './media-processing.js';
 
 const port = apiPort();
 const credentialCipher = credentialCipherFromEnvironment();
+const configuredMediaProvider = mediaProviderMode();
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 const allowedPlatforms = new Set<DevicePlatform>([
   'android',
@@ -219,6 +226,97 @@ const server = createServer(async (request, response) => {
     const jobQuoteMatch = request.url?.match(
       /^\/api\/v1\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/quote$/i,
     );
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/media/requests'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      if (configuredMediaProvider !== 'byok') {
+        sendJson(response, 503, { error: 'media_processing_unavailable' });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const sourceFileId =
+        isRecord(body) && typeof body.sourceFileId === 'string'
+          ? body.sourceFileId
+          : '';
+      const idempotencyKey =
+        isRecord(body) && typeof body.idempotencyKey === 'string'
+          ? body.idempotencyKey
+          : '';
+      if (!isUuid(sourceFileId) || !idempotencyKey) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      sendJson(
+        response,
+        201,
+        await createByokMediaProcessingRequest(database, {
+          userId: account.userId,
+          sourceFileId,
+          idempotencyKey,
+        }),
+      );
+      return;
+    }
+
+    const mediaRequestMatch = request.url?.match(
+      /^\/api\/v1\/media\/requests\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/(cancel))?$/i,
+    );
+    if (mediaRequestMatch && request.method === 'GET' && !mediaRequestMatch[2]) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const mediaRequest = await getUserMediaProcessingRequest(
+        database,
+        account.userId,
+        mediaRequestMatch[1] ?? '',
+      );
+      if (!mediaRequest) {
+        sendJson(response, 404, { error: 'media_request_not_found' });
+        return;
+      }
+      sendJson(response, 200, mediaRequest);
+      return;
+    }
+    if (
+      mediaRequestMatch &&
+      mediaRequestMatch[2] === 'cancel' &&
+      request.method === 'POST'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const mediaRequest = await requestMediaProcessingCancellation(
+        database,
+        account.userId,
+        mediaRequestMatch[1] ?? '',
+      );
+      if (!mediaRequest) {
+        sendJson(response, 404, { error: 'media_request_not_found' });
+        return;
+      }
+      sendJson(response, 202, mediaRequest);
+      return;
+    }
     if (jobQuoteMatch && request.method === 'GET') {
       const account = await authenticateAccessToken(
         database,
@@ -445,6 +543,14 @@ const server = createServer(async (request, response) => {
       });
       return;
     }
+    if (error instanceof MediaRequestError) {
+      sendJson(
+        response,
+        error.code === 'media_source_not_found' ? 404 : 409,
+        { error: error.code },
+      );
+      return;
+    }
     console.error(
       'Cloud API request failed',
       error instanceof Error ? error.message : 'unknown error',
@@ -531,6 +637,12 @@ function optionalShortText(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }
 
 class RequestBodyError extends Error {

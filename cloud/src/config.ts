@@ -26,10 +26,10 @@ export function workerPollMs(): number {
   return value;
 }
 
-export function mediaProviderMode(): 'disabled' | 'mock' {
+export function mediaProviderMode(): 'disabled' | 'mock' | 'byok' {
   const value = process.env.REMIND_MEDIA_PROVIDER?.trim() || 'disabled';
-  if (value !== 'disabled' && value !== 'mock') {
-    throw new Error('REMIND_MEDIA_PROVIDER must be disabled or mock');
+  if (value !== 'disabled' && value !== 'mock' && value !== 'byok') {
+    throw new Error('REMIND_MEDIA_PROVIDER must be disabled, mock, or byok');
   }
   return value;
 }

@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 
 import type { Pool, PoolClient } from 'pg';
 
@@ -39,6 +41,27 @@ export type StoredObjectFile = {
   sha256Hex: string;
   expiresAt: string | null;
 };
+
+export async function getUserObjectFileMetadata(
+  pool: Pool,
+  userId: string,
+  fileId: string,
+): Promise<{ contentType: string; mediaKind: MediaKind } | null> {
+  const result = await pool.query<{
+    content_type: string;
+    media_kind: MediaKind;
+  }>(
+    `SELECT content_type, media_kind
+     FROM files
+     WHERE user_id = $1 AND id = $2
+       AND status = 'ready' AND deleted_at IS NULL`,
+    [userId, fileId],
+  );
+  const row = result.rows[0];
+  return row
+    ? { contentType: row.content_type, mediaKind: row.media_kind }
+    : null;
+}
 
 export async function saveObjectFile(
   pool: Pool,
@@ -164,6 +187,48 @@ export async function readUserObjectFile(
     [userId, fileId],
   );
   return content;
+}
+
+export async function materializeUserObjectFile(
+  pool: Pool,
+  store: ObjectStore,
+  userId: string,
+  fileId: string,
+  destinationPath: string,
+): Promise<{ contentType: string; sizeBytes: number }> {
+  requireUuid(userId);
+  requireUuid(fileId);
+  const result = await pool.query<FileRow>(
+    `SELECT id, user_id, object_key, content_type, size_bytes,
+            sha256_hex, status
+     FROM files
+     WHERE user_id = $1 AND id = $2
+       AND status = 'ready' AND deleted_at IS NULL`,
+    [userId, fileId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error('file_not_found');
+  const expectedSize = Number(row.size_bytes);
+  await store.copyToFile(row.object_key, destinationPath, expectedSize);
+  const metadata = await stat(destinationPath);
+  const digest = createHash('sha256');
+  for await (const chunk of createReadStream(destinationPath)) {
+    digest.update(chunk as Buffer);
+  }
+  if (
+    !metadata.isFile() ||
+    metadata.size !== expectedSize ||
+    digest.digest('hex') !== row.sha256_hex
+  ) {
+    throw new Error('object_integrity_mismatch');
+  }
+  await pool.query(
+    `UPDATE files
+     SET last_accessed_at = now(), updated_at = now()
+     WHERE user_id = $1 AND id = $2 AND status = 'ready'`,
+    [userId, fileId],
+  );
+  return { contentType: row.content_type, sizeBytes: expectedSize };
 }
 
 export async function cleanupNextExpiredObject(

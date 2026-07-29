@@ -24,6 +24,7 @@ services:
   migrate:
     build:
       context: .
+      target: runtime
     command: ["node", "dist/migrate.js"]
     environment:
       DATABASE_URL: postgresql://${REMIND_POSTGRES_USER:-remind}:${REMIND_POSTGRES_PASSWORD}@postgres:5432/${REMIND_POSTGRES_DB:-remind}
@@ -34,6 +35,7 @@ services:
   api:
     build:
       context: .
+      target: runtime
     restart: unless-stopped
     command: ["node", "dist/api.js"]
     environment:
@@ -61,6 +63,7 @@ services:
   worker:
     build:
       context: .
+      target: worker
     restart: unless-stopped
     command: ["node", "dist/worker.js"]
     environment:

@@ -1,5 +1,6 @@
 import { hostname } from 'node:os';
 
+import { ByokMediaProcessingProvider } from './byok-media-provider.js';
 import { mediaProviderMode, workerPollMs } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
@@ -32,6 +33,12 @@ const mediaMode = mediaProviderMode();
 const mediaHandlers: JobHandlers =
   mediaMode === 'mock'
     ? createMediaProcessingHandlers(database, objectStore)
+    : mediaMode === 'byok'
+      ? createMediaProcessingHandlers(
+          database,
+          objectStore,
+          new ByokMediaProcessingProvider(database, credentialCipher),
+        )
     : new Map();
 const handlers: JobHandlers = new Map([
   [

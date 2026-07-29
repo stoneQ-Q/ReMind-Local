@@ -9,9 +9,11 @@ import pg from 'pg';
 import {
   saveApiCredential,
 } from '../dist/ai-settings.js';
+import { ByokMediaProcessingProvider } from '../dist/byok-media-provider.js';
 import { LocalAesGcmCredentialCipher } from '../dist/credential-cipher.js';
 import { processNextCancellation, runNextJob } from '../dist/jobs.js';
 import {
+  createByokMediaProcessingRequest,
   createMediaProcessingHandlers,
   createMediaProcessingRequest,
   ensureNextMediaProcessingJob,
@@ -145,19 +147,19 @@ try {
     /media_source_not_found/,
   );
 
-  const imageRequest = await createMediaProcessingRequest(pool, {
+  const imageRequest = await createByokMediaProcessingRequest(pool, {
     userId: firstUser,
     sourceFileId: image.id,
     idempotencyKey: 'image-analysis',
   });
-  const repeatedImageRequest = await createMediaProcessingRequest(pool, {
+  const repeatedImageRequest = await createByokMediaProcessingRequest(pool, {
     userId: firstUser,
     sourceFileId: image.id,
     idempotencyKey: 'image-analysis',
   });
   assert.equal(repeatedImageRequest.id, imageRequest.id);
   await assert.rejects(
-    createMediaProcessingRequest(pool, {
+    createByokMediaProcessingRequest(pool, {
       userId: firstUser,
       sourceFileId: audio.id,
       idempotencyKey: 'image-analysis',
@@ -209,7 +211,7 @@ try {
     store,
     retryProvider,
   );
-  const audioRequest = await createMediaProcessingRequest(pool, {
+  const audioRequest = await createByokMediaProcessingRequest(pool, {
     userId: firstUser,
     sourceFileId: audio.id,
     idempotencyKey: 'audio-transcription',
@@ -248,7 +250,84 @@ try {
     2,
   );
 
-  const videoRequest = await createMediaProcessingRequest(pool, {
+  await assert.rejects(
+    createByokMediaProcessingRequest(pool, {
+      userId: firstUser,
+      sourceFileId: video.id,
+      idempotencyKey: 'video-missing-deepseek',
+    }),
+    /media_provider_credential_required/,
+  );
+  await saveApiCredential(
+    pool,
+    cipher,
+    firstUser,
+    'deepseek',
+    'user-deepseek-test-key-123456',
+  );
+  const routedCalls = [];
+  const routedProvider = new ByokMediaProcessingProvider(
+    pool,
+    cipher,
+    {
+      async analyzeImage(key) {
+        routedCalls.push(['image', key]);
+        return { description: '路由图片结果', tags: [], model: 'test-vision' };
+      },
+      async transcribeAudio(key) {
+        routedCalls.push(['audio', key]);
+        return { transcript: '路由转写结果', model: 'test-asr' };
+      },
+    },
+    {
+      async summarizeVideoTranscript(key) {
+        routedCalls.push(['video', key]);
+        return {
+          summary: '路由视频结果',
+          highlights: [],
+          model: 'test-text',
+          usage: { promptTokens: 1, completionTokens: 1 },
+        };
+      },
+    },
+  );
+  const providerContext = { userId: firstUser, reservedCostMicros: 0n };
+  assert.equal(
+    (
+      await routedProvider.analyzeImage(
+        Buffer.from('image'),
+        new AbortController().signal,
+        providerContext,
+        'image/png',
+      )
+    ).description,
+    '路由图片结果',
+  );
+  assert.equal(
+    await routedProvider.transcribeAudio(
+      Buffer.from('audio'),
+      new AbortController().signal,
+      providerContext,
+      'audio/mpeg',
+    ),
+    '路由转写结果',
+  );
+  assert.equal(
+    (
+      await routedProvider.analyzeVideoTranscript(
+        'transcript',
+        new AbortController().signal,
+        providerContext,
+      )
+    ).summary,
+    '路由视频结果',
+  );
+  assert.deepEqual(routedCalls, [
+    ['image', 'user-zhipu-test-key-123456'],
+    ['audio', 'user-zhipu-test-key-123456'],
+    ['video', 'user-deepseek-test-key-123456'],
+  ]);
+  const videoRequest = await createByokMediaProcessingRequest(pool, {
     userId: firstUser,
     sourceFileId: video.id,
     idempotencyKey: 'video-pipeline',
@@ -286,7 +365,8 @@ try {
     videoRequest.id,
   );
   assert.equal(completedVideo.status, 'succeeded');
-  assert.match(completedVideo.transcript, /^模拟转写 /);
+  assert.match(completedVideo.transcript, /^\[00:00\] 模拟转写 /);
+  assert.match(completedVideo.transcript, /\[00:28\] 模拟转写 /);
   assert.match(completedVideo.result.summary, /^模拟视频总结：/);
   assert.equal(completedVideo.result.highlights.length, 2);
   assert.ok(completedVideo.intermediateFileId);
@@ -303,10 +383,24 @@ try {
     status: 'ready',
     expired: true,
   });
-  assert.deepEqual(await cleanupNextExpiredObject(pool, store), {
-    fileId: completedVideo.intermediateFileId,
-    deleted: true,
-  });
+  const segmentFiles = await pool.query(
+    `SELECT file_id
+     FROM media_processing_segments
+     WHERE user_id = $1 AND request_id = $2
+     ORDER BY sequence_number`,
+    [firstUser, videoRequest.id],
+  );
+  assert.equal(segmentFiles.rowCount, 2);
+  const cleanedSegmentIds = [];
+  for (let index = 0; index < 2; index += 1) {
+    const cleanup = await cleanupNextExpiredObject(pool, store);
+    assert.equal(cleanup.deleted, true);
+    cleanedSegmentIds.push(cleanup.fileId);
+  }
+  assert.deepEqual(
+    cleanedSegmentIds.sort(),
+    segmentFiles.rows.map((row) => row.file_id).sort(),
+  );
 
   const cancellationRequest = await createMediaProcessingRequest(pool, {
     userId: secondUser,

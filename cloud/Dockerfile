@@ -8,7 +8,7 @@ COPY src ./src
 COPY db/migrations ./migrations
 RUN npm run build
 
-FROM node:24-alpine AS runtime
+FROM node:24-alpine AS runtime-base
 
 ENV NODE_ENV=production
 WORKDIR /app
@@ -22,3 +22,11 @@ RUN mkdir -p /var/lib/remind/objects \
 
 USER node
 CMD ["node", "dist/api.js"]
+
+FROM runtime-base AS runtime
+
+FROM runtime-base AS worker
+
+USER root
+RUN apk add --no-cache ffmpeg
+USER node
