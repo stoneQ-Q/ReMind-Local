@@ -25,3 +25,11 @@ export function workerPollMs(): number {
   }
   return value;
 }
+
+export function mediaProviderMode(): 'disabled' | 'mock' {
+  const value = process.env.REMIND_MEDIA_PROVIDER?.trim() || 'disabled';
+  if (value !== 'disabled' && value !== 'mock') {
+    throw new Error('REMIND_MEDIA_PROVIDER must be disabled or mock');
+  }
+  return value;
+}

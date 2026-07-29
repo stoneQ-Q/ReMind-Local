@@ -70,6 +70,7 @@ services:
       REMIND_CREDENTIAL_KEY_BASE64: ${REMIND_CREDENTIAL_KEY_BASE64}
       REMIND_CREDENTIAL_KEY_RING_JSON: ${REMIND_CREDENTIAL_KEY_RING_JSON:-}
       REMIND_OBJECT_STORE_ROOT: /var/lib/remind/objects
+      REMIND_MEDIA_PROVIDER: ${REMIND_MEDIA_PROVIDER:-disabled}
     volumes:
       - remind-object-data:/var/lib/remind/objects
     depends_on:

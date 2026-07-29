@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 
-import { workerPollMs } from './config.js';
+import { mediaProviderMode, workerPollMs } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 import {
@@ -13,6 +13,10 @@ import {
   createLinkParseHandler,
   ensureNextLinkParseJob,
 } from './link-processing.js';
+import {
+  createMediaProcessingHandlers,
+  ensureNextMediaProcessingJob,
+} from './media-processing.js';
 import { cleanupNextExpiredObject } from './object-files.js';
 import { objectStoreFromEnvironment } from './object-store.js';
 import {
@@ -24,6 +28,11 @@ const pollMs = workerPollMs();
 const workerId = `${hostname()}:${process.pid}`;
 const credentialCipher = credentialCipherFromEnvironment();
 const objectStore = objectStoreFromEnvironment();
+const mediaMode = mediaProviderMode();
+const mediaHandlers: JobHandlers =
+  mediaMode === 'mock'
+    ? createMediaProcessingHandlers(database, objectStore)
+    : new Map();
 const handlers: JobHandlers = new Map([
   [
     'system.noop',
@@ -34,10 +43,12 @@ const handlers: JobHandlers = new Map([
   ],
   ['wechat.poll', createWechatPollHandler(database, credentialCipher)],
   ['link.parse', createLinkParseHandler(database)],
+  ...mediaHandlers,
 ]);
 let stopping = false;
 
 console.log(`ReMind cloud Worker started as ${workerId}`);
+console.log(`Media processing provider: ${mediaMode}`);
 void run().finally(async () => {
   await closeDatabase();
 });
@@ -48,6 +59,12 @@ async function run(): Promise<void> {
       await cleanupNextExpiredObject(database, objectStore);
       if (await ensureNextWechatPollJob(database)) continue;
       if (await ensureNextLinkParseJob(database)) continue;
+      if (
+        mediaHandlers.size > 0 &&
+        (await ensureNextMediaProcessingJob(database))
+      ) {
+        continue;
+      }
       if (await recoverNextExpiredLease(database)) continue;
       if (await processNextCancellation(database)) continue;
       if (await runNextJob(database, workerId, handlers)) continue;
