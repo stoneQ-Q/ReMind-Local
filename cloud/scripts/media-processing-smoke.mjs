@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import pg from 'pg';
 
+import {
+  saveApiCredential,
+} from '../dist/ai-settings.js';
+import { LocalAesGcmCredentialCipher } from '../dist/credential-cipher.js';
 import { processNextCancellation, runNextJob } from '../dist/jobs.js';
 import {
   createMediaProcessingHandlers,
@@ -14,6 +19,10 @@ import {
   MockMediaProcessingProvider,
   requestMediaProcessingCancellation,
 } from '../dist/media-processing.js';
+import {
+  MediaProviderAuthorizationError,
+  resolveMediaProviderCredential,
+} from '../dist/media-provider-routing.js';
 import {
   cleanupNextExpiredObject,
   saveObjectFile,
@@ -30,6 +39,78 @@ const store = new LocalFilesystemObjectStore(directory);
 try {
   const firstUser = await createUser();
   const secondUser = await createUser();
+  const cipher = new LocalAesGcmCredentialCipher(
+    'test-v1',
+    new Map([['test-v1', randomBytes(32)]]),
+  );
+  await assert.rejects(
+    resolveMediaProviderCredential(pool, cipher, {
+      userId: firstUser,
+      provider: 'zhipu',
+      reservedCostMicros: 0n,
+    }),
+    (error) =>
+      error instanceof MediaProviderAuthorizationError &&
+      error.code === 'ai_disabled',
+  );
+  await saveApiCredential(
+    pool,
+    cipher,
+    firstUser,
+    'zhipu',
+    'user-zhipu-test-key-123456',
+  );
+  await pool.query(
+    `UPDATE users SET ai_mode = 'bring_your_own_key' WHERE id = $1`,
+    [firstUser],
+  );
+  const byokCredential = await resolveMediaProviderCredential(pool, cipher, {
+    userId: firstUser,
+    provider: 'zhipu',
+    reservedCostMicros: 0n,
+  });
+  assert.deepEqual(byokCredential, {
+    apiKey: 'user-zhipu-test-key-123456',
+    mode: 'bring_your_own_key',
+    billPlatformCost: false,
+  });
+  await assert.rejects(
+    resolveMediaProviderCredential(pool, cipher, {
+      userId: firstUser,
+      provider: 'deepseek',
+      reservedCostMicros: 0n,
+    }),
+    (error) =>
+      error instanceof MediaProviderAuthorizationError &&
+      error.code === 'user_provider_credential_required',
+  );
+  await pool.query(`UPDATE users SET ai_mode = 'managed' WHERE id = $1`, [
+    secondUser,
+  ]);
+  await assert.rejects(
+    resolveMediaProviderCredential(pool, cipher, {
+      userId: secondUser,
+      provider: 'zhipu',
+      reservedCostMicros: 0n,
+      managedCredentials: { zhipu: 'platform-zhipu-test-key-123456' },
+    }),
+    (error) =>
+      error instanceof MediaProviderAuthorizationError &&
+      error.code === 'managed_reservation_required',
+  );
+  assert.deepEqual(
+    await resolveMediaProviderCredential(pool, cipher, {
+      userId: secondUser,
+      provider: 'zhipu',
+      reservedCostMicros: 100_000n,
+      managedCredentials: { zhipu: 'platform-zhipu-test-key-123456' },
+    }),
+    {
+      apiKey: 'platform-zhipu-test-key-123456',
+      mode: 'managed',
+      billPlatformCost: true,
+    },
+  );
   const image = await saveObjectFile(pool, store, {
     userId: firstUser,
     contentType: 'image/png',

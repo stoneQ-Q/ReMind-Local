@@ -71,6 +71,10 @@ try {
     'authorized-byok-ai',
     { audio: 'user-owned-provider-key' },
   );
+  await pool.query(
+    `UPDATE users SET ai_mode = 'bring_your_own_key' WHERE id = $1`,
+    [firstUser],
+  );
   await authorizeJob(byokAiJob);
   let byokCalls = 0;
   await runNextJob(
@@ -301,6 +305,9 @@ try {
   );
 
   await creditBalance(pool, firstUser, 5_000_000n, 'executor-credit');
+  await pool.query(`UPDATE users SET ai_mode = 'managed' WHERE id = $1`, [
+    firstUser,
+  ]);
   const paidFailureJob = await createJob(
     firstUser,
     'test.paid-failure',

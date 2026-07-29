@@ -156,6 +156,13 @@ export async function claimNextJob(
                AND job.estimated_cost_micros = 0
                AND job.reserved_cost_micros = 0
                AND job.confirmed_at IS NOT NULL
+               AND EXISTS (
+                 SELECT 1
+                 FROM users AS owner
+                 WHERE owner.id = job.user_id
+                   AND owner.status = 'active'
+                   AND owner.ai_mode = 'bring_your_own_key'
+               )
              )
            )
          ORDER BY job.user_id, job.available_at, job.created_at, job.id
