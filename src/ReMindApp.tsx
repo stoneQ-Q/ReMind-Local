@@ -79,6 +79,7 @@ import {
   type ObsidianSyncStatus,
 } from './obsidian-sync';
 import { colors } from './theme';
+import { CloudAiSettings } from './CloudAiSettings';
 import type { Note, OrganizeDraft, ThemeMergeDraft } from './types';
 import {
   approveWechatProcessingCost,
@@ -228,6 +229,7 @@ export function ReMindApp() {
     getReMindModeStatus,
   );
   const [serviceModeReady, setServiceModeReady] = useState(false);
+  const [cloudAiVisible, setCloudAiVisible] = useState(false);
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -1552,6 +1554,10 @@ export function ReMindApp() {
             setCloudAccountLoading(false);
           }
         }}
+        onOpenAi={() => {
+          setCloudAccountVisible(false);
+          setCloudAiVisible(true);
+        }}
         onRegister={async () => {
           setCloudAccountLoading(true);
           setCloudAccountError(null);
@@ -1623,6 +1629,19 @@ export function ReMindApp() {
         recoveryCode={cloudRecoveryCode}
         serviceMode={serviceMode}
         visible={cloudAccountVisible}
+      />
+
+      <CloudAiSettings
+        onClose={() => {
+          setCloudAiVisible(false);
+          setCloudAccountVisible(true);
+          void refreshCloudAccount().catch(() => {
+            setCloudAccountError(
+              '暂时无法刷新云端账号，手机里的笔记不受影响。',
+            );
+          });
+        }}
+        visible={cloudAiVisible}
       />
     </View>
   );
@@ -3793,6 +3812,7 @@ function CloudAccountSettings({
   loading,
   onAcknowledgeRecoveryCode,
   onClose,
+  onOpenAi,
   onRecover,
   onRegister,
   onRevoke,
@@ -3807,6 +3827,7 @@ function CloudAccountSettings({
   loading: boolean;
   onAcknowledgeRecoveryCode: () => void;
   onClose: () => void;
+  onOpenAi: () => void;
   onRecover: (recoveryCode: string) => Promise<void>;
   onRegister: () => Promise<void>;
   onRevoke: (device: CloudDevice) => void;
@@ -3973,6 +3994,27 @@ function CloudAccountSettings({
                   会话已开启 · 到期前会自动续期
                 </Text>
               </View>
+              <Pressable
+                disabled={loading}
+                onPress={onOpenAi}
+                style={({ pressed }) => [
+                  styles.cloudAiSettingsButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={styles.cloudAiSettingsMark}>
+                  <Text style={styles.cloudAiSettingsMarkText}>AI</Text>
+                </View>
+                <View style={styles.cloudAiSettingsCopy}>
+                  <Text style={styles.cloudAiSettingsTitle}>
+                    AI 与 API Key
+                  </Text>
+                  <Text style={styles.cloudAiSettingsDescription}>
+                    关闭 AI、使用自己的 Key，或查看托管服务状态
+                  </Text>
+                </View>
+                <Text style={styles.cloudAiSettingsChevron}>›</Text>
+              </Pressable>
               <Text style={styles.cloudDeviceSectionTitle}>登录设备</Text>
               {account.devices.map((device) => (
                 <View key={device.id} style={styles.cloudDeviceCard}>
@@ -6636,6 +6678,51 @@ const styles = StyleSheet.create({
     color: colors.sageText,
     fontSize: 12,
     fontWeight: '700',
+  },
+  cloudAiSettingsButton: {
+    minHeight: 72,
+    marginTop: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+  },
+  cloudAiSettingsMark: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: colors.accentSoft,
+  },
+  cloudAiSettingsMarkText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  cloudAiSettingsCopy: {
+    flex: 1,
+  },
+  cloudAiSettingsTitle: {
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  cloudAiSettingsDescription: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  cloudAiSettingsChevron: {
+    color: colors.faint,
+    fontSize: 24,
+    fontWeight: '400',
   },
   cloudAccountNotice: {
     marginTop: 24,
