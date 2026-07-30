@@ -20,3 +20,8 @@ services:
     cpus: 0.25
     mem_limit: 256m
     pids_limit: 64
+
+  caddy:
+    cpus: 0.25
+    mem_limit: 128m
+    pids_limit: 64

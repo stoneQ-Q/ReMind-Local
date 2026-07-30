@@ -43,6 +43,10 @@ import {
 import { getUserJob, requestJobCancellation } from './jobs.js';
 import { ProviderPausedError } from './provider-health.js';
 import {
+  requestClientAddress,
+  RequestRateLimiter,
+} from './request-rate-limit.js';
+import {
   createByokMediaProcessingRequest,
   createManagedMediaProcessingRequest,
   getUserMediaProcessingRequest,
@@ -66,6 +70,7 @@ const managedMediaPriceCatalog =
     : null;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 const MAX_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
+const requestRateLimiter = new RequestRateLimiter();
 const allowedPlatforms = new Set<DevicePlatform>([
   'android',
   'ios',
@@ -93,6 +98,19 @@ const server = createServer(async (request, response) => {
       } catch {
         sendJson(response, 503, { ok: false, database: 'unavailable' });
       }
+      return;
+    }
+
+    const rateLimit = requestRateLimiter.check(
+      requestClientAddress(request),
+      request.url ?? '',
+    );
+    if (!rateLimit.allowed) {
+      response.setHeader(
+        'Retry-After',
+        String(rateLimit.retryAfterSeconds),
+      );
+      sendJson(response, 429, { error: 'rate_limited' });
       return;
     }
 

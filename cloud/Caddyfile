@@ -1,0 +1,24 @@
+{
+	admin 127.0.0.1:2019
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$REMIND_PUBLIC_HOST:localhost} {
+	header {
+		Strict-Transport-Security "max-age=86400"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		X-Robots-Tag "noindex, nofollow, noarchive"
+		-Server
+	}
+
+	reverse_proxy api:8790 {
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 60s
+		}
+	}
+}
