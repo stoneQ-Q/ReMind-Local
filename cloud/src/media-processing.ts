@@ -11,7 +11,10 @@ import {
   type ManagedJobQuote,
 } from './job-quotes.js';
 import type { JobHandler, JobHandlers } from './jobs.js';
-import { requestJobCancellation } from './jobs.js';
+import {
+  requestJobCancellation,
+  type JobSnapshot,
+} from './jobs.js';
 import {
   estimateManagedImageCost,
   estimateManagedTextCost,
@@ -112,6 +115,12 @@ export class MediaRequestError extends Error {
 export type ManagedMediaRequestQuote = {
   request: MediaRequestSnapshot;
   quote: ManagedJobQuote;
+};
+
+export type MediaTaskSnapshot = {
+  request: MediaRequestSnapshot;
+  quote: ManagedJobQuote | null;
+  currentJob: JobSnapshot | null;
 };
 
 export interface MediaProcessingProvider {
@@ -475,6 +484,105 @@ export async function getUserMediaProcessingRequest(
     [userId, requestId],
   );
   return result.rows[0] ? mediaSnapshot(result.rows[0]) : null;
+}
+
+export async function listUserMediaProcessingRequests(
+  pool: Pool,
+  userId: string,
+  limit = 50,
+): Promise<MediaTaskSnapshot[]> {
+  const boundedLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
+  const result = await pool.query<
+    MediaRequestRow & {
+      quote_type: string | null;
+      quote_provider: string | null;
+      quote_status: ManagedJobQuote['status'] | null;
+      quote_estimated_cost_micros: string | null;
+      quote_confirmation_required: boolean | null;
+      quote_confirmed_at: Date | null;
+      quote_expires_at: Date | null;
+      current_job_type: string | null;
+      current_job_status: JobSnapshot['status'] | null;
+      current_job_attempt_count: number | null;
+      current_job_max_attempts: number | null;
+      current_job_timeout_seconds: number | null;
+      current_job_cancel_requested_at: Date | null;
+      current_job_created_at: Date | null;
+      current_job_updated_at: Date | null;
+    }
+  >(
+    `SELECT request.*,
+            envelope.type AS quote_type,
+            envelope.provider AS quote_provider,
+            envelope.status AS quote_status,
+            envelope.estimated_cost_micros AS quote_estimated_cost_micros,
+            envelope.confirmation_required AS quote_confirmation_required,
+            envelope.confirmed_at AS quote_confirmed_at,
+            envelope.quote_expires_at AS quote_expires_at,
+            current_job.type AS current_job_type,
+            current_job.status AS current_job_status,
+            current_job.attempt_count AS current_job_attempt_count,
+            current_job.max_attempts AS current_job_max_attempts,
+            current_job.timeout_seconds AS current_job_timeout_seconds,
+            current_job.cancel_requested_at AS current_job_cancel_requested_at,
+            current_job.created_at AS current_job_created_at,
+            current_job.updated_at AS current_job_updated_at
+     FROM media_processing_requests AS request
+     LEFT JOIN jobs AS envelope
+       ON envelope.user_id = request.user_id
+      AND envelope.id = request.billing_job_id
+     LEFT JOIN jobs AS current_job
+       ON current_job.user_id = request.user_id
+      AND current_job.id = request.current_job_id
+     WHERE request.user_id = $1
+     ORDER BY request.created_at DESC, request.id DESC
+     LIMIT $2`,
+    [userId, boundedLimit],
+  );
+  return result.rows.map((row) => ({
+    request: mediaSnapshot(row),
+    currentJob:
+      row.current_job_id &&
+      row.current_job_type &&
+      row.current_job_status &&
+      row.current_job_attempt_count !== null &&
+      row.current_job_max_attempts !== null &&
+      row.current_job_timeout_seconds !== null &&
+      row.current_job_created_at &&
+      row.current_job_updated_at
+        ? {
+            id: row.current_job_id,
+            type: row.current_job_type,
+            status: row.current_job_status,
+            attemptCount: row.current_job_attempt_count,
+            maxAttempts: row.current_job_max_attempts,
+            timeoutSeconds: row.current_job_timeout_seconds,
+            cancelRequestedAt:
+              row.current_job_cancel_requested_at?.toISOString() ?? null,
+            createdAt: row.current_job_created_at.toISOString(),
+            updatedAt: row.current_job_updated_at.toISOString(),
+          }
+        : null,
+    quote:
+      row.billing_job_id &&
+      row.quote_type &&
+      row.quote_provider &&
+      row.quote_status &&
+      row.quote_estimated_cost_micros !== null &&
+      row.quote_confirmation_required !== null &&
+      row.quote_expires_at
+        ? {
+            jobId: row.billing_job_id,
+            type: row.quote_type,
+            provider: row.quote_provider,
+            status: row.quote_status,
+            estimatedCostMicros: row.quote_estimated_cost_micros,
+            confirmationRequired: row.quote_confirmation_required,
+            confirmedAt: row.quote_confirmed_at?.toISOString() ?? null,
+            expiresAt: row.quote_expires_at.toISOString(),
+          }
+        : null,
+  }));
 }
 
 export async function requestMediaProcessingCancellation(

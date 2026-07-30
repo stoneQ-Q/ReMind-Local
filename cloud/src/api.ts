@@ -46,6 +46,7 @@ import {
   createByokMediaProcessingRequest,
   createManagedMediaProcessingRequest,
   getUserMediaProcessingRequest,
+  listUserMediaProcessingRequests,
   MediaRequestError,
   requestMediaProcessingCancellation,
 } from './media-processing.js';
@@ -436,6 +437,27 @@ const server = createServer(async (request, response) => {
         return;
       }
       sendJson(response, 202, upload);
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      request.url === '/api/v1/media/requests'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      sendJson(response, 200, {
+        items: await listUserMediaProcessingRequests(
+          database,
+          account.userId,
+        ),
+      });
       return;
     }
 

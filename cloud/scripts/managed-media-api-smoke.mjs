@@ -143,6 +143,24 @@ try {
   assert.equal(created.body.quote.type, 'media.pipeline');
   assert.equal(created.body.quote.confirmationRequired, true);
 
+  const listed = await jsonRequest(
+    'GET',
+    '/api/v1/media/requests',
+    token,
+  );
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.items.length, 1);
+  assert.equal(listed.body.items[0].request.id, created.body.request.id);
+  assert.equal(listed.body.items[0].quote.jobId, created.body.quote.jobId);
+  assert.equal(listed.body.items[0].currentJob, null);
+  const otherUsersList = await jsonRequest(
+    'GET',
+    '/api/v1/media/requests',
+    otherRegistration.body.accessToken,
+  );
+  assert.equal(otherUsersList.status, 200);
+  assert.deepEqual(otherUsersList.body.items, []);
+
   const confirmed = await jsonRequest(
     'POST',
     `/api/v1/jobs/${created.body.quote.jobId}/confirm`,
@@ -182,7 +200,7 @@ try {
   assert.match(await ensureNextMediaProcessingJob(pool), /^finalized:/);
 
   console.log(
-    'managed media API smoke test passed: tenant-isolated resumable upload, offset recovery, integrity completion, remote-mode quote creation, one confirmation/reservation, request lookup, and duration validation without platform keys in the API process',
+    'managed media API smoke test passed: tenant-isolated resumable upload, task listing, offset recovery, integrity completion, remote-mode quote creation, one confirmation/reservation, request lookup, and duration validation without platform keys in the API process',
   );
 } finally {
   if (api.exitCode === null) {

@@ -81,6 +81,7 @@ import {
 import { colors } from './theme';
 import { CloudAiSettings } from './CloudAiSettings';
 import { CloudBillingCenter } from './CloudBillingCenter';
+import { CloudTaskCenter } from './CloudTaskCenter';
 import type { Note, OrganizeDraft, ThemeMergeDraft } from './types';
 import {
   approveWechatProcessingCost,
@@ -232,6 +233,7 @@ export function ReMindApp() {
   const [serviceModeReady, setServiceModeReady] = useState(false);
   const [cloudAiVisible, setCloudAiVisible] = useState(false);
   const [cloudBillingVisible, setCloudBillingVisible] = useState(false);
+  const [cloudTasksVisible, setCloudTasksVisible] = useState(false);
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -1564,6 +1566,10 @@ export function ReMindApp() {
           setCloudAccountVisible(false);
           setCloudBillingVisible(true);
         }}
+        onOpenTasks={() => {
+          setCloudAccountVisible(false);
+          setCloudTasksVisible(true);
+        }}
         onRegister={async () => {
           setCloudAccountLoading(true);
           setCloudAccountError(null);
@@ -1661,6 +1667,19 @@ export function ReMindApp() {
           });
         }}
         visible={cloudBillingVisible}
+      />
+
+      <CloudTaskCenter
+        onClose={() => {
+          setCloudTasksVisible(false);
+          setCloudAccountVisible(true);
+          void refreshCloudAccount().catch(() => {
+            setCloudAccountError(
+              '暂时无法刷新云端账号，手机里的笔记不受影响。',
+            );
+          });
+        }}
+        visible={cloudTasksVisible}
       />
     </View>
   );
@@ -3833,6 +3852,7 @@ function CloudAccountSettings({
   onClose,
   onOpenAi,
   onOpenBilling,
+  onOpenTasks,
   onRecover,
   onRegister,
   onRevoke,
@@ -3849,6 +3869,7 @@ function CloudAccountSettings({
   onClose: () => void;
   onOpenAi: () => void;
   onOpenBilling: () => void;
+  onOpenTasks: () => void;
   onRecover: (recoveryCode: string) => Promise<void>;
   onRegister: () => Promise<void>;
   onRevoke: (device: CloudDevice) => void;
@@ -4063,6 +4084,37 @@ function CloudAccountSettings({
                   <Text style={styles.cloudAiSettingsTitle}>余额与费用</Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     查看可用余额、任务预占和每一笔费用记录
+                  </Text>
+                </View>
+                <Text style={styles.cloudAiSettingsChevron}>›</Text>
+              </Pressable>
+              <Pressable
+                disabled={loading}
+                onPress={onOpenTasks}
+                style={({ pressed }) => [
+                  styles.cloudAiSettingsButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.cloudAiSettingsMark,
+                    styles.cloudTaskSettingsMark,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.cloudAiSettingsMarkText,
+                      styles.cloudTaskSettingsMarkText,
+                    ]}
+                  >
+                    任
+                  </Text>
+                </View>
+                <View style={styles.cloudAiSettingsCopy}>
+                  <Text style={styles.cloudAiSettingsTitle}>任务与确认</Text>
+                  <Text style={styles.cloudAiSettingsDescription}>
+                    确认预计费用，查看排队、处理、完成或失败状态
                   </Text>
                 </View>
                 <Text style={styles.cloudAiSettingsChevron}>›</Text>
@@ -6763,6 +6815,13 @@ const styles = StyleSheet.create({
   cloudBillingSettingsMarkText: {
     color: colors.apricotText,
     fontSize: 17,
+  },
+  cloudTaskSettingsMark: {
+    backgroundColor: colors.mist,
+  },
+  cloudTaskSettingsMarkText: {
+    color: colors.mistText,
+    fontSize: 15,
   },
   cloudAiSettingsCopy: {
     flex: 1,
