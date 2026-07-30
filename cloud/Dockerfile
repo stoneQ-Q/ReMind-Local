@@ -30,3 +30,9 @@ FROM runtime-base AS worker
 USER root
 RUN apk add --no-cache ffmpeg
 USER node
+
+FROM runtime-base AS backup
+
+USER root
+RUN apk add --no-cache postgresql17-client
+USER node

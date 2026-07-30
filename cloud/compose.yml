@@ -107,7 +107,9 @@ services:
         condition: service_completed_successfully
 
   backup:
-    image: postgres:17-alpine
+    build:
+      context: .
+      target: backup
     restart: unless-stopped
     environment:
       PGHOST: postgres
@@ -117,6 +119,13 @@ services:
       PGPASSWORD: ${REMIND_POSTGRES_PASSWORD}
       REMIND_BACKUP_INTERVAL_SECONDS: ${REMIND_BACKUP_INTERVAL_SECONDS:-86400}
       REMIND_BACKUP_RETENTION_DAYS: ${REMIND_BACKUP_RETENTION_DAYS:-7}
+      REMIND_BACKUP_COS_ENABLED: ${REMIND_BACKUP_COS_ENABLED:-false}
+      REMIND_BACKUP_COS_BUCKET: ${REMIND_BACKUP_COS_BUCKET:-}
+      REMIND_BACKUP_COS_REGION: ${REMIND_BACKUP_COS_REGION:-}
+      REMIND_BACKUP_COS_SECRET_ID: ${REMIND_BACKUP_COS_SECRET_ID:-}
+      REMIND_BACKUP_COS_SECRET_KEY: ${REMIND_BACKUP_COS_SECRET_KEY:-}
+      REMIND_BACKUP_COS_SECURITY_TOKEN: ${REMIND_BACKUP_COS_SECURITY_TOKEN:-}
+      REMIND_BACKUP_ENCRYPTION_KEY_BASE64: ${REMIND_BACKUP_ENCRYPTION_KEY_BASE64:-}
     volumes:
       - ${REMIND_BACKUP_HOST_DIR:-./backups}:/backups
       - ./scripts/backup-loop.sh:/usr/local/bin/backup-loop.sh:ro

@@ -22,6 +22,9 @@ while true; do
 
   pg_dump --format=custom --no-owner --file="$pending"
   mv "$pending" "$completed"
+  if [ "${REMIND_BACKUP_COS_ENABLED:-false}" = "true" ]; then
+    node /app/dist/backup-upload.js "$completed"
+  fi
   find /backups -type f -name 'remind-*.dump' -mtime "+$retention_days" -delete
   echo "Created PostgreSQL backup remind-${timestamp}.dump"
 

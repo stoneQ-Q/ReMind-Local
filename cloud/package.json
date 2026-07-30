@@ -8,6 +8,7 @@
     "migrate": "node dist/migrate.js",
     "rotate:credentials": "node dist/rotate-credentials.js",
     "smoke:cos": "node dist/cos-smoke.js",
+    "smoke:backup-restore": "node dist/backup-restore-smoke.js",
     "smoke:billing": "node scripts/billing-smoke-runner.mjs",
     "smoke:worker": "node scripts/worker-smoke.mjs",
     "typecheck": "tsc --noEmit",
