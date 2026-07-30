@@ -106,7 +106,7 @@ services:
       REMIND_BACKUP_INTERVAL_SECONDS: ${REMIND_BACKUP_INTERVAL_SECONDS:-86400}
       REMIND_BACKUP_RETENTION_DAYS: ${REMIND_BACKUP_RETENTION_DAYS:-7}
     volumes:
-      - ./backups:/backups
+      - ${REMIND_BACKUP_HOST_DIR:-./backups}:/backups
       - ./scripts/backup-loop.sh:/usr/local/bin/backup-loop.sh:ro
     command: ["/bin/sh", "/usr/local/bin/backup-loop.sh"]
     depends_on:
