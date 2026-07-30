@@ -61,14 +61,14 @@ type InboxMessage = {
 };
 
 export function isWechatApiConfigured(): boolean {
-  return getReMindServiceConfig() !== null;
+  return getReMindServiceConfig()?.mode === 'self-hosted';
 }
 
 export async function getWechatConnection(
   createIfMissing: boolean,
 ): Promise<WechatConnection> {
   const service = getReMindServiceConfig();
-  if (!service) {
+  if (!service || service.mode !== 'self-hosted') {
     return {
       configured: false,
       bound: false,
@@ -149,7 +149,8 @@ export async function updateWechatReplyMode(
   replyMode: WechatReplyMode,
 ): Promise<void> {
   const service = getReMindServiceConfig();
-  const device = service ? await getStoredDevice(service) : null;
+  const device =
+    service?.mode === 'self-hosted' ? await getStoredDevice(service) : null;
   if (!service || !device) throw new Error('WeChat is not connected');
 
   const response = await apiRequest(
@@ -172,7 +173,9 @@ export async function requestAuthenticatedDeviceApi(
   timeoutMs = 8_000,
 ): Promise<Response> {
   const service = getReMindServiceConfig();
-  if (!service) throw new Error('ReMind service is not configured');
+  if (!service || service.mode !== 'self-hosted') {
+    throw new Error('Local ReMind service is not active');
+  }
   let device = await getStoredDevice(service);
   if (!device) device = await registerDevice(service);
   const headers = new Headers(init.headers);
@@ -188,7 +191,8 @@ export async function syncWechatInbox(
   db: SQLiteDatabase,
 ): Promise<number> {
   const service = getReMindServiceConfig();
-  const device = service ? await getStoredDevice(service) : null;
+  const device =
+    service?.mode === 'self-hosted' ? await getStoredDevice(service) : null;
   if (!service || !device) return 0;
 
   const response = await apiRequest(

@@ -106,6 +106,16 @@ import {
   type CloudDevice,
   type CloudDeviceRegistration,
 } from './cloud-auth';
+import {
+  getReMindModeStatus,
+  initializeReMindServiceMode,
+  selectReMindServiceMode,
+  type ReMindModeStatus,
+} from './service-mode';
+import {
+  getActiveReMindAppMode,
+  type ReMindAppMode,
+} from './service-contract';
 
 type Screen = 'inbox' | 'search';
 type NoteCategory =
@@ -214,6 +224,10 @@ export function ReMindApp() {
   const [cloudRecoveryCode, setCloudRecoveryCode] = useState<string | null>(
     null,
   );
+  const [serviceMode, setServiceMode] = useState<ReMindModeStatus>(
+    getReMindModeStatus,
+  );
+  const [serviceModeReady, setServiceModeReady] = useState(false);
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -249,6 +263,7 @@ export function ReMindApp() {
   }, [db]);
 
   const processReadyLinks = useCallback(async () => {
+    if (getActiveReMindAppMode() !== 'local') return;
     if (linkAutoProcessing.current) return;
     linkAutoProcessing.current = true;
     let generated = false;
@@ -353,6 +368,20 @@ export function ReMindApp() {
   );
 
   useEffect(() => {
+    let current = true;
+    void initializeReMindServiceMode()
+      .then((status) => {
+        if (current) setServiceMode(status);
+      })
+      .finally(() => {
+        if (current) setServiceModeReady(true);
+      });
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     void loadNotes('');
     void listPendingOrganizationDrafts(db).then(setOrganizeDrafts);
     void listPendingThemeMergeDrafts(db).then(setThemeMergeDrafts);
@@ -377,10 +406,10 @@ export function ReMindApp() {
   }, [db, notes.length, notes[0]?.updatedAt, screen]);
 
   useEffect(() => {
-    if (initialLinkScanCompleted.current) return;
+    if (!serviceModeReady || initialLinkScanCompleted.current) return;
     initialLinkScanCompleted.current = true;
     void processReadyLinks();
-  }, [processReadyLinks]);
+  }, [processReadyLinks, serviceModeReady]);
 
   useEffect(() => {
     void getObsidianSyncStatus(db).then((status) => {
@@ -394,11 +423,14 @@ export function ReMindApp() {
   }, [db, syncObsidian]);
 
   useEffect(() => {
-    if (!isWechatApiConfigured()) return;
+    if (!serviceModeReady || !isWechatApiConfigured()) {
+      setWechatConnection(null);
+      return;
+    }
     void getWechatConnection(false)
       .then(setWechatConnection)
       .catch(() => setWechatError('暂时无法连接微信服务'));
-  }, []);
+  }, [serviceMode.active, serviceModeReady]);
 
   useEffect(() => {
     if (!isHostedCloudConfigured()) return;
@@ -651,7 +683,7 @@ export function ReMindApp() {
         </View>
         <View style={styles.headerActions}>
           <Pressable
-            accessibilityLabel="云端账号与设备"
+            accessibilityLabel="连接方式与云端账号"
             onPress={() => {
               setCloudAccountVisible(true);
               setCloudAccountError(null);
@@ -666,17 +698,20 @@ export function ReMindApp() {
             }}
             style={({ pressed }) => [
               styles.cloudBadge,
-              cloudAccount && styles.cloudBadgeConnected,
+              serviceMode.active === 'cloud' && styles.cloudBadgeConnected,
               pressed && styles.pressed,
             ]}
           >
             <Text maxFontSizeMultiplier={1} style={styles.cloudBadgeMark}>
-              云
+              {serviceMode.active === 'cloud' ? '云' : '机'}
             </Text>
             <View
               style={[
                 styles.headerStatusDot,
-                cloudAccount && styles.headerStatusDotActive,
+                ((serviceMode.active === 'local' &&
+                  serviceMode.available.local) ||
+                  (serviceMode.active === 'cloud' && cloudAccount)) &&
+                  styles.headerStatusDotActive,
               ]}
             />
           </Pressable>
@@ -1535,6 +1570,25 @@ export function ReMindApp() {
             setCloudAccountLoading(false);
           }
         }}
+        onSelectMode={async (mode) => {
+          if (mode === serviceMode.active) return;
+          setCloudAccountLoading(true);
+          setCloudAccountError(null);
+          try {
+            const status = await selectReMindServiceMode(mode);
+            setServiceMode(status);
+            setWechatConnection(null);
+            setWechatProcessingLinks([]);
+            if (mode === 'local') void processReadyLinks();
+            await Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success,
+            );
+          } catch (error) {
+            setCloudAccountError(serviceModeErrorMessage(error, mode));
+          } finally {
+            setCloudAccountLoading(false);
+          }
+        }}
         onRevoke={(device) => {
           Alert.alert(
             device.current ? '退出这台设备？' : '移除这台设备？',
@@ -1567,6 +1621,7 @@ export function ReMindApp() {
           );
         }}
         recoveryCode={cloudRecoveryCode}
+        serviceMode={serviceMode}
         visible={cloudAccountVisible}
       />
     </View>
@@ -3741,7 +3796,9 @@ function CloudAccountSettings({
   onRecover,
   onRegister,
   onRevoke,
+  onSelectMode,
   recoveryCode,
+  serviceMode,
   visible,
 }: {
   account: CloudAccountOverview | null;
@@ -3753,7 +3810,9 @@ function CloudAccountSettings({
   onRecover: (recoveryCode: string) => Promise<void>;
   onRegister: () => Promise<void>;
   onRevoke: (device: CloudDevice) => void;
+  onSelectMode: (mode: ReMindAppMode) => Promise<void>;
   recoveryCode: string | null;
+  serviceMode: ReMindModeStatus;
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -3772,7 +3831,7 @@ function CloudAccountSettings({
           <Pressable hitSlop={10} onPress={onClose}>
             <Text style={styles.editorCancel}>关闭</Text>
           </Pressable>
-          <Text style={styles.editorHeading}>云端账号</Text>
+          <Text style={styles.editorHeading}>连接方式</Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -3784,8 +3843,81 @@ function CloudAccountSettings({
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.cloudAccountHeroMark}>
-            <Text style={styles.cloudAccountHeroMarkText}>云</Text>
+            <Text style={styles.cloudAccountHeroMarkText}>
+              {serviceMode.active === 'cloud' ? '云' : '机'}
+            </Text>
           </View>
+
+          <Text style={styles.serviceModeHeading}>选择使用方式</Text>
+          <Text style={styles.serviceModeIntro}>
+            切换只改变之后使用的服务，不会自动上传、删除或迁移手机里已有的笔记。
+          </Text>
+          <View style={styles.serviceModeOptions}>
+            {(
+              [
+                {
+                  mode: 'local',
+                  title: '本地模式',
+                  badge: '自己维护',
+                  description: '需要 Mac 运行服务，手机与电脑在同一网络。',
+                  detail: '数据主要留在手机和自己的电脑；API 费用由自己承担。',
+                },
+                {
+                  mode: 'cloud',
+                  title: '云端模式',
+                  badge: '私密测试',
+                  description: '不要求 Mac 在线，在外面的网络也能连接。',
+                  detail: '当前先开放账号与设备；托管 AI 和收费仍未开启。',
+                },
+              ] as const
+            ).map((option) => {
+              const active = serviceMode.active === option.mode;
+              const available = serviceMode.available[option.mode];
+              return (
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: active, disabled: !available }}
+                  disabled={!available || loading}
+                  key={option.mode}
+                  onPress={() => void onSelectMode(option.mode)}
+                  style={({ pressed }) => [
+                    styles.serviceModeCard,
+                    active && styles.serviceModeCardActive,
+                    !available && styles.serviceModeCardDisabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={styles.serviceModeCardHeader}>
+                    <View
+                      style={[
+                        styles.serviceModeRadio,
+                        active && styles.serviceModeRadioActive,
+                      ]}
+                    >
+                      {active ? (
+                        <View style={styles.serviceModeRadioDot} />
+                      ) : null}
+                    </View>
+                    <Text style={styles.serviceModeTitle}>{option.title}</Text>
+                    <Text style={styles.serviceModeBadge}>{option.badge}</Text>
+                  </View>
+                  <Text style={styles.serviceModeDescription}>
+                    {option.description}
+                  </Text>
+                  <Text style={styles.serviceModeDetail}>
+                    {available
+                      ? option.detail
+                      : option.mode === 'cloud'
+                        ? '这个安装包尚未配置私密测试云端。'
+                        : '这个安装包尚未配置本地服务地址。'}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {error ? (
+            <Text style={styles.cloudAccountError}>{error}</Text>
+          ) : null}
 
           {recoveryCode ? (
             <>
@@ -3810,6 +3942,23 @@ function CloudAccountSettings({
                   我已安全保存
                 </Text>
               </Pressable>
+            </>
+          ) : serviceMode.active === 'local' ? (
+            <>
+              <Text style={styles.cloudAccountTitle}>本地模式正在使用</Text>
+              <Text style={styles.cloudAccountCopy}>
+                记录和搜索继续直接使用手机里的数据库；微信、整理和媒体能力连接你自己的
+                Mac 服务。离开同一网络后，这些电脑端能力可能暂时不可用。
+              </Text>
+              <View style={styles.cloudAccountNotice}>
+                <Text style={styles.cloudAccountNoticeText}>
+                  {account
+                    ? '你的云端账号仍被安全保留。切回云端模式后无需重新登录，也不会复制本地笔记。'
+                    : configured
+                      ? '切换云端前会先检查服务是否可用；如果检查失败，会继续保持本地模式。'
+                      : '这个安装包没有配置云端地址，目前只能使用本地模式。'}
+                </Text>
+              </View>
             </>
           ) : account ? (
             <>
@@ -3884,9 +4033,6 @@ function CloudAccountSettings({
                 style={styles.recoveryInput}
                 value={recoveryInput}
               />
-              {error ? (
-                <Text style={styles.cloudAccountError}>{error}</Text>
-              ) : null}
               <Pressable
                 disabled={!recoveryInput.trim() || loading}
                 onPress={() => void onRecover(recoveryInput.trim())}
@@ -3923,9 +4069,6 @@ function CloudAccountSettings({
               <Text style={styles.cloudAccountCopy}>
                 开通后可以在不同网络下使用云端能力。现在只建立账号和设备会话，不会自动上传本地笔记，也不会产生费用。
               </Text>
-              {error ? (
-                <Text style={styles.cloudAccountError}>{error}</Text>
-              ) : null}
               <Pressable
                 disabled={loading}
                 onPress={() => void onRegister()}
@@ -3957,10 +4100,6 @@ function CloudAccountSettings({
               </Pressable>
             </>
           )}
-
-          {account && error ? (
-            <Text style={styles.cloudAccountError}>{error}</Text>
-          ) : null}
           <Text style={styles.cloudAccountFootnote}>
             云端会话凭据只保存在这台设备的系统安全存储中。退出账号不会清除 ReMind
             本地数据库。
@@ -4017,6 +4156,27 @@ function cloudAccountErrorMessage(error: unknown): string {
     }
   }
   return '暂时无法连接云端，请稍后重试。本地笔记不受影响。';
+}
+
+function serviceModeErrorMessage(
+  error: unknown,
+  mode: ReMindAppMode,
+): string {
+  if (error instanceof Error) {
+    if (error.name === 'AbortError') {
+      return mode === 'cloud'
+        ? '云端连接超时，仍保持原来的使用方式。'
+        : '暂时找不到你的 Mac 服务，仍保持原来的使用方式。';
+    }
+    if (error.message === `${mode}_service_not_configured`) {
+      return mode === 'cloud'
+        ? '这个安装包尚未配置私密测试云端。'
+        : '这个安装包尚未配置本地服务地址。';
+    }
+  }
+  return mode === 'cloud'
+    ? '云端暂时不可用，仍保持原来的使用方式。'
+    : '暂时无法连接本地服务，仍保持原来的使用方式。';
 }
 
 function startOfTodayIso(): string {
@@ -6356,6 +6516,89 @@ const styles = StyleSheet.create({
     fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
     fontSize: 25,
     fontWeight: '800',
+  },
+  serviceModeHeading: {
+    marginTop: 22,
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  serviceModeIntro: {
+    marginTop: 8,
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  serviceModeOptions: {
+    marginTop: 18,
+    gap: 11,
+  },
+  serviceModeCard: {
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 17,
+    backgroundColor: colors.surface,
+  },
+  serviceModeCardActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+  },
+  serviceModeCardDisabled: {
+    opacity: 0.5,
+  },
+  serviceModeCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  serviceModeRadio: {
+    width: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.faint,
+    borderRadius: 9,
+    backgroundColor: colors.surface,
+  },
+  serviceModeRadioActive: {
+    borderColor: colors.accent,
+  },
+  serviceModeRadioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+  },
+  serviceModeTitle: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  serviceModeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 99,
+    backgroundColor: colors.surface,
+    color: colors.sageText,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  serviceModeDescription: {
+    marginTop: 11,
+    color: colors.ink,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  serviceModeDetail: {
+    marginTop: 5,
+    color: colors.muted,
+    fontSize: 11,
+    lineHeight: 17,
   },
   cloudAccountTitle: {
     marginTop: 22,

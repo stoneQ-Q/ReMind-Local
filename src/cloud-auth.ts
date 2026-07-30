@@ -8,7 +8,7 @@ import {
 import {
   buildReMindApiUrl,
   credentialScope,
-  getReMindServiceConfig,
+  getReMindServiceConfigForMode,
   type ReMindServiceConfig,
 } from './service-contract';
 
@@ -43,7 +43,7 @@ export type CloudAccountOverview = {
 };
 
 export function isHostedCloudConfigured(): boolean {
-  return getReMindServiceConfig()?.mode === 'hosted';
+  return getReMindServiceConfigForMode('cloud') !== null;
 }
 
 export async function registerCloudAccount(
@@ -78,8 +78,8 @@ export async function recoverCloudAccount(
 }
 
 export async function getCloudAccessToken(): Promise<string | null> {
-  const service = getReMindServiceConfig();
-  if (!service || service.mode !== 'hosted') return null;
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) return null;
   const session = await loadCloudSession(service);
   if (!session) return null;
   const current = shouldRefreshCloudSession(session)
@@ -89,8 +89,8 @@ export async function getCloudAccessToken(): Promise<string | null> {
 }
 
 export async function getCloudAccountOverview(): Promise<CloudAccountOverview | null> {
-  const service = getReMindServiceConfig();
-  if (!service || service.mode !== 'hosted') return null;
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) return null;
   try {
     const accessToken = await getCloudAccessToken();
     if (!accessToken) return null;
@@ -148,8 +148,8 @@ export async function revokeCloudDevice(deviceId: string): Promise<{
 }
 
 export async function clearCloudSession(): Promise<void> {
-  const service = getReMindServiceConfig();
-  if (!service || service.mode !== 'hosted') return;
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) return;
   await SecureStore.deleteItemAsync(sessionStorageKey(service));
 }
 
@@ -213,8 +213,8 @@ function sessionStorageKey(service: ReMindServiceConfig): string {
 }
 
 function requireHostedService(): ReMindServiceConfig {
-  const service = getReMindServiceConfig();
-  if (!service || service.mode !== 'hosted') {
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) {
     throw new Error('Hosted ReMind service is not configured');
   }
   return service;
