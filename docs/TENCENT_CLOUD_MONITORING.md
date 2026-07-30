@@ -56,7 +56,7 @@ journalctl -u remind-health-check.service --since today
 
 ## 三、费用预算
 
-私密测试阶段建立「月度费用预算」：
+私密测试阶段已建立「月度费用预算」：
 
 - 预算名称：`ReMind-private-test-monthly`；
 - 周期：月度，持续生效；
@@ -82,3 +82,5 @@ journalctl -u remind-health-check.service --since today
 - 基础资源策略已启用 CPU 85%、内存 85%、磁盘 80% 和外网带宽使用率 80% 告警，均要求连续 5 个一分钟数据点；
 - 流量包策略已启用剩余量不高于 20% 告警；
 - 两条策略均绑定当前香港实例，使用系统预设通知模板，向主账号本人发送全天邮件和短信，并包含告警恢复通知。
+- `ReMind-private-test-monthly` 月度预算已生效，全部费用上限为人民币 120 元；
+- 创建时当月实际费用为 90 元，占预算 75%，尚未触发 80% 或 100% 提醒。
