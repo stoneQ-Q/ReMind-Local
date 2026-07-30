@@ -7,8 +7,10 @@
     "preview": {
       "distribution": "internal",
       "autoIncrement": true,
+      "environment": "preview",
       "env": {
-        "EXPO_PUBLIC_REMIND_LOCAL_API_URL": "http://192.168.31.122:8787"
+        "EXPO_PUBLIC_REMIND_LOCAL_API_URL": "http://192.168.31.122:8787",
+        "EXPO_PUBLIC_REMIND_CLOUD_API_URL": "https://remind.43-129-237-189.sslip.io"
       },
       "android": {
         "buildType": "apk"
