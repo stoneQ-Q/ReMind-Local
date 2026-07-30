@@ -21,8 +21,14 @@ try {
   const firstUser = await createUser();
   const secondUser = await createUser();
 
-  await creditBalance(pool, firstUser, 20_000_000n, 'payment:first');
-  await creditBalance(pool, firstUser, 20_000_000n, 'payment:first');
+  await creditBalance(pool, firstUser, 20_000_000n, 'payment:first', {
+    source: 'payment',
+    internalReference: 'must-not-be-returned',
+  });
+  await creditBalance(pool, firstUser, 20_000_000n, 'payment:first', {
+    source: 'payment',
+    internalReference: 'must-not-be-returned',
+  });
   await creditBalance(pool, secondUser, 20_000_000n, 'payment:second');
   assertAccount(await getBillingAccount(pool, firstUser), 20_000_000n, 0n);
 
@@ -226,6 +232,14 @@ try {
   const secondLedger = await listLedgerEntries(pool, secondUser, 100);
   assert.equal(firstLedger.some((entry) => entry.kind === 'settle'), true);
   assert.equal(firstLedger.some((entry) => entry.kind === 'release'), true);
+  assert.equal(
+    firstLedger.find((entry) => entry.kind === 'top_up')?.source,
+    'payment',
+  );
+  assert.equal(
+    JSON.stringify(firstLedger).includes('must-not-be-returned'),
+    false,
+  );
   assert.equal(secondLedger.length, 1);
   assert.equal(
     firstLedger.every(

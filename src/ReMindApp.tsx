@@ -80,6 +80,7 @@ import {
 } from './obsidian-sync';
 import { colors } from './theme';
 import { CloudAiSettings } from './CloudAiSettings';
+import { CloudBillingCenter } from './CloudBillingCenter';
 import type { Note, OrganizeDraft, ThemeMergeDraft } from './types';
 import {
   approveWechatProcessingCost,
@@ -230,6 +231,7 @@ export function ReMindApp() {
   );
   const [serviceModeReady, setServiceModeReady] = useState(false);
   const [cloudAiVisible, setCloudAiVisible] = useState(false);
+  const [cloudBillingVisible, setCloudBillingVisible] = useState(false);
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -1558,6 +1560,10 @@ export function ReMindApp() {
           setCloudAccountVisible(false);
           setCloudAiVisible(true);
         }}
+        onOpenBilling={() => {
+          setCloudAccountVisible(false);
+          setCloudBillingVisible(true);
+        }}
         onRegister={async () => {
           setCloudAccountLoading(true);
           setCloudAccountError(null);
@@ -1642,6 +1648,19 @@ export function ReMindApp() {
           });
         }}
         visible={cloudAiVisible}
+      />
+
+      <CloudBillingCenter
+        onClose={() => {
+          setCloudBillingVisible(false);
+          setCloudAccountVisible(true);
+          void refreshCloudAccount().catch(() => {
+            setCloudAccountError(
+              '暂时无法刷新云端账号，手机里的笔记不受影响。',
+            );
+          });
+        }}
+        visible={cloudBillingVisible}
       />
     </View>
   );
@@ -3813,6 +3832,7 @@ function CloudAccountSettings({
   onAcknowledgeRecoveryCode,
   onClose,
   onOpenAi,
+  onOpenBilling,
   onRecover,
   onRegister,
   onRevoke,
@@ -3828,6 +3848,7 @@ function CloudAccountSettings({
   onAcknowledgeRecoveryCode: () => void;
   onClose: () => void;
   onOpenAi: () => void;
+  onOpenBilling: () => void;
   onRecover: (recoveryCode: string) => Promise<void>;
   onRegister: () => Promise<void>;
   onRevoke: (device: CloudDevice) => void;
@@ -4011,6 +4032,37 @@ function CloudAccountSettings({
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     关闭 AI、使用自己的 Key，或查看托管服务状态
+                  </Text>
+                </View>
+                <Text style={styles.cloudAiSettingsChevron}>›</Text>
+              </Pressable>
+              <Pressable
+                disabled={loading}
+                onPress={onOpenBilling}
+                style={({ pressed }) => [
+                  styles.cloudAiSettingsButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.cloudAiSettingsMark,
+                    styles.cloudBillingSettingsMark,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.cloudAiSettingsMarkText,
+                      styles.cloudBillingSettingsMarkText,
+                    ]}
+                  >
+                    ¥
+                  </Text>
+                </View>
+                <View style={styles.cloudAiSettingsCopy}>
+                  <Text style={styles.cloudAiSettingsTitle}>余额与费用</Text>
+                  <Text style={styles.cloudAiSettingsDescription}>
+                    查看可用余额、任务预占和每一笔费用记录
                   </Text>
                 </View>
                 <Text style={styles.cloudAiSettingsChevron}>›</Text>
@@ -6704,6 +6756,13 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: 12,
     fontWeight: '900',
+  },
+  cloudBillingSettingsMark: {
+    backgroundColor: colors.apricot,
+  },
+  cloudBillingSettingsMarkText: {
+    color: colors.apricotText,
+    fontSize: 17,
   },
   cloudAiSettingsCopy: {
     flex: 1,

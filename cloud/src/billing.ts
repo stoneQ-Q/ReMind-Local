@@ -48,6 +48,7 @@ export type LedgerEntry = {
   reservedDeltaMicros: string;
   balanceAfterMicros: string;
   reservedAfterMicros: string;
+  source: 'payment' | 'gift' | 'operator' | null;
   createdAt: string;
 };
 
@@ -110,11 +111,12 @@ export async function listLedgerEntries(
     reserved_delta_micros: string;
     balance_after_micros: string;
     reserved_after_micros: string;
+    metadata_json: unknown;
     created_at: Date;
   }>(
     `SELECT id, job_id, kind, amount_micros, balance_delta_micros,
             reserved_delta_micros, balance_after_micros,
-            reserved_after_micros, created_at
+            reserved_after_micros, metadata_json, created_at
      FROM ledger_entries
      WHERE user_id = $1
      ORDER BY created_at DESC, id DESC
@@ -130,8 +132,25 @@ export async function listLedgerEntries(
     reservedDeltaMicros: row.reserved_delta_micros,
     balanceAfterMicros: row.balance_after_micros,
     reservedAfterMicros: row.reserved_after_micros,
+    source: ledgerSource(row.metadata_json),
     createdAt: row.created_at.toISOString(),
   }));
+}
+
+function ledgerSource(
+  metadata: unknown,
+): LedgerEntry['source'] {
+  if (
+    typeof metadata !== 'object' ||
+    metadata === null ||
+    Array.isArray(metadata)
+  ) {
+    return null;
+  }
+  const source = (metadata as Record<string, unknown>).source;
+  return source === 'payment' || source === 'gift' || source === 'operator'
+    ? source
+    : null;
 }
 
 /**

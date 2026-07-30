@@ -1,10 +1,7 @@
-import { clearCloudSession, getCloudAccessToken } from './cloud-auth';
 import {
-  buildReMindApiUrl,
-  getReMindServiceConfigForMode,
-} from './service-contract';
-
-const REQUEST_TIMEOUT_MS = 10_000;
+  CloudApiRequestError,
+  requestCloudJson,
+} from './cloud-api';
 
 export type CloudAiProvider = 'deepseek' | 'zhipu';
 export type CloudAiMode =
@@ -56,50 +53,14 @@ async function requestAiSettings(
   path: string,
   init: RequestInit = {},
 ): Promise<CloudAiSettings> {
-  const service = getReMindServiceConfigForMode('cloud');
-  if (!service) throw new CloudAiSettingsError('cloud_not_configured');
-  const accessToken = await getCloudAccessToken();
-  if (!accessToken) throw new CloudAiSettingsError('cloud_session_missing');
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const headers = new Headers(init.headers);
-    headers.set('Authorization', `Bearer ${accessToken}`);
-    if (init.body !== undefined) headers.set('Content-Type', 'application/json');
-    const response = await fetch(buildReMindApiUrl(service, path), {
-      ...init,
-      headers,
-      signal: controller.signal,
-    });
-    const payload = (await response.json().catch(() => null)) as unknown;
-    if (!response.ok) {
-      if (response.status === 401) await clearCloudSession();
-      throw new CloudAiSettingsError(cloudErrorCode(payload), response.status);
-    }
-    if (!isCloudAiSettings(payload)) {
-      throw new CloudAiSettingsError('invalid_ai_settings_response');
-    }
-    return payload;
-  } finally {
-    clearTimeout(timer);
+  const payload = await requestCloudJson(path, init);
+  if (!isCloudAiSettings(payload)) {
+    throw new CloudApiRequestError('invalid_ai_settings_response');
   }
+  return payload;
 }
 
-export class CloudAiSettingsError extends Error {
-  constructor(
-    readonly code: string,
-    readonly status?: number,
-  ) {
-    super(code);
-  }
-}
-
-function cloudErrorCode(payload: unknown): string {
-  return isRecord(payload) && typeof payload.error === 'string'
-    ? payload.error
-    : 'cloud_request_failed';
-}
+export { CloudApiRequestError as CloudAiSettingsError };
 
 function isCloudAiSettings(value: unknown): value is CloudAiSettings {
   if (
