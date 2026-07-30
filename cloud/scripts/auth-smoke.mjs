@@ -235,6 +235,34 @@ try {
     secondDevices.devices.every((device) => device.id === second.deviceId),
   );
 
+  const crossUserRevocation = await authenticatedRequest(
+    'DELETE',
+    `/api/v1/devices/${first.deviceId}`,
+    second.accessToken,
+  );
+  assert.equal(crossUserRevocation.status, 404);
+
+  const revokedOldDevice = await authenticatedRequest(
+    'DELETE',
+    `/api/v1/devices/${first.deviceId}`,
+    recovered.body.accessToken,
+  );
+  assert.equal(revokedOldDevice.status, 200);
+  assert.equal(revokedOldDevice.body.current, false);
+  const revokedOldSession = await authenticatedRequest(
+    'GET',
+    '/api/v1/users/me',
+    refreshed.body.accessToken,
+  );
+  assert.equal(revokedOldSession.status, 401);
+  const remainingDevices = await authenticatedJson(
+    '/api/v1/devices',
+    recovered.body.accessToken,
+  );
+  assert.equal(remainingDevices.devices.length, 1);
+  assert.equal(remainingDevices.devices[0].id, recovered.body.deviceId);
+  assert.equal(remainingDevices.devices[0].current, true);
+
   const invalidRecovery = await requestJson('/api/v1/auth/recover', {
     recoveryCode: 'RM-INVALID-CODE',
     platform: 'android',
@@ -258,8 +286,22 @@ try {
   assert.equal(storedSecrets.rows[0].sessions_hashed, true);
   assert.equal(storedSecrets.rows[0].devices_hashed, true);
 
+  const signedOutCurrentDevice = await authenticatedRequest(
+    'DELETE',
+    `/api/v1/devices/${recovered.body.deviceId}`,
+    recovered.body.accessToken,
+  );
+  assert.equal(signedOutCurrentDevice.status, 200);
+  assert.equal(signedOutCurrentDevice.body.current, true);
+  const signedOutSession = await authenticatedRequest(
+    'GET',
+    '/api/v1/users/me',
+    recovered.body.accessToken,
+  );
+  assert.equal(signedOutSession.status, 401);
+
   console.log(
-    'cloud smoke test passed: auth, renewal, recovery, AI settings, encrypted credentials, tenant-isolated job status, and cancellation',
+    'cloud smoke test passed: auth, renewal, recovery, device revocation, AI settings, encrypted credentials, tenant-isolated job status, and cancellation',
   );
 } finally {
   if (createdUserIds.length) {

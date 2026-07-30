@@ -6,6 +6,7 @@ import {
   listUserDevices,
   recoverAnonymousAccount,
   refreshDeviceSession,
+  revokeUserDevice,
   type DevicePlatform,
   type DeviceRegistration,
 } from './auth.js';
@@ -201,6 +202,35 @@ const server = createServer(async (request, response) => {
         account.deviceId,
       );
       sendJson(response, 200, { devices });
+      return;
+    }
+
+    const deviceMatch = request.url?.match(
+      /^\/api\/v1\/devices\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i,
+    );
+    if (request.method === 'DELETE' && deviceMatch) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const deviceId = deviceMatch[1] ?? '';
+      const revoked = await revokeUserDevice(
+        database,
+        account.userId,
+        deviceId,
+      );
+      if (!revoked) {
+        sendJson(response, 404, { error: 'device_not_found' });
+        return;
+      }
+      sendJson(response, 200, {
+        id: deviceId,
+        current: deviceId === account.deviceId,
+      });
       return;
     }
 

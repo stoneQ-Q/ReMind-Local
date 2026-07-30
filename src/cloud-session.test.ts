@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CLOUD_SESSION_REFRESH_WINDOW_MS,
+  serializeCloudSession,
   shouldRefreshCloudSession,
   type CloudSession,
 } from './cloud-session';
@@ -45,5 +46,18 @@ describe('cloud session renewal', () => {
         now,
       ),
     ).toBe(true);
+  });
+
+  it('stores only session credentials and excludes a one-time recovery code', () => {
+    const stored = serializeCloudSession({
+      ...session(now + CLOUD_SESSION_REFRESH_WINDOW_MS),
+      recoveryCode: 'RM-DO-NOT-PERSIST',
+    } as CloudSession & { recoveryCode: string });
+
+    expect(JSON.parse(stored)).toEqual(
+      session(now + CLOUD_SESSION_REFRESH_WINDOW_MS),
+    );
+    expect(stored).not.toContain('recoveryCode');
+    expect(stored).not.toContain('RM-DO-NOT-PERSIST');
   });
 });

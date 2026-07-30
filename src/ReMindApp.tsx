@@ -96,6 +96,16 @@ import {
   exportReMindBackup,
   importReMindBackup,
 } from './data-backup';
+import {
+  getCloudAccountOverview,
+  isHostedCloudConfigured,
+  recoverCloudAccount,
+  registerCloudAccount,
+  revokeCloudDevice,
+  type CloudAccountOverview,
+  type CloudDevice,
+  type CloudDeviceRegistration,
+} from './cloud-auth';
 
 type Screen = 'inbox' | 'search';
 type NoteCategory =
@@ -194,6 +204,26 @@ export function ReMindApp() {
   const [recallSuggestion, setRecallSuggestion] =
     useState<RecallSuggestion | null>(null);
   const [recallLoading, setRecallLoading] = useState(true);
+  const [cloudAccountVisible, setCloudAccountVisible] = useState(false);
+  const [cloudAccountLoading, setCloudAccountLoading] = useState(false);
+  const [cloudAccountError, setCloudAccountError] = useState<string | null>(
+    null,
+  );
+  const [cloudAccount, setCloudAccount] =
+    useState<CloudAccountOverview | null>(null);
+  const [cloudRecoveryCode, setCloudRecoveryCode] = useState<string | null>(
+    null,
+  );
+
+  const refreshCloudAccount = useCallback(async () => {
+    if (!isHostedCloudConfigured()) {
+      setCloudAccount(null);
+      return null;
+    }
+    const account = await getCloudAccountOverview();
+    setCloudAccount(account);
+    return account;
+  }, []);
 
   const loadNotes = useCallback(
     async (search = query) => {
@@ -369,6 +399,13 @@ export function ReMindApp() {
       .then(setWechatConnection)
       .catch(() => setWechatError('暂时无法连接微信服务'));
   }, []);
+
+  useEffect(() => {
+    if (!isHostedCloudConfigured()) return;
+    void refreshCloudAccount().catch(() => {
+      setCloudAccountError('暂时无法连接云端，手机里的笔记不受影响。');
+    });
+  }, [refreshCloudAccount]);
 
   useEffect(() => {
     if (!wechatConnection?.bound) return;
@@ -613,6 +650,36 @@ export function ReMindApp() {
           </Text>
         </View>
         <View style={styles.headerActions}>
+          <Pressable
+            accessibilityLabel="云端账号与设备"
+            onPress={() => {
+              setCloudAccountVisible(true);
+              setCloudAccountError(null);
+              setCloudAccountLoading(true);
+              void refreshCloudAccount()
+                .catch(() =>
+                  setCloudAccountError(
+                    '暂时无法连接云端，手机里的笔记不受影响。',
+                  ),
+                )
+                .finally(() => setCloudAccountLoading(false));
+            }}
+            style={({ pressed }) => [
+              styles.cloudBadge,
+              cloudAccount && styles.cloudBadgeConnected,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text maxFontSizeMultiplier={1} style={styles.cloudBadgeMark}>
+              云
+            </Text>
+            <View
+              style={[
+                styles.headerStatusDot,
+                cloudAccount && styles.headerStatusDotActive,
+              ]}
+            />
+          </Pressable>
           <Pressable
             accessibilityLabel="设置 Obsidian 同步"
             onPress={() => {
@@ -1417,6 +1484,90 @@ export function ReMindApp() {
         }}
         status={obsidianStatus}
         visible={obsidianVisible}
+      />
+
+      <CloudAccountSettings
+        account={cloudAccount}
+        configured={isHostedCloudConfigured()}
+        error={cloudAccountError}
+        loading={cloudAccountLoading}
+        onAcknowledgeRecoveryCode={() => setCloudRecoveryCode(null)}
+        onClose={() => {
+          if (cloudRecoveryCode) {
+            Alert.alert(
+              '先保存恢复码',
+              '它是以后换手机或重新安装时找回云端账号的唯一凭据。',
+            );
+            return;
+          }
+          setCloudAccountVisible(false);
+        }}
+        onRecover={async (recoveryCode) => {
+          setCloudAccountLoading(true);
+          setCloudAccountError(null);
+          try {
+            await recoverCloudAccount(recoveryCode, cloudDeviceRegistration());
+            await refreshCloudAccount();
+            await Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success,
+            );
+          } catch (error) {
+            setCloudAccountError(cloudAccountErrorMessage(error));
+          } finally {
+            setCloudAccountLoading(false);
+          }
+        }}
+        onRegister={async () => {
+          setCloudAccountLoading(true);
+          setCloudAccountError(null);
+          try {
+            const created = await registerCloudAccount(
+              cloudDeviceRegistration(),
+            );
+            setCloudRecoveryCode(created.recoveryCode);
+            await refreshCloudAccount();
+            await Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success,
+            );
+          } catch (error) {
+            setCloudAccountError(cloudAccountErrorMessage(error));
+          } finally {
+            setCloudAccountLoading(false);
+          }
+        }}
+        onRevoke={(device) => {
+          Alert.alert(
+            device.current ? '退出这台设备？' : '移除这台设备？',
+            device.current
+              ? '只会退出云端账号，手机里的本地笔记不会删除。重新连接需要恢复码。'
+              : `${cloudDeviceName(device)} 将不能再访问这个云端账号。`,
+            [
+              { text: '取消', style: 'cancel' },
+              {
+                text: device.current ? '退出' : '移除',
+                style: 'destructive',
+                onPress: async () => {
+                  setCloudAccountLoading(true);
+                  setCloudAccountError(null);
+                  try {
+                    const result = await revokeCloudDevice(device.id);
+                    if (result.current) {
+                      setCloudAccount(null);
+                    } else {
+                      await refreshCloudAccount();
+                    }
+                  } catch (error) {
+                    setCloudAccountError(cloudAccountErrorMessage(error));
+                  } finally {
+                    setCloudAccountLoading(false);
+                  }
+                },
+              },
+            ],
+          );
+        }}
+        recoveryCode={cloudRecoveryCode}
+        visible={cloudAccountVisible}
       />
     </View>
   );
@@ -3580,6 +3731,294 @@ function ObsidianSettings({
   );
 }
 
+function CloudAccountSettings({
+  account,
+  configured,
+  error,
+  loading,
+  onAcknowledgeRecoveryCode,
+  onClose,
+  onRecover,
+  onRegister,
+  onRevoke,
+  recoveryCode,
+  visible,
+}: {
+  account: CloudAccountOverview | null;
+  configured: boolean;
+  error: string | null;
+  loading: boolean;
+  onAcknowledgeRecoveryCode: () => void;
+  onClose: () => void;
+  onRecover: (recoveryCode: string) => Promise<void>;
+  onRegister: () => Promise<void>;
+  onRevoke: (device: CloudDevice) => void;
+  recoveryCode: string | null;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryInput, setRecoveryInput] = useState('');
+
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onClose}
+      presentationStyle="pageSheet"
+      visible={visible}
+    >
+      <View style={styles.cloudAccountSheet}>
+        <View style={[styles.editorHeader, { paddingTop: insets.top + 8 }]}>
+          <Pressable hitSlop={10} onPress={onClose}>
+            <Text style={styles.editorCancel}>关闭</Text>
+          </Pressable>
+          <Text style={styles.editorHeading}>云端账号</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
+        <ScrollView
+          contentContainerStyle={[
+            styles.cloudAccountBody,
+            { paddingBottom: insets.bottom + 28 },
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.cloudAccountHeroMark}>
+            <Text style={styles.cloudAccountHeroMarkText}>云</Text>
+          </View>
+
+          {recoveryCode ? (
+            <>
+              <Text style={styles.cloudAccountTitle}>账号已经开通</Text>
+              <Text style={styles.cloudAccountCopy}>
+                请把下面的恢复码保存在密码管理器或其他安全位置。它只显示这一次，换手机或重新安装时需要用它找回账号。
+              </Text>
+              <View style={styles.recoveryCodeCard}>
+                <Text style={styles.recoveryCodeLabel}>你的恢复码</Text>
+                <Text selectable style={styles.recoveryCodeValue}>
+                  {recoveryCode}
+                </Text>
+              </View>
+              <Pressable
+                onPress={onAcknowledgeRecoveryCode}
+                style={({ pressed }) => [
+                  styles.cloudAccountPrimary,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.cloudAccountPrimaryText}>
+                  我已安全保存
+                </Text>
+              </Pressable>
+            </>
+          ) : account ? (
+            <>
+              <Text style={styles.cloudAccountTitle}>云端已经连接</Text>
+              <Text style={styles.cloudAccountCopy}>
+                当前共有 {account.devices.length}{' '}
+                台设备可以访问这个账号。移除旧设备不会删除本地笔记或云端内容。
+              </Text>
+              <View style={styles.cloudAccountStatus}>
+                <View style={styles.cloudAccountStatusDot} />
+                <Text style={styles.cloudAccountStatusText}>
+                  会话已开启 · 到期前会自动续期
+                </Text>
+              </View>
+              <Text style={styles.cloudDeviceSectionTitle}>登录设备</Text>
+              {account.devices.map((device) => (
+                <View key={device.id} style={styles.cloudDeviceCard}>
+                  <View style={styles.cloudDeviceCopy}>
+                    <View style={styles.cloudDeviceTitleRow}>
+                      <Text style={styles.cloudDeviceTitle}>
+                        {cloudDeviceName(device)}
+                      </Text>
+                      {device.current ? (
+                        <Text style={styles.cloudDeviceCurrent}>当前设备</Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.cloudDeviceMeta}>
+                      最近使用 {formatCloudDeviceTime(device.lastSeenAt)}
+                    </Text>
+                  </View>
+                  <Pressable
+                    disabled={loading}
+                    hitSlop={8}
+                    onPress={() => onRevoke(device)}
+                    style={({ pressed }) => [
+                      styles.cloudDeviceRemove,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={styles.cloudDeviceRemoveText}>
+                      {device.current ? '退出' : '移除'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ))}
+            </>
+          ) : !configured ? (
+            <>
+              <Text style={styles.cloudAccountTitle}>现在使用本地模式</Text>
+              <Text style={styles.cloudAccountCopy}>
+                私密测试云端尚未写入这个安装包。你仍然可以正常记录、搜索和使用本地备份，现有内容不会受到影响。
+              </Text>
+              <View style={styles.cloudAccountNotice}>
+                <Text style={styles.cloudAccountNoticeText}>
+                  云端地址配置完成后，这里会自动出现开通和恢复入口。
+                </Text>
+              </View>
+            </>
+          ) : recovering ? (
+            <>
+              <Text style={styles.cloudAccountTitle}>恢复已有账号</Text>
+              <Text style={styles.cloudAccountCopy}>
+                输入之前保存的恢复码。这台手机会作为一台新设备加入，不会覆盖本地笔记。
+              </Text>
+              <TextInput
+                autoCapitalize="characters"
+                autoCorrect={false}
+                editable={!loading}
+                onChangeText={setRecoveryInput}
+                placeholder="RM-…"
+                placeholderTextColor={colors.faint}
+                style={styles.recoveryInput}
+                value={recoveryInput}
+              />
+              {error ? (
+                <Text style={styles.cloudAccountError}>{error}</Text>
+              ) : null}
+              <Pressable
+                disabled={!recoveryInput.trim() || loading}
+                onPress={() => void onRecover(recoveryInput.trim())}
+                style={({ pressed }) => [
+                  styles.cloudAccountPrimary,
+                  (!recoveryInput.trim() || loading) &&
+                    styles.cloudAccountButtonDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {loading ? (
+                  <ActivityIndicator color={colors.white} />
+                ) : (
+                  <Text style={styles.cloudAccountPrimaryText}>恢复账号</Text>
+                )}
+              </Pressable>
+              <Pressable
+                disabled={loading}
+                onPress={() => {
+                  setRecovering(false);
+                  setRecoveryInput('');
+                }}
+                style={({ pressed }) => [
+                  styles.cloudAccountSecondary,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.cloudAccountSecondaryText}>返回</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={styles.cloudAccountTitle}>让手机随时连接云端</Text>
+              <Text style={styles.cloudAccountCopy}>
+                开通后可以在不同网络下使用云端能力。现在只建立账号和设备会话，不会自动上传本地笔记，也不会产生费用。
+              </Text>
+              {error ? (
+                <Text style={styles.cloudAccountError}>{error}</Text>
+              ) : null}
+              <Pressable
+                disabled={loading}
+                onPress={() => void onRegister()}
+                style={({ pressed }) => [
+                  styles.cloudAccountPrimary,
+                  loading && styles.cloudAccountButtonDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {loading ? (
+                  <ActivityIndicator color={colors.white} />
+                ) : (
+                  <Text style={styles.cloudAccountPrimaryText}>
+                    开通云端账号
+                  </Text>
+                )}
+              </Pressable>
+              <Pressable
+                disabled={loading}
+                onPress={() => setRecovering(true)}
+                style={({ pressed }) => [
+                  styles.cloudAccountSecondary,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.cloudAccountSecondaryText}>
+                  我已有恢复码
+                </Text>
+              </Pressable>
+            </>
+          )}
+
+          {account && error ? (
+            <Text style={styles.cloudAccountError}>{error}</Text>
+          ) : null}
+          <Text style={styles.cloudAccountFootnote}>
+            云端会话凭据只保存在这台设备的系统安全存储中。退出账号不会清除 ReMind
+            本地数据库。
+          </Text>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function cloudDeviceRegistration(): CloudDeviceRegistration {
+  return {
+    platform:
+      Platform.OS === 'android'
+        ? 'android'
+        : Platform.OS === 'ios'
+          ? 'ios'
+          : 'unknown',
+    displayName:
+      Platform.OS === 'ios'
+        ? '这台 iPhone'
+        : Platform.OS === 'android'
+          ? '这台 Android 设备'
+          : '这台设备',
+  };
+}
+
+function cloudDeviceName(device: CloudDevice): string {
+  if (device.displayName?.trim()) return device.displayName.trim();
+  if (device.platform === 'ios') return 'iPhone 或 iPad';
+  if (device.platform === 'android') return 'Android 设备';
+  return '未知设备';
+}
+
+function formatCloudDeviceTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '时间未知';
+  return date.toLocaleString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function cloudAccountErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.name === 'AbortError') return '连接超时，请检查网络后重试。';
+    if (error.message === 'invalid_recovery_code') {
+      return '恢复码不正确，请检查是否完整输入。';
+    }
+    if (error.message === 'cloud_session_missing') {
+      return '登录已经失效，请使用恢复码重新连接。';
+    }
+  }
+  return '暂时无法连接云端，请稍后重试。本地笔记不受影响。';
+}
+
 function startOfTodayIso(): string {
   const date = new Date();
   date.setHours(0, 0, 0, 0);
@@ -3852,6 +4291,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
+  },
+  cloudBadge: {
+    position: 'relative',
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+  },
+  cloudBadgeConnected: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+  },
+  cloudBadgeMark: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: '800',
   },
   obsidianBadge: {
     position: 'relative',
@@ -5867,6 +6326,221 @@ const styles = StyleSheet.create({
   },
   obsidianFootnote: {
     marginTop: 18,
+    color: colors.faint,
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: 'center',
+  },
+  cloudAccountSheet: {
+    flex: 1,
+    backgroundColor: colors.paper,
+  },
+  cloudAccountBody: {
+    paddingHorizontal: 24,
+    paddingTop: 30,
+  },
+  cloudAccountHeroMark: {
+    width: 66,
+    height: 66,
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    borderRadius: 22,
+    backgroundColor: colors.accentSoft,
+    transform: [{ rotate: '2deg' }],
+  },
+  cloudAccountHeroMarkText: {
+    color: colors.accent,
+    fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
+    fontSize: 25,
+    fontWeight: '800',
+  },
+  cloudAccountTitle: {
+    marginTop: 22,
+    color: colors.ink,
+    fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
+    fontSize: 24,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  cloudAccountCopy: {
+    marginTop: 10,
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 22,
+    textAlign: 'center',
+  },
+  cloudAccountStatus: {
+    alignSelf: 'center',
+    marginTop: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 99,
+    backgroundColor: colors.accentSoft,
+  },
+  cloudAccountStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+  },
+  cloudAccountStatusText: {
+    color: colors.sageText,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cloudAccountNotice: {
+    marginTop: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+  },
+  cloudAccountNoticeText: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  recoveryCodeCard: {
+    marginTop: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+  },
+  recoveryCodeLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textAlign: 'center',
+  },
+  recoveryCodeValue: {
+    marginTop: 10,
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 27,
+    textAlign: 'center',
+  },
+  recoveryInput: {
+    marginTop: 24,
+    minHeight: 54,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 15,
+    backgroundColor: colors.surface,
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  cloudAccountPrimary: {
+    minHeight: 52,
+    marginTop: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: colors.accent,
+  },
+  cloudAccountPrimaryText: {
+    color: colors.white,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  cloudAccountSecondary: {
+    minHeight: 50,
+    marginTop: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 15,
+    backgroundColor: colors.surface,
+  },
+  cloudAccountSecondaryText: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  cloudAccountButtonDisabled: {
+    opacity: 0.48,
+  },
+  cloudAccountError: {
+    marginTop: 16,
+    color: colors.danger,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  cloudDeviceSectionTitle: {
+    marginTop: 28,
+    marginBottom: 10,
+    color: colors.ink,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  cloudDeviceCard: {
+    minHeight: 74,
+    marginBottom: 10,
+    paddingHorizontal: 15,
+    paddingVertical: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+  },
+  cloudDeviceCopy: {
+    flex: 1,
+  },
+  cloudDeviceTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  cloudDeviceTitle: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  cloudDeviceCurrent: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 99,
+    backgroundColor: colors.accentSoft,
+    color: colors.accent,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  cloudDeviceMeta: {
+    marginTop: 6,
+    color: colors.faint,
+    fontSize: 11,
+  },
+  cloudDeviceRemove: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  cloudDeviceRemoveText: {
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  cloudAccountFootnote: {
+    marginTop: 24,
     color: colors.faint,
     fontSize: 11,
     lineHeight: 17,

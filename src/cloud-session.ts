@@ -18,3 +18,13 @@ export function shouldRefreshCloudSession(
     expiresAt - nowMs <= CLOUD_SESSION_REFRESH_WINDOW_MS
   );
 }
+
+export function serializeCloudSession(session: CloudSession): string {
+  return JSON.stringify({
+    userId: session.userId,
+    deviceId: session.deviceId,
+    deviceSecret: session.deviceSecret,
+    accessToken: session.accessToken,
+    accessTokenExpiresAt: session.accessTokenExpiresAt,
+  } satisfies CloudSession);
+}

@@ -250,6 +250,45 @@ export async function listUserDevices(
   }));
 }
 
+export async function revokeUserDevice(
+  pool: Pool,
+  userId: string,
+  deviceId: string,
+): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const revoked = await client.query(
+      `UPDATE devices
+       SET revoked_at = now()
+       WHERE user_id = $1
+         AND id = $2
+         AND revoked_at IS NULL
+       RETURNING id`,
+      [userId, deviceId],
+    );
+    if (revoked.rowCount !== 1) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    await client.query(
+      `UPDATE user_sessions
+       SET revoked_at = now()
+       WHERE user_id = $1
+         AND device_id = $2
+         AND revoked_at IS NULL`,
+      [userId, deviceId],
+    );
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function createDeviceSession(
   client: PoolClient,
   userId: string,
