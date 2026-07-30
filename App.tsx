@@ -12,6 +12,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ReMindApp } from './src/ReMindApp';
 import { migrateDatabase } from './src/database';
+import { REMIND_DATABASE_NAME } from './src/persistence-contract';
 import { colors } from './src/theme';
 
 function AppLoading() {
@@ -31,9 +32,7 @@ export default function App() {
       <StatusBar style="dark" />
       <Suspense fallback={<AppLoading />}>
         <SQLiteProvider
-          databaseName={
-            process.env.EXPO_PUBLIC_REMIND_DATABASE_NAME ?? 'remind.db'
-          }
+          databaseName={REMIND_DATABASE_NAME}
           onInit={migrateDatabase}
           useSuspense
         >

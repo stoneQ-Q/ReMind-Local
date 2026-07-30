@@ -7,8 +7,7 @@ import {
   setActiveReMindAppMode,
   type ReMindAppMode,
 } from './service-contract';
-
-const SERVICE_MODE_KEY = 'remind.service.mode.v1';
+import { REMIND_SERVICE_MODE_STORAGE_KEY } from './persistence-contract';
 const PROBE_TIMEOUT_MS = 5_000;
 
 export type ReMindModeStatus = {
@@ -17,9 +16,9 @@ export type ReMindModeStatus = {
 };
 
 export async function initializeReMindServiceMode(): Promise<ReMindModeStatus> {
-  const stored = await SecureStore.getItemAsync(SERVICE_MODE_KEY).catch(
-    () => null,
-  );
+  const stored = await SecureStore.getItemAsync(
+    REMIND_SERVICE_MODE_STORAGE_KEY,
+  ).catch(() => null);
   if (
     (stored === 'local' || stored === 'cloud') &&
     getReMindServiceConfigForMode(stored)
@@ -45,7 +44,7 @@ export async function selectReMindServiceMode(
   if (!config) throw new Error(`${mode}_service_not_configured`);
 
   await probeService(config.baseUrl, mode);
-  await SecureStore.setItemAsync(SERVICE_MODE_KEY, mode, {
+  await SecureStore.setItemAsync(REMIND_SERVICE_MODE_STORAGE_KEY, mode, {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   });
   setActiveReMindAppMode(mode);

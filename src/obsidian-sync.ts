@@ -8,10 +8,11 @@ import {
   renderObsidianMarkdown,
 } from './obsidian-markdown';
 import { mapNoteRow } from './note-utils';
+import {
+  OBSIDIAN_DIRECTORY_NAME_SETTING,
+  OBSIDIAN_DIRECTORY_URI_SETTING,
+} from './persistence-contract';
 import type { NoteRow } from './types';
-
-const DIRECTORY_URI_KEY = 'obsidian.directory_uri';
-const DIRECTORY_NAME_KEY = 'obsidian.directory_name';
 
 export type ObsidianSyncStatus = {
   configured: boolean;
@@ -38,16 +39,21 @@ export async function chooseObsidianVault(
     throw new Error('当前版本请在 Android 上选择 Obsidian Vault');
   }
 
-  const previousUri = await getSetting(db, DIRECTORY_URI_KEY);
+  const previousUri = await getSetting(db, OBSIDIAN_DIRECTORY_URI_SETTING);
   const picked = await Directory.pickDirectoryAsync(previousUri ?? undefined);
   const selected = new Directory(picked.uri);
   const remindDirectory = findOrCreateDirectory(selected, 'ReMind');
   const inboxDirectory = findOrCreateDirectory(remindDirectory, 'Inbox');
   const now = new Date().toISOString();
-  await setSetting(db, DIRECTORY_URI_KEY, inboxDirectory.uri, now);
   await setSetting(
     db,
-    DIRECTORY_NAME_KEY,
+    OBSIDIAN_DIRECTORY_URI_SETTING,
+    inboxDirectory.uri,
+    now,
+  );
+  await setSetting(
+    db,
+    OBSIDIAN_DIRECTORY_NAME_SETTING,
     `${selected.name}/ReMind/Inbox`,
     now,
   );
@@ -85,7 +91,10 @@ export async function isNoteSelectedForObsidian(
 export async function exportPendingNotes(
   db: SQLiteDatabase,
 ): Promise<ObsidianSyncStatus> {
-  const directoryUri = await getSetting(db, DIRECTORY_URI_KEY);
+  const directoryUri = await getSetting(
+    db,
+    OBSIDIAN_DIRECTORY_URI_SETTING,
+  );
   if (!directoryUri) return getObsidianSyncStatus(db);
 
   const directory = new Directory(directoryUri);
@@ -178,8 +187,8 @@ export async function getObsidianSyncStatus(
   db: SQLiteDatabase,
 ): Promise<ObsidianSyncStatus> {
   const [directoryUri, directoryName, counts] = await Promise.all([
-    getSetting(db, DIRECTORY_URI_KEY),
-    getSetting(db, DIRECTORY_NAME_KEY),
+    getSetting(db, OBSIDIAN_DIRECTORY_URI_SETTING),
+    getSetting(db, OBSIDIAN_DIRECTORY_NAME_SETTING),
     db.getFirstAsync<{
       exported: number;
       failed: number;

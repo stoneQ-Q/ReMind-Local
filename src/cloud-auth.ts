@@ -11,8 +11,7 @@ import {
   getReMindServiceConfigForMode,
   type ReMindServiceConfig,
 } from './service-contract';
-
-const CLOUD_SESSION_KEY = 'remind.cloud.session';
+import { cloudSessionStorageKey } from './persistence-contract';
 const REQUEST_TIMEOUT_MS = 10_000;
 const refreshes = new Map<string, Promise<CloudSession>>();
 
@@ -150,7 +149,9 @@ export async function revokeCloudDevice(deviceId: string): Promise<{
 export async function clearCloudSession(): Promise<void> {
   const service = getReMindServiceConfigForMode('cloud');
   if (!service) return;
-  await SecureStore.deleteItemAsync(sessionStorageKey(service));
+  await SecureStore.deleteItemAsync(
+    cloudSessionStorageKey(credentialScope(service)),
+  );
 }
 
 async function refreshCloudSession(
@@ -182,7 +183,9 @@ async function refreshCloudSession(
 async function loadCloudSession(
   service: ReMindServiceConfig,
 ): Promise<CloudSession | null> {
-  const stored = await SecureStore.getItemAsync(sessionStorageKey(service));
+  const stored = await SecureStore.getItemAsync(
+    cloudSessionStorageKey(credentialScope(service)),
+  );
   if (!stored) return null;
   try {
     const value = JSON.parse(stored) as unknown;
@@ -197,19 +200,10 @@ async function saveCloudSession(
   session: CloudSession,
 ): Promise<void> {
   await SecureStore.setItemAsync(
-    sessionStorageKey(service),
+    cloudSessionStorageKey(credentialScope(service)),
     serializeCloudSession(session),
     { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
   );
-}
-
-function sessionStorageKey(service: ReMindServiceConfig): string {
-  const scope = credentialScope(service);
-  let hash = 5381;
-  for (let index = 0; index < scope.length; index += 1) {
-    hash = (hash * 33) ^ scope.charCodeAt(index);
-  }
-  return `${CLOUD_SESSION_KEY}.${(hash >>> 0).toString(16)}`;
 }
 
 function requireHostedService(): ReMindServiceConfig {

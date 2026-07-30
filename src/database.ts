@@ -18,10 +18,11 @@ import type {
   OrganizationResponse,
   ThemeMergeResponse,
 } from './ai-organize';
+import { REMIND_DATABASE_SCHEMA_VERSION } from './persistence-contract';
 
 // v16 is intentionally schema-neutral. It preserves migration monotonicity
 // after the discarded local-media prototype without storing media in SQLite.
-const DATABASE_VERSION = 16;
+const DATABASE_VERSION = REMIND_DATABASE_SCHEMA_VERSION;
 
 export type SourceThemeAssignment = {
   sourceNoteId: string;

@@ -8,9 +8,10 @@ import {
   getReMindServiceConfig,
   type ReMindServiceConfig,
 } from './service-contract';
-
-const DEVICE_ID_KEY = 'remind.wechat.device-id';
-const DEVICE_SECRET_KEY = 'remind.wechat.device-secret';
+import {
+  wechatDeviceIdStorageKey,
+  wechatDeviceSecretStorageKey,
+} from './persistence-contract';
 
 export type WechatReplyMode = 'first' | 'always' | 'silent';
 
@@ -288,9 +289,12 @@ async function registerDevice(
   };
   const scope = credentialScope(service);
   await Promise.all([
-    SecureStore.setItemAsync(scopedKey(DEVICE_ID_KEY, scope), payload.deviceId),
     SecureStore.setItemAsync(
-      scopedKey(DEVICE_SECRET_KEY, scope),
+      wechatDeviceIdStorageKey(scope),
+      payload.deviceId,
+    ),
+    SecureStore.setItemAsync(
+      wechatDeviceSecretStorageKey(scope),
       payload.deviceSecret,
     ),
   ]);
@@ -305,18 +309,10 @@ async function getStoredDevice(
 ): Promise<StoredDevice | null> {
   const scope = credentialScope(service);
   const [deviceId, deviceSecret] = await Promise.all([
-    SecureStore.getItemAsync(scopedKey(DEVICE_ID_KEY, scope)),
-    SecureStore.getItemAsync(scopedKey(DEVICE_SECRET_KEY, scope)),
+    SecureStore.getItemAsync(wechatDeviceIdStorageKey(scope)),
+    SecureStore.getItemAsync(wechatDeviceSecretStorageKey(scope)),
   ]);
   return deviceId && deviceSecret ? { deviceId, deviceSecret } : null;
-}
-
-function scopedKey(key: string, baseUrl: string): string {
-  let hash = 5381;
-  for (let index = 0; index < baseUrl.length; index += 1) {
-    hash = (hash * 33) ^ baseUrl.charCodeAt(index);
-  }
-  return `${key}.${(hash >>> 0).toString(16)}`;
 }
 
 async function apiRequest(
