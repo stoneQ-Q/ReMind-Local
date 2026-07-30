@@ -367,6 +367,8 @@ try {
     cleaned: true,
   });
 
+  await runOptionalResourceUploadBenchmark(firstUser);
+
   console.log(
     'file upload smoke test passed: idempotent creation, tenant isolation, resumable offsets, concurrent chunk serialization, integrity verification, completion crash recovery, cancellation, expired cleanup, and cleanup retry',
   );
@@ -384,4 +386,67 @@ async function createUser() {
 
 function sha256(content) {
   return createHash('sha256').update(content).digest('hex');
+}
+
+async function runOptionalResourceUploadBenchmark(userId) {
+  const configuredMegabytes = process.env.REMIND_RESOURCE_UPLOAD_MB;
+  if (!configuredMegabytes) return;
+
+  const sizeMegabytes = Number(configuredMegabytes);
+  if (
+    !Number.isInteger(sizeMegabytes) ||
+    sizeMegabytes < 1 ||
+    sizeMegabytes > 1024
+  ) {
+    throw new Error('REMIND_RESOURCE_UPLOAD_MB must be an integer from 1 to 1024');
+  }
+
+  const chunkSize = 4 * 1024 * 1024;
+  const totalSize = sizeMegabytes * 1024 * 1024;
+  const chunkCount = Math.ceil(totalSize / chunkSize);
+  const firstChunk = Buffer.alloc(Math.min(chunkSize, totalSize));
+  Buffer.from([0, 0, 0, 16]).copy(firstChunk, 0);
+  Buffer.from('ftypisom').copy(firstChunk, 4);
+  const zeroChunk = Buffer.alloc(chunkSize);
+  const digest = createHash('sha256');
+  digest.update(firstChunk);
+  for (let index = 1; index < chunkCount; index += 1) {
+    digest.update(
+      index === chunkCount - 1 && totalSize % chunkSize !== 0
+        ? zeroChunk.subarray(0, totalSize % chunkSize)
+        : zeroChunk,
+    );
+  }
+
+  const startedAt = performance.now();
+  const upload = await createFileUpload(pool, store, {
+    userId,
+    idempotencyKey: `resource-benchmark-${sizeMegabytes}mb`,
+    contentType: 'video/mp4',
+    sizeBytes: totalSize,
+    sha256Hex: digest.digest('hex'),
+    originalName: `resource-benchmark-${sizeMegabytes}mb.mp4`,
+  });
+  let offset = 0;
+  for (let index = 0; index < chunkCount; index += 1) {
+    const remaining = totalSize - offset;
+    const content =
+      index === 0
+        ? firstChunk
+        : zeroChunk.subarray(0, Math.min(chunkSize, remaining));
+    const snapshot = await appendFileUploadChunk(pool, store, {
+      userId,
+      uploadId: upload.id,
+      offset,
+      content,
+    });
+    offset = snapshot.uploadedSizeBytes;
+  }
+  const completed = await completeFileUpload(pool, store, userId, upload.id);
+  assert.equal(completed.status, 'succeeded');
+  assert.equal(offset, totalSize);
+  const elapsedSeconds = (performance.now() - startedAt) / 1000;
+  console.log(
+    `resource upload benchmark: ${sizeMegabytes} MB in ${elapsedSeconds.toFixed(2)}s (${(sizeMegabytes / elapsedSeconds).toFixed(1)} MB/s), ${chunkCount} chunks`,
+  );
 }
