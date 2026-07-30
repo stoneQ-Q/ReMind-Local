@@ -90,7 +90,14 @@ API 提供 `GET /api/v1/jobs/:jobId` 查询当前用户自己的任务状态，�
 - `POST /api/v1/files/uploads/:uploadId/complete`：校验总大小和 SHA-256，原子发布为可读取源文件；
 - `DELETE /api/v1/files/uploads/:uploadId`：取消并清理未完成对象。
 
-上传完成前文件保持 `pending` 且无法被媒体任务读取；错误偏移、跨用户会话、超限分块和完整性不匹配都会被拒绝。过期会话由 Worker 使用短租约清理，清理失败可退避重试。接口与数据库已区分 `proxy_chunks` 和 `provider_multipart`，并定义了云厂商分片创建、分片签名、合并和终止边界；当前只实现本地 `proxy_chunks`，不会生成公开或长期签名地址。腾讯 COS／阿里 OSS 适配器后续可以切换为短期签名直传，不改变文件和媒体任务契约。
+上传完成前文件保持 `pending` 且无法被媒体任务读取；错误偏移、跨用户会话、超限分块和完整性不匹配都会被拒绝。过期会话由 Worker 使用短租约清理，清理失败可退避重试。接口与数据库已区分 `proxy_chunks` 和 `provider_multipart`，并定义了云厂商分片创建、分片签名、合并和终止边界。
+
+对象存储通过 `REMIND_OBJECT_STORE_PROVIDER` 选择：
+
+- `local`：默认值，分片和完成对象都保存在私有 Docker 卷；
+- `tencent_cos`：分片先保存在服务器私有暂存目录，完成完整性校验后通过 HTTPS 写入私有 COS 桶；对象使用 COS 服务端加密并保存 SHA-256 元数据，读取和删除仍由 ReMind 服务端代理。
+
+腾讯 COS 模式需要 `REMIND_COS_BUCKET`、`REMIND_COS_REGION`、`REMIND_COS_SECRET_ID` 和 `REMIND_COS_SECRET_KEY`；临时密钥另外填写 `REMIND_COS_SECURITY_TOKEN`。这些值只能放在服务器的私密环境文件中，不能提交到 Git、写入 App 或日志。当前模式不会生成公开或长期签名地址，也不会把 COS 密钥交给手机。以后可以切换为短期签名直传，不改变文件和媒体任务的数据契约。
 
 PostgreSQL 备份只包含对象元数据，不包含 `remind-object-data` 中的二进制文件。私密测试部署必须使用 COS 的版本控制/生命周期和独立备份策略；不要把本地对象卷当作生产备份。
 
