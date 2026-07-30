@@ -1,0 +1,19 @@
+[Unit]
+Description=ReMind production health check
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=docker
+Environment=REMIND_HEALTH_PUBLIC_URL=https://remind.43-129-237-189.sslip.io
+Environment=REMIND_HEALTH_DATA_PATH=/opt/remind/shared
+Environment=REMIND_HEALTH_BACKUP_DIR=/opt/remind/shared/backups
+ExecStart=/opt/remind/current/cloud/scripts/health-check.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+MemoryMax=64M
+CPUQuota=10%
