@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+umask 077
 
 interval="${REMIND_BACKUP_INTERVAL_SECONDS:-86400}"
 retention_days="${REMIND_BACKUP_RETENTION_DAYS:-7}"
