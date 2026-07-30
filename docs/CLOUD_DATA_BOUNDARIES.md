@@ -151,4 +151,6 @@ user
 - 旧版未配置 `EXPO_PUBLIC_REMIND_API_VERSION` 时继续请求 `/api`。
 - 旧版设备凭据的 SecureStore 作用域保持原来的 API 地址，现有微信配对不会失效。
 - 只有显式设置 V1 路由时才使用新的凭据作用域和 `/api/v1`。
-- 本阶段不修改 `remind.db` schema，不搬迁现有数据，不启用云端账号。
+- 新版可以分别配置 `EXPO_PUBLIC_REMIND_LOCAL_API_URL` 和 `EXPO_PUBLIC_REMIND_CLOUD_API_URL`；两套地址与凭据互不覆盖。
+- 用户选择的模式保存在 SecureStore，切换前先验证目标服务，失败时保持原模式。
+- 模式切换不修改 `remind.db` schema，不搬迁或自动上传现有数据；云端账号会话与本地微信设备凭据分别保留。
