@@ -63,6 +63,12 @@ import {
 } from './media-pricing.js';
 import { objectStoreFromEnvironment } from './object-store.js';
 import {
+  OrganizationError,
+  organizeDaily,
+  organizeLink,
+  suggestThemeMerge,
+} from './organization.js';
+import {
   claimWechatBindingCode,
   createWechatBindingCode,
   getCloudWechatStatus,
@@ -79,7 +85,7 @@ const managedMediaPriceCatalog =
   configuredMediaProvider === 'remote'
     ? managedMediaPriceCatalogFromEnvironment()
     : null;
-const MAX_JSON_BODY_BYTES = 16 * 1024;
+const MAX_JSON_BODY_BYTES = 96 * 1024;
 const MAX_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 const requestRateLimiter = new RequestRateLimiter();
 const allowedPlatforms = new Set<DevicePlatform>([
@@ -891,6 +897,54 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const organizationMatch = request.url?.match(
+      /^\/api\/v1\/organize\/(organize|link-organize|theme-merge)$/,
+    );
+    if (request.method === 'POST' && organizationMatch) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      try {
+        const action = organizationMatch[1];
+        const result =
+          action === 'organize'
+            ? await organizeDaily(
+                database,
+                credentialCipher,
+                account.userId,
+                body,
+                controller.signal,
+              )
+            : action === 'link-organize'
+              ? await organizeLink(
+                  database,
+                  credentialCipher,
+                  account.userId,
+                  body,
+                  controller.signal,
+                )
+              : await suggestThemeMerge(
+                  database,
+                  credentialCipher,
+                  account.userId,
+                  body,
+                  controller.signal,
+                );
+        sendJson(response, 200, result);
+      } finally {
+        clearTimeout(timer);
+      }
+      return;
+    }
+
     if (
       request.method === 'PUT' &&
       request.url === '/api/v1/ai/settings'
@@ -991,6 +1045,10 @@ const server = createServer(async (request, response) => {
     }
     if (error instanceof MediaProviderAuthorizationError) {
       sendJson(response, 409, { error: error.code });
+      return;
+    }
+    if (error instanceof OrganizationError) {
+      sendJson(response, error.status, { error: error.code });
       return;
     }
     if (error instanceof MediaProviderHttpError) {

@@ -12,7 +12,7 @@ import {
   wechatDeviceIdStorageKey,
   wechatDeviceSecretStorageKey,
 } from './persistence-contract';
-import { requestCloudJson } from './cloud-api';
+import { requestCloud, requestCloudJson } from './cloud-api';
 
 export type WechatReplyMode = 'first' | 'always' | 'silent';
 
@@ -195,7 +195,10 @@ export async function requestAuthenticatedDeviceApi(
   timeoutMs = 8_000,
 ): Promise<Response> {
   const service = getReMindServiceConfig();
-  if (!service || service.mode !== 'self-hosted') {
+  if (service?.mode === 'hosted') {
+    return requestCloud(`organize/${action}`, init, timeoutMs);
+  }
+  if (!service) {
     throw new Error('Local ReMind service is not active');
   }
   let device = await getStoredDevice(service);

@@ -270,7 +270,9 @@ export async function runNextJob(
   } catch (error) {
     const code =
       abortCode ??
-      normalizeErrorCode(error instanceof Error ? error.name : 'job_failed');
+      normalizeErrorCode(
+        error instanceof Error ? error.message : 'job_failed',
+      );
     if (code === 'job_cancelled') {
       await cancelRunningJob(pool, job);
       await releaseReservation(pool, job, 'cancelled', 'worker-cancel');

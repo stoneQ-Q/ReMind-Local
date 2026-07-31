@@ -38,6 +38,36 @@ export async function requestCloudJson(
   }
 }
 
+export async function requestCloud(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) throw new CloudApiRequestError('cloud_not_configured');
+  const accessToken = await getCloudAccessToken();
+  if (!accessToken) throw new CloudApiRequestError('cloud_session_missing');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = new Headers(init.headers);
+    headers.set('Authorization', `Bearer ${accessToken}`);
+    if (init.body !== undefined && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    const response = await fetch(buildReMindApiUrl(service, path), {
+      ...init,
+      headers,
+      signal: controller.signal,
+    });
+    if (response.status === 401) await clearCloudSession();
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class CloudApiRequestError extends Error {
   constructor(
     readonly code: string,
