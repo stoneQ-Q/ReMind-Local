@@ -224,7 +224,7 @@ export function CloudAiSettings({
           ) : (
             <>
               <AiModeCard
-                active={settings?.mode === 'disabled'}
+                active={settings?.mode === 'disabled' && !byokSelected}
                 description="只记录、搜索和备份，不调用任何模型。"
                 disabled={Boolean(acting)}
                 label="不使用 AI"
