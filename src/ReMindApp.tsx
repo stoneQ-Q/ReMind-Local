@@ -3926,12 +3926,10 @@ function CloudAccountSettings({
         </View>
 
         <ScrollView
-          contentContainerStyle={[
-            styles.cloudAccountBody,
-            { paddingBottom: insets.bottom + 28 },
-          ]}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}
           keyboardShouldPersistTaps="handled"
         >
+          <View style={styles.cloudAccountBody}>
           <View style={styles.cloudAccountHeroMark}>
             <Text style={styles.cloudAccountHeroMarkText}>
               {serviceMode.active === 'cloud' ? '云' : '机'}
@@ -4277,6 +4275,7 @@ function CloudAccountSettings({
             云端会话凭据只保存在这台设备的系统安全存储中。退出账号不会清除 ReMind
             本地数据库。
           </Text>
+          </View>
         </ScrollView>
       </View>
     </Modal>
