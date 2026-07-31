@@ -8,7 +8,10 @@ import {
   inflateSync,
 } from 'node:zlib';
 
-const MAX_PAGE_BYTES = 2_000_000;
+// WeChat articles and XHS SSR pages routinely exceed 2 MB because they embed
+// scripts and hydration data. Keep a hard download/decompression ceiling while
+// still storing only MAX_EXTRACTED_TEXT characters in the note snapshot.
+const MAX_PAGE_BYTES = 6_000_000;
 const MAX_EXTRACTED_TEXT = 24_000;
 const MAX_REDIRECTS = 4;
 const MAX_XHS_IMAGES = 12;
