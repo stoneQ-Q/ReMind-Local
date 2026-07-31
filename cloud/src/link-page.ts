@@ -255,8 +255,10 @@ function extractXiaohongshuSnapshot(finalUrl: URL, html: string): LinkSnapshot {
   if (finalUrl.pathname.startsWith('/404/')) {
     throw new Error('link_verification_page');
   }
+  const primaryNote = xiaohongshuPrimaryNoteFragment(html);
   const title =
-    metaValues(html, 'og:title').map(cleanText).find(Boolean) ??
+    metaValues(html, 'og:title').map(cleanText).find(Boolean) ||
+    cleanText(jsonStringField(primaryNote, 'title')) ||
     cleanText(matchFirst(html, /<title[^>]*>([\s\S]*?)<\/title>/i));
   const descriptions = metaValues(html, 'og:description')
     .map(cleanText)
@@ -265,8 +267,10 @@ function extractXiaohongshuSnapshot(finalUrl: URL, html: string): LinkSnapshot {
         value.length >= 20 && !value.includes('亿人的生活经验，都在小红书'),
     )
     .sort((left, right) => right.length - left.length);
+  const embeddedDescription = cleanText(jsonStringField(primaryNote, 'desc'));
+  if (embeddedDescription.length >= 20) descriptions.unshift(embeddedDescription);
   const text = descriptions[0]?.slice(0, MAX_EXTRACTED_TEXT) ?? '';
-  const transientVideoUrl = extractXiaohongshuVideoUrl(html);
+  const transientVideoUrl = extractXiaohongshuVideoUrl(primaryNote);
   const images = transientVideoUrl
     ? []
     : [
@@ -289,7 +293,7 @@ function extractXiaohongshuSnapshot(finalUrl: URL, html: string): LinkSnapshot {
     platform: 'xiaohongshu',
     mediaType: transientVideoUrl ? 'video' : 'image',
     durationSeconds: transientVideoUrl
-      ? extractXiaohongshuDurationSeconds(html)
+      ? extractXiaohongshuDurationSeconds(primaryNote)
       : null,
     transientVideoUrl: transientVideoUrl ?? undefined,
   };
@@ -377,8 +381,37 @@ function isXiaohongshuHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
   return (
     normalized === 'xiaohongshu.com' ||
-    normalized.endsWith('.xiaohongshu.com')
+    normalized.endsWith('.xiaohongshu.com') ||
+    normalized === 'xhslink.cn' ||
+    normalized.endsWith('.xhslink.cn')
   );
+}
+
+function xiaohongshuPrimaryNoteFragment(html: string): string {
+  for (const marker of [
+    '"data":{"noteData":',
+    '"LAUNCHER_SSR_STORE_PAGE_DATA":{"noteData":',
+  ]) {
+    const start = html.indexOf(marker);
+    if (start >= 0) return html.slice(start, start + 500_000);
+  }
+  return html;
+}
+
+function jsonStringField(value: string, field: string): string {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = value.match(
+    new RegExp(`"${escaped}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 'i'),
+  );
+  if (!match?.[1]) return '';
+  try {
+    return JSON.parse(`"${match[1]}"`) as string;
+  } catch {
+    return match[1]
+      .replace(/\\u002F/gi, '/')
+      .replace(/\\u0026/gi, '&')
+      .replace(/\\\//g, '/');
+  }
 }
 
 function isXiaohongshuCdnHost(hostname: string): boolean {

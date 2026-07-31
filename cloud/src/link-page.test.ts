@@ -93,4 +93,32 @@ describe('link processing boundary', () => {
       transientVideoUrl: 'https://sns-video.xhscdn.com/video.mp4',
     });
   });
+
+  it('extracts embedded video data from an XHS short-link page', () => {
+    const snapshot = extractLinkSnapshot(
+      'http://xhslink.cn/o/example',
+      `<html><head><title>小红书</title></head><body><script>
+        window.__INITIAL_STATE__={"noteData":{"routeQuery":{},"data":{"noteData":{
+          "type":"video",
+          "title":"Loop Engineering 视频",
+          "desc":"这是一段足够长的小红书视频说明，用于验证短链接页面内嵌数据能够被安全提取。",
+          "video":{"media":{"stream":{"h264":[{
+            "videoDuration":456200,
+            "masterUrl":"http:\\u002F\\u002Fsns-video-v6.xhscdn.com\\u002Fstream.mp4?sign=test"
+          }]}}}
+        }}}};
+      </script></body></html>`,
+    );
+
+    expect(snapshot).toMatchObject({
+      title: 'Loop Engineering 视频',
+      text: '这是一段足够长的小红书视频说明，用于验证短链接页面内嵌数据能够被安全提取。',
+      site: 'xiaohongshu.com',
+      platform: 'xiaohongshu',
+      mediaType: 'video',
+      durationSeconds: 456,
+      transientVideoUrl:
+        'https://sns-video-v6.xhscdn.com/stream.mp4?sign=test',
+    });
+  });
 });
