@@ -609,8 +609,13 @@
   - 用户覆盖安装 build 10 后，版本号确认为 10、首次安装时间保持不变；真机自动滑动确认“连接方式”已恢复正常，余额、任务、设备和最底部安全说明均可访问；
   - build 10 打开“任务与确认”仍触发同一 Fabric `Unable to find viewState` 崩溃，说明即使账号 Modal 保持挂载，创建第二个任务 Modal 本身仍会在该设备触发原生缺陷；
   - 任务中心已改为账号 Modal 内的绝对定位覆盖层，不再创建任何第二个原生 Modal；账号页面继续在下方保持挂载，打开时只增加同一 Fabric Surface 内的覆盖内容，关闭时只移除覆盖内容；
-  - 下一步完成本地验证并生成 build 11，复测任务中心同 Surface 方案。
+  - TypeScript 检查、47 个测试文件共 172 项测试和 Expo Android 离线导出均已通过；
+  - 修复提交为 `1490dbc`，EAS Android `preview` build 11 已成功完成，Build ID 为 `1233a87c-0304-434b-85dd-5579b8233b2d`；
+  - build 11 继续使用版本名 1.0.2、包名 `app.remind.notes`、Android 构建号 11 和原 EAS 远端签名凭据；
+  - APK 已下载到 `/Users/stone/Downloads/ReMind-1.0.2-build11-embedded-tasks.apk`，SHA-256 为 `7dd01a89b7628bc02cc18d98b973043ee710f5933f83961f1ef8d0aedcd78cf7`，ZIP 完整性检查通过；
+  - APK 已推送到手机 `/sdcard/Download/ReMind-1.0.2-build11-embedded-tasks.apk`；
+  - 下一步由用户覆盖安装 build 11，复测任务中心同 Surface 方案。
 
 ## 五、下一项
 
-阶段 7 的服务器基础环境、隔离云端运行时、腾讯 COS 私有对象存储、新加坡异地加密数据库备份、临时 HTTPS 公网入口、本地健康巡检、腾讯云资源告警、月度费用预算、余额预警、App 私密测试地址配置、首个云端账号、联通和电信移动数据连接，以及 AI 设置和费用中心只读访问已经完成。build 10 已确认恢复“连接方式”滚动，但第二个任务 Modal 仍触发 Fabric 缺陷；任务中心现已改为账号 Modal 同一 Surface 内的覆盖层，完全取消第二个原生 Modal。下一步生成 build 11 并复测。
+阶段 7 的服务器基础环境、隔离云端运行时、腾讯 COS 私有对象存储、新加坡异地加密数据库备份、临时 HTTPS 公网入口、本地健康巡检、腾讯云资源告警、月度费用预算、余额预警、App 私密测试地址配置、首个云端账号、联通和电信移动数据连接，以及 AI 设置和费用中心只读访问已经完成。build 10 已确认恢复“连接方式”滚动，但第二个任务 Modal 仍触发 Fabric 缺陷；任务中心现已改为账号 Modal 同一 Surface 内的覆盖层，完全取消第二个原生 Modal。build 11 已完成并推送到手机，下一步覆盖安装后复测。
