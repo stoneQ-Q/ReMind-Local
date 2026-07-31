@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
-  AppState,
   Modal,
   Pressable,
   RefreshControl,
@@ -31,21 +37,32 @@ export function CloudTaskCenter({
   onClose: () => void;
   visible: boolean;
 }) {
+  return (
+    <CloudTaskCenterBoundary
+      key={visible ? 'task-center-visible' : 'task-center-hidden'}
+      onClose={onClose}
+      visible={visible}
+    >
+      <CloudTaskCenterScreen onClose={onClose} visible={visible} />
+    </CloudTaskCenterBoundary>
+  );
+}
+
+function CloudTaskCenterScreen({
+  onClose,
+  visible,
+}: {
+  onClose: () => void;
+  visible: boolean;
+}) {
   const insets = useSafeAreaInsets();
   const [tasks, setTasks] = useState<CloudMediaTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const requestInFlight = useRef(false);
-  const hasActiveTasks = useMemo(
-    () => tasks.some(isCloudMediaTaskActive),
-    [tasks],
-  );
 
   const load = useCallback(async (mode: 'initial' | 'refresh' | 'silent') => {
-    if (requestInFlight.current) return;
-    requestInFlight.current = true;
     if (mode === 'initial') setLoading(true);
     if (mode === 'refresh') setRefreshing(true);
     if (mode !== 'silent') setError(null);
@@ -55,7 +72,6 @@ export function CloudTaskCenter({
     } catch (reason) {
       if (mode !== 'silent') setError(taskErrorMessage(reason));
     } finally {
-      requestInFlight.current = false;
       setLoading(false);
       setRefreshing(false);
     }
@@ -74,12 +90,12 @@ export function CloudTaskCenter({
   }, [load, visible]);
 
   useEffect(() => {
-    if (!visible || !hasActiveTasks) return;
+    if (!visible || !tasks.some(isCloudMediaTaskActive)) return;
     const timer = setInterval(() => {
-      if (AppState.currentState === 'active') void load('silent');
+      void load('silent');
     }, 4_000);
     return () => clearInterval(timer);
-  }, [hasActiveTasks, load, visible]);
+  }, [load, tasks, visible]);
 
   const confirmTask = useCallback(
     (task: CloudMediaTask) => {
@@ -225,6 +241,53 @@ export function CloudTaskCenter({
       </View>
     </Modal>
   );
+}
+
+class CloudTaskCenterBoundary extends Component<
+  {
+    children: ReactNode;
+    onClose: () => void;
+    visible: boolean;
+  },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('CloudTaskCenter render failed', error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+
+    return (
+      <Modal
+        animationType="fade"
+        onRequestClose={this.props.onClose}
+        visible={this.props.visible}
+      >
+        <View style={styles.fallback}>
+          <Text style={styles.fallbackTitle}>任务页面暂时无法显示</Text>
+          <Text style={styles.fallbackCopy}>
+            云端账号和手机里的笔记不受影响，也不会产生费用。
+          </Text>
+          <Pressable
+            onPress={this.props.onClose}
+            style={({ pressed }) => [
+              styles.fallbackButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.fallbackButtonText}>安全返回</Text>
+          </Pressable>
+        </View>
+      </Modal>
+    );
+  }
 }
 
 function TaskCard({
@@ -464,6 +527,41 @@ function taskErrorMessage(reason: unknown): string {
 
 const styles = StyleSheet.create({
   sheet: { flex: 1, backgroundColor: colors.paper },
+  fallback: {
+    flex: 1,
+    paddingHorizontal: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.paper,
+  },
+  fallbackTitle: {
+    color: colors.ink,
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  fallbackCopy: {
+    marginTop: 10,
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  fallbackButton: {
+    minWidth: 150,
+    minHeight: 46,
+    marginTop: 24,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: colors.accent,
+  },
+  fallbackButtonText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: '800',
+  },
   header: {
     minHeight: 58,
     paddingHorizontal: 18,
