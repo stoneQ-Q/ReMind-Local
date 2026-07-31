@@ -16,6 +16,8 @@ const MAX_EXTRACTED_TEXT = 24_000;
 const MAX_REDIRECTS = 4;
 const MAX_XHS_IMAGES = 12;
 const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_XHS_VIDEO_BYTES = 200_000_000;
+const XHS_VIDEO_TIMEOUT_MS = 120_000;
 
 export type LinkSnapshot = {
   url: string;
@@ -32,6 +34,45 @@ export type LinkSnapshot = {
 
 export interface LinkPageFetcher {
   fetch(url: string, signal: AbortSignal): Promise<LinkSnapshot>;
+}
+
+export type LinkVideoDownload = {
+  content: Buffer;
+  contentType: 'video/mp4';
+};
+
+export interface LinkVideoFetcher {
+  fetch(url: string, signal: AbortSignal): Promise<LinkVideoDownload>;
+}
+
+export class SecureXiaohongshuVideoFetcher implements LinkVideoFetcher {
+  async fetch(inputUrl: string, signal: AbortSignal): Promise<LinkVideoDownload> {
+    let current = validateXiaohongshuVideoUrl(inputUrl);
+    for (let redirects = 0; redirects <= 2; redirects += 1) {
+      const response = await requestXiaohongshuVideo(current, signal);
+      if (response.status >= 300 && response.status < 400) {
+        if (!response.location || redirects === 2) {
+          throw new Error('link_video_redirect_invalid');
+        }
+        current = validateXiaohongshuVideoUrl(
+          new URL(response.location, current).toString(),
+        );
+        continue;
+      }
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`link_video_http_${response.status}`);
+      }
+      if (
+        response.contentType &&
+        !response.contentType.includes('video/mp4') &&
+        !response.contentType.includes('application/octet-stream')
+      ) {
+        throw new Error('link_video_content_type_invalid');
+      }
+      return { content: response.body, contentType: 'video/mp4' };
+    }
+    throw new Error('link_video_redirect_invalid');
+  }
 }
 
 export class SecureLinkPageFetcher implements LinkPageFetcher {
@@ -228,6 +269,111 @@ async function requestPublicPage(
     request.once('close', () => {
       signal.removeEventListener('abort', abort);
     });
+    request.end();
+  });
+}
+
+function validateXiaohongshuVideoUrl(value: string): string {
+  if (value.length > 2_048) throw new Error('link_video_url_too_long');
+  const url = new URL(value);
+  const hostname = normalizedHostname(url.hostname);
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    (url.port && url.port !== '443') ||
+    (hostname !== 'xhscdn.com' && !hostname.endsWith('.xhscdn.com'))
+  ) {
+    throw new Error('link_video_url_invalid');
+  }
+  url.hash = '';
+  return url.toString();
+}
+
+async function requestXiaohongshuVideo(
+  urlValue: string,
+  signal: AbortSignal,
+): Promise<{
+  status: number;
+  location: string | null;
+  contentType: string;
+  body: Buffer;
+}> {
+  const url = new URL(validateXiaohongshuVideoUrl(urlValue));
+  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((item) => isBlockedAddress(item.address))) {
+    throw new Error('link_private_network');
+  }
+  const address = addresses[0];
+  if (!address) throw new Error('link_dns_failed');
+
+  return new Promise((resolve, reject) => {
+    const request = requestHttps(
+      {
+        protocol: 'https:',
+        hostname: address.address,
+        family: address.family,
+        port: 443,
+        path: `${url.pathname}${url.search}`,
+        method: 'GET',
+        servername: url.hostname,
+        headers: {
+          Accept: 'video/mp4,application/octet-stream;q=0.9,*/*;q=0.1',
+          Host: url.host,
+          Referer: 'https://www.xiaohongshu.com/',
+          'User-Agent':
+            'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 ' +
+            'Chrome/138.0.0.0 Mobile Safari/537.36',
+        },
+      },
+      (response) => {
+        const status = response.statusCode ?? 0;
+        const location =
+          typeof response.headers.location === 'string'
+            ? response.headers.location
+            : null;
+        const contentType = String(response.headers['content-type'] ?? '')
+          .toLowerCase();
+        if (status >= 300 && status < 400) {
+          response.resume();
+          resolve({ status, location, contentType, body: Buffer.alloc(0) });
+          return;
+        }
+        const declaredLength = Number(response.headers['content-length'] ?? 0);
+        if (
+          Number.isFinite(declaredLength) &&
+          declaredLength > MAX_XHS_VIDEO_BYTES
+        ) {
+          response.destroy(new Error('link_video_too_large'));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        response.on('data', (chunk: Buffer) => {
+          bytes += chunk.byteLength;
+          if (bytes > MAX_XHS_VIDEO_BYTES) {
+            response.destroy(new Error('link_video_too_large'));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.once('error', reject);
+        response.once('end', () => {
+          if (!bytes) {
+            reject(new Error('link_video_empty'));
+            return;
+          }
+          resolve({ status, location, contentType, body: Buffer.concat(chunks) });
+        });
+      },
+    );
+    const abort = () => request.destroy(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    request.setTimeout(XHS_VIDEO_TIMEOUT_MS, () => {
+      request.destroy(new Error('link_video_request_timeout'));
+    });
+    request.once('error', reject);
+    request.once('close', () => signal.removeEventListener('abort', abort));
     request.end();
   });
 }

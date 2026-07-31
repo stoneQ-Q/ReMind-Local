@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseLinkInput } from './link-input.js';
 import {
   extractLinkSnapshot,
+  SecureXiaohongshuVideoFetcher,
   validatePublicLinkUrl,
 } from './link-page.js';
 
@@ -120,5 +121,20 @@ describe('link processing boundary', () => {
       transientVideoUrl:
         'https://sns-video-v6.xhscdn.com/stream.mp4?sign=test',
     });
+  });
+
+  it('keeps video downloads inside the HTTPS XHS CDN boundary', async () => {
+    const fetcher = new SecureXiaohongshuVideoFetcher();
+    const signal = new AbortController().signal;
+
+    await expect(
+      fetcher.fetch('https://attacker.example/video.mp4', signal),
+    ).rejects.toThrow('link_video_url_invalid');
+    await expect(
+      fetcher.fetch('http://sns-video.xhscdn.com/video.mp4', signal),
+    ).rejects.toThrow('link_video_url_invalid');
+    await expect(
+      fetcher.fetch('https://127.0.0.1/video.mp4', signal),
+    ).rejects.toThrow('link_video_url_invalid');
   });
 });

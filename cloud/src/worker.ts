@@ -19,6 +19,8 @@ import {
 import {
   createLinkParseHandler,
   ensureNextLinkParseJob,
+  ensureNextLinkVideoMediaRequest,
+  reconcileNextLinkVideoMediaRequest,
 } from './link-processing.js';
 import {
   createMediaProcessingHandlers,
@@ -74,7 +76,7 @@ const handlers: JobHandlers = new Map([
     },
   ],
   ['wechat.poll', createWechatPollHandler(database, credentialCipher)],
-  ['link.parse', createLinkParseHandler(database)],
+  ['link.parse', createLinkParseHandler(database, objectStore)],
   ...mediaHandlers,
 ]);
 let stopping = false;
@@ -94,7 +96,19 @@ async function run(): Promise<void> {
       if (await ensureNextLinkParseJob(database)) continue;
       if (
         mediaHandlers.size > 0 &&
+        (await ensureNextLinkVideoMediaRequest(database))
+      ) {
+        continue;
+      }
+      if (
+        mediaHandlers.size > 0 &&
         (await ensureNextMediaProcessingJob(database))
+      ) {
+        continue;
+      }
+      if (
+        mediaHandlers.size > 0 &&
+        (await reconcileNextLinkVideoMediaRequest(database))
       ) {
         continue;
       }

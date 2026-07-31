@@ -3,9 +3,14 @@ import type { Pool, PoolClient } from 'pg';
 import type { JobHandler } from './jobs.js';
 import {
   SecureLinkPageFetcher,
+  SecureXiaohongshuVideoFetcher,
   type LinkPageFetcher,
+  type LinkVideoFetcher,
   validatePublicLinkUrl,
 } from './link-page.js';
+import { createByokMediaProcessingRequest } from './media-processing.js';
+import { saveObjectFile } from './object-files.js';
+import type { ObjectStore } from './object-store.js';
 
 const LINK_JOB_TYPE = 'link.parse';
 
@@ -82,7 +87,7 @@ export async function ensureNextLinkParseJob(
       `INSERT INTO jobs (
          user_id, type, idempotency_key, input_json,
          max_attempts, timeout_seconds
-       ) VALUES ($1, $2, $3, $4::jsonb, 3, 45)
+       ) VALUES ($1, $2, $3, $4::jsonb, 3, 300)
        RETURNING id`,
       [
         row.user_id,
@@ -118,7 +123,9 @@ export async function ensureNextLinkParseJob(
 
 export function createLinkParseHandler(
   pool: Pool,
+  store: ObjectStore,
   fetcher: LinkPageFetcher = new SecureLinkPageFetcher(),
+  videoFetcher: LinkVideoFetcher = new SecureXiaohongshuVideoFetcher(),
 ): JobHandler {
   return async (job, signal) => {
     const { noteId, generation } = parseLinkJobInput(job.input);
@@ -136,6 +143,21 @@ export function createLinkParseHandler(
         snapshot.platform,
         snapshot.images,
       );
+      const video =
+        snapshot.platform === 'xiaohongshu' &&
+        snapshot.mediaType === 'video' &&
+        snapshot.transientVideoUrl
+          ? await videoFetcher.fetch(snapshot.transientVideoUrl, signal)
+          : null;
+      const sourceFile = video
+        ? await saveObjectFile(pool, store, {
+            userId: job.userId,
+            contentType: video.contentType,
+            content: video.content,
+            purpose: 'source',
+            originalName: `xiaohongshu-${noteId}.mp4`,
+          })
+        : null;
       const updated = await pool.query(
         `UPDATE notes
          SET source_url = $1,
@@ -147,14 +169,18 @@ export function createLinkParseHandler(
              link_media_type = $7,
              link_images_json = $8::jsonb,
              link_duration_seconds = $9,
+             link_source_file_id = $10,
+             link_media_request_id = NULL,
+             link_media_status = $11,
+             link_media_error_code = NULL,
              link_status = 'ready',
              link_error_code = NULL,
              sync_version = sync_version + 1,
              updated_at = now()
-         WHERE user_id = $10 AND id = $11
+         WHERE user_id = $12 AND id = $13
            AND deleted_at IS NULL
            AND link_status = 'processing'
-           AND link_generation = $12 AND link_job_id = $13`,
+           AND link_generation = $14 AND link_job_id = $15`,
         [
           finalUrl,
           snapshot.title.slice(0, 300),
@@ -165,6 +191,8 @@ export function createLinkParseHandler(
           snapshot.mediaType,
           JSON.stringify(images),
           snapshot.durationSeconds,
+          sourceFile?.id ?? null,
+          sourceFile ? 'awaiting_key' : null,
           job.userId,
           noteId,
           generation,
@@ -200,6 +228,161 @@ export function createLinkParseHandler(
       throw error;
     }
   };
+}
+
+export async function ensureNextLinkVideoMediaRequest(
+  pool: Pool,
+): Promise<string | null> {
+  const candidate = await pool.query<{
+    id: string;
+    user_id: string;
+    link_source_file_id: string;
+    link_generation: string;
+  }>(
+    `SELECT note.id, note.user_id, note.link_source_file_id,
+            note.link_generation
+     FROM notes AS note
+     JOIN users AS owner ON owner.id = note.user_id
+     WHERE note.deleted_at IS NULL
+       AND note.link_media_type = 'video'
+       AND note.link_source_file_id IS NOT NULL
+       AND note.link_media_request_id IS NULL
+       AND note.link_media_status IN ('awaiting_key', 'pending')
+       AND owner.status = 'active'
+       AND owner.ai_mode = 'bring_your_own_key'
+       AND EXISTS (
+         SELECT 1 FROM api_credentials
+         WHERE user_id = note.user_id AND provider = 'zhipu'
+           AND revoked_at IS NULL
+       )
+       AND EXISTS (
+         SELECT 1 FROM api_credentials
+         WHERE user_id = note.user_id AND provider = 'deepseek'
+           AND revoked_at IS NULL
+       )
+     ORDER BY note.created_at, note.id
+     LIMIT 1`,
+  );
+  const row = candidate.rows[0];
+  if (!row) return null;
+  const request = await createByokMediaProcessingRequest(pool, {
+    userId: row.user_id,
+    sourceFileId: row.link_source_file_id,
+    idempotencyKey: `link-video:${row.id}:${row.link_generation}`,
+  });
+  await pool.query(
+    `UPDATE notes
+     SET link_media_request_id = $1,
+         link_media_status = 'pending',
+         link_media_error_code = NULL,
+         sync_version = sync_version + 1,
+         updated_at = now()
+     WHERE user_id = $2 AND id = $3
+       AND link_source_file_id = $4
+       AND link_media_request_id IS NULL`,
+    [request.id, row.user_id, row.id, row.link_source_file_id],
+  );
+  return `created:${row.id}:${request.id}`;
+}
+
+export async function reconcileNextLinkVideoMediaRequest(
+  pool: Pool,
+): Promise<string | null> {
+  const result = await pool.query<{
+    id: string;
+    user_id: string;
+    source_page_description: string | null;
+    request_status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'cancelled';
+    transcript: string | null;
+    result_json: unknown;
+    error_code: string | null;
+  }>(
+    `SELECT note.id, note.user_id, note.source_page_description,
+            request.status AS request_status, request.transcript,
+            request.result_json, request.error_code
+     FROM notes AS note
+     JOIN media_processing_requests AS request
+       ON request.user_id = note.user_id
+      AND request.id = note.link_media_request_id
+     WHERE note.deleted_at IS NULL
+       AND note.link_media_status IN ('pending', 'processing')
+       AND (
+         request.status IN ('succeeded', 'failed', 'cancelled')
+         OR (
+           note.link_media_status = 'pending'
+           AND request.status = 'processing'
+         )
+       )
+     ORDER BY note.created_at, note.id
+     LIMIT 1`,
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  if (row.request_status === 'processing') {
+    await pool.query(
+      `UPDATE notes
+       SET link_media_status = 'processing', updated_at = now()
+       WHERE user_id = $1 AND id = $2
+         AND link_media_status = 'pending'`,
+      [row.user_id, row.id],
+    );
+    return `processing:${row.id}`;
+  }
+  if (row.request_status === 'succeeded') {
+    const text = buildVideoEvidenceText(
+      row.source_page_description,
+      row.transcript,
+      row.result_json,
+    );
+    await pool.query(
+      `UPDATE notes
+       SET source_page_text = $1,
+           link_media_status = 'succeeded',
+           link_media_error_code = NULL,
+           sync_version = sync_version + 1,
+           updated_at = now()
+       WHERE user_id = $2 AND id = $3
+         AND link_media_status IN ('pending', 'processing')`,
+      [text, row.user_id, row.id],
+    );
+  } else {
+    await pool.query(
+      `UPDATE notes
+       SET link_media_status = 'failed',
+           link_media_error_code = $1,
+           sync_version = sync_version + 1,
+           updated_at = now()
+       WHERE user_id = $2 AND id = $3
+         AND link_media_status IN ('pending', 'processing')`,
+      [row.error_code ?? row.request_status, row.user_id, row.id],
+    );
+  }
+  return `reconciled:${row.id}:${row.request_status}`;
+}
+
+function buildVideoEvidenceText(
+  description: string | null,
+  transcript: string | null,
+  result: unknown,
+): string {
+  const data =
+    typeof result === 'object' && result !== null && !Array.isArray(result)
+      ? (result as Record<string, unknown>)
+      : {};
+  const summary = typeof data.summary === 'string' ? data.summary.trim() : '';
+  const highlights = Array.isArray(data.highlights)
+    ? data.highlights.filter((item): item is string => typeof item === 'string')
+    : [];
+  const sections = [
+    description?.trim() ?? '',
+    summary
+      ? `视频内容摘要\n${summary}${
+          highlights.length ? `\n${highlights.map((item) => `- ${item}`).join('\n')}` : ''
+        }`
+      : '',
+    transcript?.trim() ? `视频语音转写\n${transcript.trim()}` : '',
+  ].filter(Boolean);
+  return sections.join('\n\n').slice(0, 24_000);
 }
 
 async function loadLinkNote(
