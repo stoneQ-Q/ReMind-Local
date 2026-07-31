@@ -31,27 +31,36 @@ import {
 import { colors } from './theme';
 
 export function CloudTaskCenter({
+  embedded = false,
   onClose,
   visible,
 }: {
+  embedded?: boolean;
   onClose: () => void;
   visible: boolean;
 }) {
   return (
     <CloudTaskCenterBoundary
+      embedded={embedded}
       key={visible ? 'task-center-visible' : 'task-center-hidden'}
       onClose={onClose}
       visible={visible}
     >
-      <CloudTaskCenterScreen onClose={onClose} visible={visible} />
+      <CloudTaskCenterScreen
+        embedded={embedded}
+        onClose={onClose}
+        visible={visible}
+      />
     </CloudTaskCenterBoundary>
   );
 }
 
 function CloudTaskCenterScreen({
+  embedded,
   onClose,
   visible,
 }: {
+  embedded: boolean;
   onClose: () => void;
   visible: boolean;
 }) {
@@ -157,14 +166,8 @@ function CloudTaskCenterScreen({
     [load],
   );
 
-  return (
-    <Modal
-      animationType="slide"
-      onRequestClose={onClose}
-      presentationStyle="pageSheet"
-      visible={visible}
-    >
-      <View style={styles.sheet}>
+  const content = (
+    <View style={[styles.sheet, embedded && styles.embeddedSheet]}>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable hitSlop={10} onPress={onClose}>
             <Text style={styles.close}>关闭</Text>
@@ -238,7 +241,19 @@ function CloudTaskCenterScreen({
             页面只显示当前账号最近 50 个任务，每 4 秒刷新进行中状态。价格、余额预占和最终结算都由服务端决定。
           </Text>
         </ScrollView>
-      </View>
+    </View>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onClose}
+      presentationStyle="pageSheet"
+      visible={visible}
+    >
+      {content}
     </Modal>
   );
 }
@@ -246,6 +261,7 @@ function CloudTaskCenterScreen({
 class CloudTaskCenterBoundary extends Component<
   {
     children: ReactNode;
+    embedded: boolean;
     onClose: () => void;
     visible: boolean;
   },
@@ -264,13 +280,13 @@ class CloudTaskCenterBoundary extends Component<
   render() {
     if (!this.state.failed) return this.props.children;
 
-    return (
-      <Modal
-        animationType="fade"
-        onRequestClose={this.props.onClose}
-        visible={this.props.visible}
+    const fallback = (
+      <View
+        style={[
+          styles.fallback,
+          this.props.embedded && styles.embeddedSheet,
+        ]}
       >
-        <View style={styles.fallback}>
           <Text style={styles.fallbackTitle}>任务页面暂时无法显示</Text>
           <Text style={styles.fallbackCopy}>
             云端账号和手机里的笔记不受影响，也不会产生费用。
@@ -284,7 +300,18 @@ class CloudTaskCenterBoundary extends Component<
           >
             <Text style={styles.fallbackButtonText}>安全返回</Text>
           </Pressable>
-        </View>
+      </View>
+    );
+
+    if (this.props.embedded) return fallback;
+
+    return (
+      <Modal
+        animationType="fade"
+        onRequestClose={this.props.onClose}
+        visible={this.props.visible}
+      >
+        {fallback}
       </Modal>
     );
   }
@@ -527,6 +554,11 @@ function taskErrorMessage(reason: unknown): string {
 
 const styles = StyleSheet.create({
   sheet: { flex: 1, backgroundColor: colors.paper },
+  embeddedSheet: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
+  },
   fallback: {
     flex: 1,
     paddingHorizontal: 28,

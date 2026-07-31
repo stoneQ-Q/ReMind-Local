@@ -1533,6 +1533,14 @@ export function ReMindApp() {
         error={cloudAccountError}
         loading={cloudAccountLoading}
         onAcknowledgeRecoveryCode={() => setCloudRecoveryCode(null)}
+        onCloseTasks={() => {
+          setCloudOverlay(null);
+          void refreshCloudAccount().catch(() => {
+            setCloudAccountError(
+              '暂时无法刷新云端账号，手机里的笔记不受影响。',
+            );
+          });
+        }}
         onClose={() => {
           if (cloudRecoveryCode) {
             Alert.alert(
@@ -1638,6 +1646,7 @@ export function ReMindApp() {
         }}
         recoveryCode={cloudRecoveryCode}
         serviceMode={serviceMode}
+        tasksVisible={cloudOverlay === 'tasks'}
         visible={cloudAccountVisible}
       />
 
@@ -1665,17 +1674,6 @@ export function ReMindApp() {
         visible={cloudOverlay === 'billing'}
       />
 
-      <CloudTaskCenter
-        onClose={() => {
-          setCloudOverlay(null);
-          void refreshCloudAccount().catch(() => {
-            setCloudAccountError(
-              '暂时无法刷新云端账号，手机里的笔记不受影响。',
-            );
-          });
-        }}
-        visible={cloudOverlay === 'tasks'}
-      />
     </View>
   );
 }
@@ -3845,6 +3843,7 @@ function CloudAccountSettings({
   loading,
   onAcknowledgeRecoveryCode,
   onClose,
+  onCloseTasks,
   onOpenAi,
   onOpenBilling,
   onOpenTasks,
@@ -3854,6 +3853,7 @@ function CloudAccountSettings({
   onSelectMode,
   recoveryCode,
   serviceMode,
+  tasksVisible,
   visible,
 }: {
   account: CloudAccountOverview | null;
@@ -3862,6 +3862,7 @@ function CloudAccountSettings({
   loading: boolean;
   onAcknowledgeRecoveryCode: () => void;
   onClose: () => void;
+  onCloseTasks: () => void;
   onOpenAi: () => void;
   onOpenBilling: () => void;
   onOpenTasks: () => void;
@@ -3871,6 +3872,7 @@ function CloudAccountSettings({
   onSelectMode: (mode: ReMindAppMode) => Promise<void>;
   recoveryCode: string | null;
   serviceMode: ReMindModeStatus;
+  tasksVisible: boolean;
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -4246,6 +4248,13 @@ function CloudAccountSettings({
             本地数据库。
           </Text>
         </ScrollView>
+        {tasksVisible ? (
+          <CloudTaskCenter
+            embedded
+            onClose={onCloseTasks}
+            visible={tasksVisible}
+          />
+        ) : null}
       </View>
     </Modal>
   );
