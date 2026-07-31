@@ -667,6 +667,14 @@
   - 新机“任务与确认”首次打开正常显示空任务状态，连续 3 轮关闭与重新打开后 App PID 始终为 `24856`；
   - Android 日志未出现 `FATAL EXCEPTION`、`RetryableMountingLayerException` 或 `Unable to find viewState`，build 12 固定挂载方案在第二款 Android 16 设备上同样稳定；
   - 服务器在测试后保持任务、媒体请求和账本记录均为 0，未创建任务、调用模型或产生费用。
+- 阶段 7 第二台 Android 设备移动网络验证完成：
+  - Redmi Note 13 Pro 已关闭 Wi-Fi，系统确认默认互联网为中国联通 5G NR 蜂窝网络，连接具备 `INTERNET` 和 `VALIDATED` 能力且未开启漫游；
+  - 在仅移动数据环境下完全停止并冷启动 ReMind，build 12 无需重新输入恢复码即可继续显示“云端已经连接”和 2 台设备；
+  - “AI 与 API Key”正常显示关闭 AI、自带 Key 和尚未开放的托管模式；未填写或提交任何 Key；
+  - “余额与费用”正常显示账户余额与任务预占均为 0，费用明细为空；
+  - “任务与确认”正常显示空任务状态，测试期间 App PID 保持为 `15891`；
+  - Android 日志未出现 Fabric 或 `FATAL EXCEPTION`，服务器同期无 5xx；测试后仍为 1 个用户、2 台设备、2 个有效会话，任务、媒体请求和账本记录均为 0；
+  - 本次结果是中国联通在第二款 Android 16 设备上的补充样本，仍不替代计划中的 7 至 14 天连续三网观察。
 
 ## 五、下一项
 
