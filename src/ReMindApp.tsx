@@ -101,6 +101,7 @@ import {
 } from './data-backup';
 import {
   getCloudAccountOverview,
+  hasStoredCloudSession,
   isHostedCloudConfigured,
   recoverCloudAccount,
   registerCloudAccount,
@@ -225,6 +226,7 @@ export function ReMindApp() {
   );
   const [cloudAccount, setCloudAccount] =
     useState<CloudAccountOverview | null>(null);
+  const [cloudSessionAvailable, setCloudSessionAvailable] = useState(false);
   const [cloudRecoveryCode, setCloudRecoveryCode] = useState<string | null>(
     null,
   );
@@ -241,6 +243,7 @@ export function ReMindApp() {
     }
     const account = await getCloudAccountOverview();
     setCloudAccount(account);
+    setCloudSessionAvailable(account !== null);
     return account;
   }, []);
 
@@ -439,6 +442,7 @@ export function ReMindApp() {
 
   useEffect(() => {
     if (!isHostedCloudConfigured()) return;
+    void hasStoredCloudSession().then(setCloudSessionAvailable);
     void refreshCloudAccount().catch(() => {
       setCloudAccountError('暂时无法连接云端，手机里的笔记不受影响。');
     });
@@ -716,7 +720,8 @@ export function ReMindApp() {
                 styles.headerStatusDot,
                 ((serviceMode.active === 'local' &&
                   serviceMode.available.local) ||
-                  (serviceMode.active === 'cloud' && cloudAccount)) &&
+                  (serviceMode.active === 'cloud' &&
+                    (cloudAccount || cloudSessionAvailable))) &&
                   styles.headerStatusDotActive,
               ]}
             />
@@ -1529,6 +1534,7 @@ export function ReMindApp() {
 
       <CloudAccountSettings
         account={cloudAccount}
+        sessionAvailable={cloudSessionAvailable}
         configured={isHostedCloudConfigured()}
         error={cloudAccountError}
         loading={cloudAccountLoading}
@@ -1557,6 +1563,7 @@ export function ReMindApp() {
           setCloudAccountError(null);
           try {
             await recoverCloudAccount(recoveryCode, cloudDeviceRegistration());
+            setCloudSessionAvailable(true);
             await refreshCloudAccount();
             await Haptics.notificationAsync(
               Haptics.NotificationFeedbackType.Success,
@@ -1584,6 +1591,7 @@ export function ReMindApp() {
               cloudDeviceRegistration(),
             );
             setCloudRecoveryCode(created.recoveryCode);
+            setCloudSessionAvailable(true);
             await refreshCloudAccount();
             await Haptics.notificationAsync(
               Haptics.NotificationFeedbackType.Success,
@@ -1631,6 +1639,7 @@ export function ReMindApp() {
                     const result = await revokeCloudDevice(device.id);
                     if (result.current) {
                       setCloudAccount(null);
+                      setCloudSessionAvailable(false);
                     } else {
                       await refreshCloudAccount();
                     }
@@ -3838,6 +3847,7 @@ function ObsidianSettings({
 
 function CloudAccountSettings({
   account,
+  sessionAvailable,
   configured,
   error,
   loading,
@@ -3857,6 +3867,7 @@ function CloudAccountSettings({
   visible,
 }: {
   account: CloudAccountOverview | null;
+  sessionAvailable: boolean;
   configured: boolean;
   error: string | null;
   loading: boolean;
@@ -4147,6 +4158,18 @@ function CloudAccountSettings({
                   </Pressable>
                 </View>
               ))}
+            </>
+          ) : sessionAvailable ? (
+            <>
+              <Text style={styles.cloudAccountTitle}>云端账号仍在这台手机上</Text>
+              <Text style={styles.cloudAccountCopy}>
+                当前网络暂时无法刷新账号资料，但登录凭据仍安全保存在系统安全存储中。恢复联网后会自动继续使用原账号。
+              </Text>
+              <View style={styles.cloudAccountNotice}>
+                <Text style={styles.cloudAccountNoticeText}>
+                  无需重新开通，也不要输入恢复码。手机里的本地笔记不受影响。
+                </Text>
+              </View>
             </>
           ) : !configured ? (
             <>
@@ -4506,7 +4529,7 @@ function WechatBinding({
               >
                 {connection.bindingCode}
               </Text>
-              <Text style={styles.bindingExpiry}>绑定码 30 分钟内有效</Text>
+              <Text style={styles.bindingExpiry}>绑定码 10 分钟内有效</Text>
             </View>
           ) : (
             <View style={styles.wechatError}>

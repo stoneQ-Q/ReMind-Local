@@ -49,6 +49,30 @@ export async function deleteCloudAiCredential(
   });
 }
 
+export async function testCloudAiCredential(): Promise<{
+  content: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+}> {
+  const payload = await requestCloudJson('ai/test', { method: 'POST' }, 35_000);
+  if (
+    !isRecord(payload) ||
+    typeof payload.content !== 'string' ||
+    typeof payload.model !== 'string' ||
+    typeof payload.promptTokens !== 'number' ||
+    typeof payload.completionTokens !== 'number'
+  ) {
+    throw new CloudApiRequestError('invalid_ai_test_response');
+  }
+  return {
+    content: payload.content,
+    model: payload.model,
+    promptTokens: payload.promptTokens,
+    completionTokens: payload.completionTokens,
+  };
+}
+
 async function requestAiSettings(
   path: string,
   init: RequestInit = {},

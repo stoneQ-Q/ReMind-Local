@@ -6,6 +6,7 @@
   "scripts": {
     "login": "tsx src/index.ts login",
     "pair": "tsx src/index.ts pair",
+    "cloud-pair": "tsx src/index.ts cloud-pair",
     "start": "tsx src/index.ts run",
     "status": "tsx src/index.ts status",
     "typecheck": "tsc --noEmit",

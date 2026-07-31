@@ -18,6 +18,7 @@ import {
   deleteCloudAiCredential,
   getCloudAiSettings,
   saveCloudAiCredential,
+  testCloudAiCredential,
   updateCloudAiMode,
   type CloudAiMode,
   type CloudAiProvider,
@@ -61,6 +62,8 @@ export function CloudAiSettings({
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState<CloudAiProvider | 'mode' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [byokSelected, setByokSelected] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible) {
@@ -68,6 +71,8 @@ export function CloudAiSettings({
       setSettings(null);
       setError(null);
       setActing(null);
+      setByokSelected(false);
+      setTestResult(null);
       return;
     }
     let current = true;
@@ -75,7 +80,10 @@ export function CloudAiSettings({
     setError(null);
     void getCloudAiSettings()
       .then((value) => {
-        if (current) setSettings(value);
+        if (current) {
+          setSettings(value);
+          setByokSelected(value.mode === 'bring_your_own_key');
+        }
       })
       .catch((reason) => {
         if (current) setError(aiSettingsErrorMessage(reason));
@@ -91,13 +99,15 @@ export function CloudAiSettings({
   const changeMode = async (mode: Exclude<CloudAiMode, 'managed'>) => {
     if (acting) return;
     if (mode === 'bring_your_own_key' && !settings?.credentials.length) {
-      setError('请先保存至少一个自己的 API Key。');
+      setByokSelected(true);
+      setError('已选择使用自己的 Key。请在下方填写并保存，保存成功后会正式启用。');
       return;
     }
     setActing('mode');
     setError(null);
     try {
       setSettings(await updateCloudAiMode(mode));
+      setByokSelected(mode === 'bring_your_own_key');
     } catch (reason) {
       setError(aiSettingsErrorMessage(reason));
     } finally {
@@ -118,6 +128,7 @@ export function CloudAiSettings({
           ? saved
           : await updateCloudAiMode('bring_your_own_key'),
       );
+      setByokSelected(true);
     } catch (reason) {
       setError(aiSettingsErrorMessage(reason));
     } finally {
@@ -151,6 +162,21 @@ export function CloudAiSettings({
         },
       ],
     );
+  };
+
+  const testCredential = async () => {
+    if (acting) return;
+    setActing('mode');
+    setError(null);
+    setTestResult(null);
+    try {
+      const result = await testCloudAiCredential();
+      setTestResult(`${result.content}\n\n模型：${result.model} · 本次 ${result.promptTokens + result.completionTokens} tokens`);
+    } catch (reason) {
+      setError(aiSettingsErrorMessage(reason));
+    } finally {
+      setActing(null);
+    }
   };
 
   return (
@@ -205,7 +231,9 @@ export function CloudAiSettings({
                 onPress={() => void changeMode('disabled')}
               />
               <AiModeCard
-                active={settings?.mode === 'bring_your_own_key'}
+                active={
+                  settings?.mode === 'bring_your_own_key' || byokSelected
+                }
                 description="Key 加密保存在云端，费用由你自己的供应商账号承担。"
                 disabled={Boolean(acting)}
                 label="使用自己的 API Key"
@@ -305,6 +333,35 @@ export function CloudAiSettings({
                   </View>
                 );
               })}
+              {settings?.mode === 'bring_your_own_key' &&
+              settings.credentials.some(
+                (credential) => credential.provider === 'deepseek',
+              ) ? (
+                <View style={styles.securityNotice}>
+                  <Text style={styles.securityNoticeTitle}>真实调用验证</Text>
+                  <Text style={styles.securityNoticeCopy}>
+                    会向 DeepSeek 发起一次很短的真实生成请求，费用由你的 DeepSeek 账号承担。
+                  </Text>
+                  <Pressable
+                    disabled={Boolean(acting)}
+                    onPress={() => void testCredential()}
+                    style={({ pressed }) => [
+                      styles.saveButton,
+                      Boolean(acting) && styles.buttonDisabled,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    {acting === 'mode' ? (
+                      <ActivityIndicator color={colors.white} size="small" />
+                    ) : (
+                      <Text style={styles.saveButtonText}>生成一句测试内容</Text>
+                    )}
+                  </Pressable>
+                  {testResult ? (
+                    <Text style={styles.securityNoticeCopy}>{testResult}</Text>
+                  ) : null}
+                </View>
+              ) : null}
             </>
           )}
 
@@ -374,6 +431,14 @@ function aiSettingsErrorMessage(reason: unknown): string {
         return '这个 Key 格式不正确，请检查是否完整复制。';
       case 'api_credential_required':
         return '请先保存至少一个自己的 API Key。';
+      case 'user_provider_credential_required':
+        return '请先保存 DeepSeek API Key。';
+      case 'ai_key_rejected':
+        return 'DeepSeek 拒绝了这个 Key，请检查 Key 是否有效及账号余额。';
+      case 'ai_rate_limited':
+        return 'DeepSeek 当前限流，请稍后再试。';
+      case 'ai_provider_failed':
+        return '已连接到云端，但 DeepSeek 暂时没有完成生成，请稍后再试。';
       case 'cloud_not_configured':
         return '这个安装包尚未配置私密测试云端。';
     }

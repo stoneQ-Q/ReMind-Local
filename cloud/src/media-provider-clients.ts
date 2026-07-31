@@ -124,6 +124,49 @@ export class ZhipuMediaClient {
 export class DeepSeekMediaClient {
   constructor(private readonly fetcher: FetchLike = fetch) {}
 
+  async generateConnectivityTest(
+    apiKey: string,
+    signal: AbortSignal,
+  ): Promise<{ content: string; model: string; usage: ProviderUsage }> {
+    requireApiKey(apiKey);
+    const response = await this.fetcher(DEEPSEEK_CHAT_URL, {
+      method: 'POST',
+      redirect: 'error',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: DEEPSEEK_MEDIA_MODEL,
+        thinking: { type: 'disabled' },
+        temperature: 0,
+        max_tokens: 80,
+        messages: [
+          {
+            role: 'system',
+            content: '你是 ReMind 的连接验证助手。回答必须简短，不包含任何密钥信息。',
+          },
+          {
+            role: 'user',
+            content: '请用一句中文确认：ReMind 已成功调用 DeepSeek，并补充今天适合记录一件小事。',
+          },
+        ],
+      }),
+      signal,
+    });
+    if (!response.ok) {
+      throw new MediaProviderHttpError('deepseek', response.status);
+    }
+    const payload = await readLimitedJson(response);
+    const content = chatContent(payload).slice(0, 500);
+    if (!content) throw new Error('deepseek_empty_test_response');
+    return {
+      content,
+      model: DEEPSEEK_MEDIA_MODEL,
+      usage: readUsage(payload),
+    };
+  }
+
   async summarizeVideoTranscript(
     apiKey: string,
     transcript: string,

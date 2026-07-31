@@ -12,6 +12,7 @@ import {
   wechatDeviceIdStorageKey,
   wechatDeviceSecretStorageKey,
 } from './persistence-contract';
+import { requestCloudJson } from './cloud-api';
 
 export type WechatReplyMode = 'first' | 'always' | 'silent';
 
@@ -62,14 +63,14 @@ type InboxMessage = {
 };
 
 export function isWechatApiConfigured(): boolean {
-  return getReMindServiceConfig()?.mode === 'self-hosted';
+  return getReMindServiceConfig() !== null;
 }
 
 export async function getWechatConnection(
   createIfMissing: boolean,
 ): Promise<WechatConnection> {
   const service = getReMindServiceConfig();
-  if (!service || service.mode !== 'self-hosted') {
+  if (!service) {
     return {
       configured: false,
       bound: false,
@@ -81,6 +82,19 @@ export async function getWechatConnection(
       aiAvailable: false,
       visionAvailable: false,
     };
+  }
+
+  if (service.mode === 'hosted') {
+    const status = (await requestCloudJson(
+      'wechat/status',
+    )) as WechatConnection;
+    if (!status.bound && createIfMissing) {
+      const binding = (await requestCloudJson('wechat/binding-code', {
+        method: 'POST',
+      })) as { bindingCode: string; expiresAt: string };
+      return { ...status, ...binding };
+    }
+    return status;
   }
 
   let device = await getStoredDevice(service);
@@ -150,6 +164,13 @@ export async function updateWechatReplyMode(
   replyMode: WechatReplyMode,
 ): Promise<void> {
   const service = getReMindServiceConfig();
+  if (service?.mode === 'hosted') {
+    await requestCloudJson('wechat/reply-mode', {
+      method: 'PUT',
+      body: JSON.stringify({ replyMode }),
+    });
+    return;
+  }
   const device =
     service?.mode === 'self-hosted' ? await getStoredDevice(service) : null;
   if (!service || !device) throw new Error('WeChat is not connected');
@@ -192,6 +213,37 @@ export async function syncWechatInbox(
   db: SQLiteDatabase,
 ): Promise<number> {
   const service = getReMindServiceConfig();
+  if (service?.mode === 'hosted') {
+    const payload = (await requestCloudJson('wechat/captures')) as {
+      messages?: Array<{
+        id: string;
+        content: string;
+        sourceUrl: string | null;
+        userContext: string | null;
+        pageTitle: string | null;
+        pageSite: string | null;
+        pageText: string | null;
+        createdAt: string;
+      }>;
+    };
+    let importedCount = 0;
+    for (const message of payload.messages ?? []) {
+      const created = await createImportedNote(
+        db,
+        message.content,
+        `cloud-wechat:${message.id}`,
+        {
+          sourceUrl: message.sourceUrl,
+          userContext: message.userContext,
+          sourcePageTitle: message.pageTitle,
+          sourcePageSite: message.pageSite,
+          sourcePageText: message.pageText,
+        },
+      );
+      if (created) importedCount += 1;
+    }
+    return importedCount;
+  }
   const device =
     service?.mode === 'self-hosted' ? await getStoredDevice(service) : null;
   if (!service || !device) return 0;
@@ -245,6 +297,7 @@ export async function syncWechatInbox(
 export async function getWechatProcessingLinks(): Promise<
   WechatProcessingLink[]
 > {
+  if (getReMindServiceConfig()?.mode === 'hosted') return [];
   if (!isWechatApiConfigured()) return [];
   const response = await requestAuthenticatedDeviceApi('processing-links');
   if (!response.ok) throw new Error('Unable to load processing links');

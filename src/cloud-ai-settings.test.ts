@@ -10,6 +10,7 @@ import {
   deleteCloudAiCredential,
   getCloudAiSettings,
   saveCloudAiCredential,
+  testCloudAiCredential,
   updateCloudAiMode,
 } from './cloud-ai-settings';
 import { clearCloudSession } from './cloud-auth';
@@ -79,6 +80,21 @@ describe('cloud AI settings client', () => {
     );
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(
       expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
+  it('runs a real-generation verification through the authenticated cloud route', async () => {
+    const payload = {
+      content: 'ReMind 已成功调用 DeepSeek。',
+      model: 'deepseek-v4-flash',
+      promptTokens: 24,
+      completionTokens: 10,
+    };
+    const fetchMock = mockJsonResponse(payload);
+    await expect(testCloudAiCredential()).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.remind.example/api/v1/ai/test',
+      expect.objectContaining({ method: 'POST' }),
     );
   });
 

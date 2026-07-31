@@ -109,6 +109,29 @@ describe('media provider clients', () => {
     });
   });
 
+  it('performs a short real-generation test without placing the key in the body', async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        model: string;
+        max_tokens: number;
+      };
+      expect(body.model).toBe(DEEPSEEK_MEDIA_MODEL);
+      expect(body.max_tokens).toBe(80);
+      expect(String(init?.body)).not.toContain(apiKey);
+      return jsonResponse({
+        choices: [{ message: { content: 'ReMind 已成功调用 DeepSeek。' } }],
+        usage: { prompt_tokens: 24, completion_tokens: 10 },
+      });
+    });
+    await expect(
+      new DeepSeekMediaClient(fetcher).generateConnectivityTest(apiKey, signal),
+    ).resolves.toEqual({
+      content: 'ReMind 已成功调用 DeepSeek。',
+      model: DEEPSEEK_MEDIA_MODEL,
+      usage: { promptTokens: 24, completionTokens: 10 },
+    });
+  });
+
   it('never includes provider response bodies in HTTP errors', async () => {
     const fetcher = vi.fn(async () =>
       new Response(`upstream leaked ${apiKey}`, { status: 401 }),

@@ -19,6 +19,7 @@ import {
   saveApiCredential,
   updateAiMode,
 } from './ai-settings.js';
+import { runByokAiTest } from './ai-test.js';
 import {
   BillingError,
   getBillingAccount,
@@ -42,6 +43,8 @@ import {
 } from './job-quotes.js';
 import { getUserJob, requestJobCancellation } from './jobs.js';
 import { ProviderPausedError } from './provider-health.js';
+import { MediaProviderHttpError } from './media-provider-clients.js';
+import { MediaProviderAuthorizationError } from './media-provider-routing.js';
 import {
   requestClientAddress,
   RequestRateLimiter,
@@ -59,6 +62,14 @@ import {
   ManagedMediaPricingUnavailableError,
 } from './media-pricing.js';
 import { objectStoreFromEnvironment } from './object-store.js';
+import {
+  claimWechatBindingCode,
+  createWechatBindingCode,
+  getCloudWechatStatus,
+  listCloudWechatCaptures,
+  updateCloudWechatReplyMode,
+} from './wechat-bindings.js';
+import type { WechatProtocolCredentials } from './wechat-protocol.js';
 
 const port = apiPort();
 const credentialCipher = credentialCipherFromEnvironment();
@@ -187,6 +198,44 @@ const server = createServer(async (request, response) => {
     }
 
     if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/wechat/bindings/claim'
+    ) {
+      const body = await readJsonBody(request);
+      const bindingCode =
+        isRecord(body) && typeof body.bindingCode === 'string'
+          ? body.bindingCode.trim()
+          : '';
+      const credentials = parseWechatCredentials(body);
+      if (!/^[0-9]{6}$/.test(bindingCode) || !credentials) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      try {
+        const claimed = await claimWechatBindingCode(
+          database,
+          credentialCipher,
+          bindingCode,
+          credentials,
+        );
+        if (!claimed) {
+          sendJson(response, 400, {
+            error: 'invalid_or_expired_binding_code',
+          });
+          return;
+        }
+        sendJson(response, 200, { bound: true });
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('invalid_wechat')) {
+          sendJson(response, 400, { error: error.message });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+
+    if (
       request.method === 'GET' &&
       request.url === '/api/v1/users/me'
     ) {
@@ -221,6 +270,105 @@ const server = createServer(async (request, response) => {
         account.deviceId,
       );
       sendJson(response, 200, { devices });
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      request.url === '/api/v1/wechat/status'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      sendJson(
+        response,
+        200,
+        await getCloudWechatStatus(database, account.userId),
+      );
+      return;
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/wechat/binding-code'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const status = await getCloudWechatStatus(database, account.userId);
+      if (status.bound) {
+        sendJson(response, 409, { error: 'wechat_already_bound' });
+        return;
+      }
+      sendJson(
+        response,
+        201,
+        await createWechatBindingCode(database, account.userId),
+      );
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      request.url === '/api/v1/wechat/captures'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      sendJson(response, 200, {
+        messages: await listCloudWechatCaptures(database, account.userId),
+      });
+      return;
+    }
+
+    if (
+      request.method === 'PUT' &&
+      request.url === '/api/v1/wechat/reply-mode'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const replyMode = isRecord(body) ? body.replyMode : null;
+      if (
+        replyMode !== 'first' &&
+        replyMode !== 'always' &&
+        replyMode !== 'silent'
+      ) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      if (
+        !(await updateCloudWechatReplyMode(
+          database,
+          account.userId,
+          replyMode,
+        ))
+      ) {
+        sendJson(response, 404, { error: 'wechat_connection_not_found' });
+        return;
+      }
+      sendJson(response, 200, { replyMode });
       return;
     }
 
@@ -713,6 +861,37 @@ const server = createServer(async (request, response) => {
     }
 
     if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/ai/test'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30_000);
+      try {
+        sendJson(
+          response,
+          200,
+          await runByokAiTest(
+            database,
+            credentialCipher,
+            account.userId,
+            controller.signal,
+          ),
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+      return;
+    }
+
+    if (
       request.method === 'PUT' &&
       request.url === '/api/v1/ai/settings'
     ) {
@@ -808,6 +987,21 @@ const server = createServer(async (request, response) => {
     }
     if (error instanceof ProviderPausedError) {
       sendJson(response, 503, { error: error.code });
+      return;
+    }
+    if (error instanceof MediaProviderAuthorizationError) {
+      sendJson(response, 409, { error: error.code });
+      return;
+    }
+    if (error instanceof MediaProviderHttpError) {
+      sendJson(response, error.status === 401 || error.status === 403 ? 400 : 502, {
+        error:
+          error.status === 401 || error.status === 403
+            ? 'ai_key_rejected'
+            : error.status === 429
+              ? 'ai_rate_limited'
+              : 'ai_provider_failed',
+      });
       return;
     }
     if (error instanceof JobQuoteError) {
@@ -966,6 +1160,27 @@ function parseDeviceRegistration(body: unknown): DeviceRegistration | null {
     platform: platform as DevicePlatform,
     displayName,
     appVersion,
+  };
+}
+
+function parseWechatCredentials(
+  body: unknown,
+): WechatProtocolCredentials | null {
+  if (!isRecord(body) || !isRecord(body.credentials)) return null;
+  const credentials = body.credentials;
+  if (
+    typeof credentials.botToken !== 'string' ||
+    typeof credentials.botId !== 'string' ||
+    typeof credentials.allowedUserId !== 'string' ||
+    typeof credentials.baseUrl !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    botToken: credentials.botToken,
+    botId: credentials.botId,
+    allowedUserId: credentials.allowedUserId,
+    baseUrl: credentials.baseUrl,
   };
 }
 

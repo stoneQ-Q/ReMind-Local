@@ -87,6 +87,12 @@ export async function getCloudAccessToken(): Promise<string | null> {
   return current.accessToken;
 }
 
+export async function hasStoredCloudSession(): Promise<boolean> {
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) return false;
+  return (await loadCloudSession(service)) !== null;
+}
+
 export async function getCloudAccountOverview(): Promise<CloudAccountOverview | null> {
   const service = getReMindServiceConfigForMode('cloud');
   if (!service) return null;

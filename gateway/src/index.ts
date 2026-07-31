@@ -14,6 +14,7 @@ import { normalizeIncomingMessage } from './message.js';
 import { readLinkSnapshot } from './link-reader.js';
 import {
   captureMessage,
+  claimCloudWechatBinding,
   listPendingLinkSnapshots,
   pairConnector,
   updateConnectorRuntimeStatus,
@@ -48,6 +49,8 @@ if (command === 'login') {
   await login();
 } else if (command === 'pair') {
   await pair();
+} else if (command === 'cloud-pair') {
+  await cloudPair();
 } else if (command === 'run') {
   await run();
 } else if (command === 'status') {
@@ -141,6 +144,30 @@ async function pair(): Promise<void> {
   config.remind = { apiBaseUrl, ...credentials };
   await saveConfig(config);
   console.log('ReMind 配对成功。');
+}
+
+async function cloudPair(): Promise<void> {
+  const config = await loadConfig();
+  if (!config.weixin) {
+    throw new Error('请先运行 npm run login 完成微信扫码');
+  }
+  const bindingCode =
+    process.argv[3]?.trim() || (await prompt('请输入 ReMind 的六位云端绑定码：'));
+  if (!/^[0-9]{6}$/.test(bindingCode)) {
+    throw new Error('绑定码必须是六位数字');
+  }
+  const apiBaseUrl =
+    process.env.REMIND_CLOUD_API_URL ?? process.env.REMIND_API_URL;
+  if (!apiBaseUrl) {
+    throw new Error('请设置 REMIND_CLOUD_API_URL');
+  }
+  await claimCloudWechatBinding(apiBaseUrl, bindingCode, {
+    botToken: config.weixin.botToken,
+    botId: config.weixin.botId,
+    allowedUserId: config.weixin.userId,
+    baseUrl: config.weixin.baseUrl,
+  });
+  console.log('ReMind 云端微信配对成功，云端会继续接收消息。');
 }
 
 async function run(): Promise<void> {

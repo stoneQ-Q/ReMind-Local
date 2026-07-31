@@ -70,6 +70,29 @@ export async function pairConnector(
   return (await response.json()) as ConnectorCredentials;
 }
 
+export async function claimCloudWechatBinding(
+  apiBaseUrl: string,
+  bindingCode: string,
+  credentials: {
+    botToken: string;
+    botId: string;
+    allowedUserId: string;
+    baseUrl: string;
+  },
+): Promise<void> {
+  const response = await apiRequest(
+    `${trimUrl(apiBaseUrl)}/api/v1/wechat/bindings/claim`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bindingCode, credentials }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`ReMind 云端配对失败：${await response.text()}`);
+  }
+}
+
 export async function captureMessage(
   apiBaseUrl: string,
   credentials: ConnectorCredentials,
