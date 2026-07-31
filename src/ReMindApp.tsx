@@ -121,6 +121,7 @@ import {
 } from './service-contract';
 
 type Screen = 'inbox' | 'search';
+type CloudModalTarget = 'account' | 'ai' | 'billing' | 'tasks';
 type NoteCategory =
   | 'inbox'
   | 'all'
@@ -234,6 +235,38 @@ export function ReMindApp() {
   const [cloudAiVisible, setCloudAiVisible] = useState(false);
   const [cloudBillingVisible, setCloudBillingVisible] = useState(false);
   const [cloudTasksVisible, setCloudTasksVisible] = useState(false);
+  const cloudModalTransitionRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  const transitionCloudModal = useCallback((target: CloudModalTarget) => {
+    if (cloudModalTransitionRef.current) {
+      clearTimeout(cloudModalTransitionRef.current);
+    }
+    setCloudAccountVisible(false);
+    setCloudAiVisible(false);
+    setCloudBillingVisible(false);
+    setCloudTasksVisible(false);
+    cloudModalTransitionRef.current = setTimeout(
+      () => {
+        if (target === 'account') setCloudAccountVisible(true);
+        if (target === 'ai') setCloudAiVisible(true);
+        if (target === 'billing') setCloudBillingVisible(true);
+        if (target === 'tasks') setCloudTasksVisible(true);
+        cloudModalTransitionRef.current = null;
+      },
+      Platform.OS === 'android' ? 500 : 0,
+    );
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (cloudModalTransitionRef.current) {
+        clearTimeout(cloudModalTransitionRef.current);
+      }
+    },
+    [],
+  );
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -1559,16 +1592,13 @@ export function ReMindApp() {
           }
         }}
         onOpenAi={() => {
-          setCloudAccountVisible(false);
-          setCloudAiVisible(true);
+          transitionCloudModal('ai');
         }}
         onOpenBilling={() => {
-          setCloudAccountVisible(false);
-          setCloudBillingVisible(true);
+          transitionCloudModal('billing');
         }}
         onOpenTasks={() => {
-          setCloudAccountVisible(false);
-          setCloudTasksVisible(true);
+          transitionCloudModal('tasks');
         }}
         onRegister={async () => {
           setCloudAccountLoading(true);
@@ -1645,8 +1675,7 @@ export function ReMindApp() {
 
       <CloudAiSettings
         onClose={() => {
-          setCloudAiVisible(false);
-          setCloudAccountVisible(true);
+          transitionCloudModal('account');
           void refreshCloudAccount().catch(() => {
             setCloudAccountError(
               '暂时无法刷新云端账号，手机里的笔记不受影响。',
@@ -1658,8 +1687,7 @@ export function ReMindApp() {
 
       <CloudBillingCenter
         onClose={() => {
-          setCloudBillingVisible(false);
-          setCloudAccountVisible(true);
+          transitionCloudModal('account');
           void refreshCloudAccount().catch(() => {
             setCloudAccountError(
               '暂时无法刷新云端账号，手机里的笔记不受影响。',
@@ -1671,8 +1699,7 @@ export function ReMindApp() {
 
       <CloudTaskCenter
         onClose={() => {
-          setCloudTasksVisible(false);
-          setCloudAccountVisible(true);
+          transitionCloudModal('account');
           void refreshCloudAccount().catch(() => {
             setCloudAccountError(
               '暂时无法刷新云端账号，手机里的笔记不受影响。',

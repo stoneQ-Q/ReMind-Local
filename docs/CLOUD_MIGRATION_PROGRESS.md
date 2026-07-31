@@ -581,8 +581,13 @@
   - build 6 继续使用版本名 1.0.2、包名 `app.remind.notes`、Android 构建号 6 和原 EAS 远端签名凭据；
   - APK 已下载到 `/Users/stone/Downloads/ReMind-1.0.2-build6-task-fix.apk`，SHA-256 为 `8c475ac23a99e5376f6cd66272b40cab7b3288753b6e4926606054841247a863`，ZIP 完整性检查通过；
   - 用户覆盖安装 build 6 后复测，“任务与确认”仍会导致 App 退出，说明页面内部请求锁、AppState 轮询和 React 渲染错误均不是充分根因；
-  - 下一步停止盲目构建，采集 Android 原生崩溃日志后再做定点修复；期间不创建真实任务、不调用模型、不产生费用。
+  - USB 调试确认测试设备为荣耀 MBH-AN10、Android 16，已安装版本为 1.0.2 build 6，覆盖安装状态正常；
+  - Android 系统保留的 build 5 和 build 6 崩溃记录均指向 React Native Fabric 原生挂载层：`RetryableMountingLayerException: Unable to find viewState`，调用点为 `SurfaceMountingManager.addViewAt`；
+  - 根因是同一渲染批次关闭“连接方式”原生 Modal 并打开子页面 Modal，在该设备上触发旧视图删除与新视图创建竞态；因此 React 错误边界无法捕获；
+  - 所有云端子页面切换已改为互斥状态，并在 Android 上等待 500ms，确保旧 Modal 完全销毁后再创建新 Modal；返回“连接方式”也使用相同保护；
+  - 定点修复后 TypeScript 检查、47 个测试文件共 172 项测试和 Expo Android 离线导出再次通过；
+  - 下一步生成 build 7，并在已连接真机上覆盖安装和复测；期间不创建真实任务、不调用模型、不产生费用。
 
 ## 五、下一项
 
-阶段 7 的服务器基础环境、隔离云端运行时、腾讯 COS 私有对象存储、新加坡异地加密数据库备份、临时 HTTPS 公网入口、本地健康巡检、腾讯云资源告警、月度费用预算、余额预警、App 私密测试地址配置、首个云端账号、联通和电信移动数据连接，以及 AI 设置和费用中心只读访问已经完成。任务页 build 6 复测仍退出，下一步通过 USB 调试采集 Android 原生崩溃日志，定位后再生成修复包；不再用覆盖安装反复猜测原因。
+阶段 7 的服务器基础环境、隔离云端运行时、腾讯 COS 私有对象存储、新加坡异地加密数据库备份、临时 HTTPS 公网入口、本地健康巡检、腾讯云资源告警、月度费用预算、余额预警、App 私密测试地址配置、首个云端账号、联通和电信移动数据连接，以及 AI 设置和费用中心只读访问已经完成。任务页原生崩溃已通过 USB 日志定位为 Fabric Modal 切换竞态，并已完成定点代码修复。下一步生成 build 7，在已连接真机上覆盖安装，确认数据保留及任务页稳定性。
