@@ -2,6 +2,7 @@ import {
   Component,
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ErrorInfo,
   type ReactNode,
@@ -42,7 +43,13 @@ export function CloudTaskCenter({
   return (
     <CloudTaskCenterBoundary
       embedded={embedded}
-      key={visible ? 'task-center-visible' : 'task-center-hidden'}
+      key={
+        embedded
+          ? 'task-center-embedded'
+          : visible
+            ? 'task-center-visible'
+            : 'task-center-hidden'
+      }
       onClose={onClose}
       visible={visible}
     >
@@ -70,6 +77,7 @@ function CloudTaskCenterScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const initialized = useRef(false);
 
   const load = useCallback(async (mode: 'initial' | 'refresh' | 'silent') => {
     if (mode === 'initial') setLoading(true);
@@ -87,15 +95,13 @@ function CloudTaskCenterScreen({
   }, []);
 
   useEffect(() => {
-    if (visible) {
+    if (!visible) return;
+    if (!initialized.current) {
+      initialized.current = true;
       void load('initial');
-    } else {
-      setTasks([]);
-      setError(null);
-      setActingId(null);
-      setLoading(false);
-      setRefreshing(false);
+      return;
     }
+    void load('silent');
   }, [load, visible]);
 
   useEffect(() => {
@@ -167,7 +173,18 @@ function CloudTaskCenterScreen({
   );
 
   const content = (
-    <View style={[styles.sheet, embedded && styles.embeddedSheet]}>
+    <View
+      accessibilityElementsHidden={embedded && !visible}
+      importantForAccessibility={
+        embedded && !visible ? 'no-hide-descendants' : 'auto'
+      }
+      pointerEvents={embedded && !visible ? 'none' : 'auto'}
+      style={[
+        styles.sheet,
+        embedded && styles.embeddedSheet,
+        embedded && !visible && styles.embeddedHidden,
+      ]}
+    >
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable hitSlop={10} onPress={onClose}>
             <Text style={styles.close}>关闭</Text>
@@ -282,9 +299,21 @@ class CloudTaskCenterBoundary extends Component<
 
     const fallback = (
       <View
+        accessibilityElementsHidden={this.props.embedded && !this.props.visible}
+        importantForAccessibility={
+          this.props.embedded && !this.props.visible
+            ? 'no-hide-descendants'
+            : 'auto'
+        }
+        pointerEvents={
+          this.props.embedded && !this.props.visible ? 'none' : 'auto'
+        }
         style={[
           styles.fallback,
           this.props.embedded && styles.embeddedSheet,
+          this.props.embedded &&
+            !this.props.visible &&
+            styles.embeddedHidden,
         ]}
       >
           <Text style={styles.fallbackTitle}>任务页面暂时无法显示</Text>
@@ -558,6 +587,11 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     zIndex: 20,
     elevation: 20,
+  },
+  embeddedHidden: {
+    zIndex: -1,
+    elevation: 0,
+    opacity: 0,
   },
   fallback: {
     flex: 1,

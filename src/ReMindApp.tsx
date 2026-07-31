@@ -4248,13 +4248,11 @@ function CloudAccountSettings({
             本地数据库。
           </Text>
         </ScrollView>
-        {tasksVisible ? (
-          <CloudTaskCenter
-            embedded
-            onClose={onCloseTasks}
-            visible={tasksVisible}
-          />
-        ) : null}
+        <CloudTaskCenter
+          embedded
+          onClose={onCloseTasks}
+          visible={tasksVisible}
+        />
       </View>
     </Modal>
   );
