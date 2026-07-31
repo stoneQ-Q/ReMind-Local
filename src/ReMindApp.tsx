@@ -121,7 +121,7 @@ import {
 } from './service-contract';
 
 type Screen = 'inbox' | 'search';
-type CloudModalTarget = 'account' | 'ai' | 'billing' | 'tasks';
+type CloudOverlay = 'ai' | 'billing' | 'tasks' | null;
 type NoteCategory =
   | 'inbox'
   | 'all'
@@ -232,41 +232,7 @@ export function ReMindApp() {
     getReMindModeStatus,
   );
   const [serviceModeReady, setServiceModeReady] = useState(false);
-  const [cloudAiVisible, setCloudAiVisible] = useState(false);
-  const [cloudBillingVisible, setCloudBillingVisible] = useState(false);
-  const [cloudTasksVisible, setCloudTasksVisible] = useState(false);
-  const cloudModalTransitionRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-
-  const transitionCloudModal = useCallback((target: CloudModalTarget) => {
-    if (cloudModalTransitionRef.current) {
-      clearTimeout(cloudModalTransitionRef.current);
-    }
-    setCloudAccountVisible(false);
-    setCloudAiVisible(false);
-    setCloudBillingVisible(false);
-    setCloudTasksVisible(false);
-    cloudModalTransitionRef.current = setTimeout(
-      () => {
-        if (target === 'account') setCloudAccountVisible(true);
-        if (target === 'ai') setCloudAiVisible(true);
-        if (target === 'billing') setCloudBillingVisible(true);
-        if (target === 'tasks') setCloudTasksVisible(true);
-        cloudModalTransitionRef.current = null;
-      },
-      Platform.OS === 'android' ? 500 : 0,
-    );
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (cloudModalTransitionRef.current) {
-        clearTimeout(cloudModalTransitionRef.current);
-      }
-    },
-    [],
-  );
+  const [cloudOverlay, setCloudOverlay] = useState<CloudOverlay>(null);
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -724,6 +690,7 @@ export function ReMindApp() {
           <Pressable
             accessibilityLabel="连接方式与云端账号"
             onPress={() => {
+              setCloudOverlay(null);
               setCloudAccountVisible(true);
               setCloudAccountError(null);
               setCloudAccountLoading(true);
@@ -1574,6 +1541,7 @@ export function ReMindApp() {
             );
             return;
           }
+          setCloudOverlay(null);
           setCloudAccountVisible(false);
         }}
         onRecover={async (recoveryCode) => {
@@ -1592,13 +1560,13 @@ export function ReMindApp() {
           }
         }}
         onOpenAi={() => {
-          transitionCloudModal('ai');
+          setCloudOverlay('ai');
         }}
         onOpenBilling={() => {
-          transitionCloudModal('billing');
+          setCloudOverlay('billing');
         }}
         onOpenTasks={() => {
-          transitionCloudModal('tasks');
+          setCloudOverlay('tasks');
         }}
         onRegister={async () => {
           setCloudAccountLoading(true);
@@ -1675,38 +1643,38 @@ export function ReMindApp() {
 
       <CloudAiSettings
         onClose={() => {
-          transitionCloudModal('account');
+          setCloudOverlay(null);
           void refreshCloudAccount().catch(() => {
             setCloudAccountError(
               '暂时无法刷新云端账号，手机里的笔记不受影响。',
             );
           });
         }}
-        visible={cloudAiVisible}
+        visible={cloudOverlay === 'ai'}
       />
 
       <CloudBillingCenter
         onClose={() => {
-          transitionCloudModal('account');
+          setCloudOverlay(null);
           void refreshCloudAccount().catch(() => {
             setCloudAccountError(
               '暂时无法刷新云端账号，手机里的笔记不受影响。',
             );
           });
         }}
-        visible={cloudBillingVisible}
+        visible={cloudOverlay === 'billing'}
       />
 
       <CloudTaskCenter
         onClose={() => {
-          transitionCloudModal('account');
+          setCloudOverlay(null);
           void refreshCloudAccount().catch(() => {
             setCloudAccountError(
               '暂时无法刷新云端账号，手机里的笔记不受影响。',
             );
           });
         }}
-        visible={cloudTasksVisible}
+        visible={cloudOverlay === 'tasks'}
       />
     </View>
   );
@@ -3926,10 +3894,12 @@ function CloudAccountSettings({
         </View>
 
         <ScrollView
-          contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}
+          contentContainerStyle={[
+            styles.cloudAccountBody,
+            { paddingBottom: insets.bottom + 28 },
+          ]}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.cloudAccountBody}>
           <View style={styles.cloudAccountHeroMark}>
             <Text style={styles.cloudAccountHeroMarkText}>
               {serviceMode.active === 'cloud' ? '云' : '机'}
@@ -4275,7 +4245,6 @@ function CloudAccountSettings({
             云端会话凭据只保存在这台设备的系统安全存储中。退出账号不会清除 ReMind
             本地数据库。
           </Text>
-          </View>
         </ScrollView>
       </View>
     </Modal>

@@ -8,7 +8,6 @@
     "userInterfaceStyle": "light",
     "scheme": "remind",
     "backgroundColor": "#F6F4ED",
-    "newArchEnabled": false,
     "ios": {
       "supportsTablet": false,
       "icon": "./assets/remind-app-icon.png",

@@ -61,6 +61,7 @@ describe('ReMind in-place upgrade preservation', () => {
       expo: {
         android: { package: string };
         ios: { bundleIdentifier: string };
+        newArchEnabled?: boolean;
         plugins: unknown[];
       };
     };
@@ -70,6 +71,7 @@ describe('ReMind in-place upgrade preservation', () => {
     expect(appConfig.expo.ios.bundleIdentifier).toBe(REMIND_APPLICATION_ID);
     expect(appConfig.expo.plugins).toContain('expo-sqlite');
     expect(appConfig.expo.plugins).toContain('expo-secure-store');
+    expect(appConfig.expo.newArchEnabled).not.toBe(false);
     expect(REMIND_DATABASE_NAME).toBe('remind.db');
     expect(REMIND_DATABASE_SCHEMA_VERSION).toBe(16);
     expect(REMIND_SERVICE_MODE_STORAGE_KEY).toBe('remind.service.mode.v1');
