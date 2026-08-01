@@ -1,10 +1,10 @@
 import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -106,7 +106,7 @@ export function PhotoCaptureSheet({
           {assets.length ? (
             <View style={styles.photos}>
               {assets.map((asset, index) => (
-                <Image key={`${asset.uri}-${index}`} resizeMode="cover" source={{ uri: asset.uri }} style={assets.length === 1 ? styles.hero : styles.tile} />
+                <Image key={`${asset.uri}-${index}`} contentFit="cover" source={{ uri: asset.uri }} style={assets.length === 1 ? styles.hero : styles.tile} />
               ))}
               <Pressable accessibilityLabel="重新选择图片" onPress={() => void pick()} style={styles.replaceButton}><Text style={styles.replaceText}>重新选择</Text></Pressable>
             </View>

@@ -1,4 +1,5 @@
-import { Image, StyleSheet, View } from 'react-native';
+import { Image } from 'expo-image';
+import { StyleSheet, View } from 'react-native';
 
 import { colors } from './theme';
 import type { NoteAttachment } from './types';
@@ -16,7 +17,7 @@ export function PhotoGrid({
     return (
       <Image
         accessibilityLabel="记录中的图片"
-        resizeMode="cover"
+        contentFit="cover"
         source={{ uri: photos[0].uri }}
         style={[styles.hero, compact && styles.heroCompact]}
       />
@@ -28,7 +29,7 @@ export function PhotoGrid({
         <Image
           accessibilityLabel="记录中的图片"
           key={photo.id}
-          resizeMode="cover"
+          contentFit="cover"
           source={{ uri: photo.uri }}
           style={styles.tile}
         />
