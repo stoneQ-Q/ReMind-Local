@@ -5,7 +5,7 @@
  * new storage location and can make an in-place update appear to lose data.
  */
 export const REMIND_DATABASE_NAME = 'remind.db';
-export const REMIND_DATABASE_SCHEMA_VERSION = 16;
+export const REMIND_DATABASE_SCHEMA_VERSION = 17;
 export const REMIND_APPLICATION_ID = 'app.remind.notes';
 
 export const OBSIDIAN_DIRECTORY_URI_SETTING = 'obsidian.directory_uri';

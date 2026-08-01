@@ -71,6 +71,50 @@ export type SourceCitation = {
   endOffset: number;
 };
 
+export type NoteAttachment = {
+  id: string;
+  noteId: string;
+  uri: string;
+  width: number;
+  height: number;
+  sortOrder: number;
+  createdAt: string;
+};
+
+export type MemoryCitation = {
+  sourceId: string;
+  quote: string;
+};
+
+export type MemoryAnswer = {
+  id: string;
+  question: string;
+  answer: string;
+  insufficient: boolean;
+  citations: MemoryCitation[];
+  suggestedQuestions: string[];
+  createdAt: string;
+};
+
+export type InsightPeriod = 'week' | 'month';
+
+export type MemoryInsight = {
+  id: string;
+  period: InsightPeriod;
+  periodStart: string;
+  periodEnd: string;
+  title: string;
+  summary: string;
+  overview: string;
+  patterns: string;
+  changes: string;
+  blindSpot: string;
+  question: string;
+  citations: MemoryCitation[];
+  feedback: 'accurate' | 'inaccurate' | null;
+  createdAt: string;
+};
+
 export type ThemeMergeDraft = {
   id: string;
   sourceNoteId: string;

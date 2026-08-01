@@ -198,6 +198,139 @@ export async function suggestThemeMerge(
   };
 }
 
+export async function answerMemoryQuestion(
+  pool: Pool,
+  cipher: CredentialCipher,
+  userId: string,
+  body: unknown,
+  signal: AbortSignal,
+): Promise<{
+  answer: string;
+  insufficient: boolean;
+  citations: Array<{ sourceId: string; quote: string }>;
+  suggestedQuestions: string[];
+  model: string;
+}> {
+  const value = record(body);
+  const question = shortText(value?.question, 500);
+  const sources = parseSources(value?.sources);
+  if (!question || !sources) throw new OrganizationError('invalid_request');
+  const evidenceBySource = evidenceMap(sources);
+  const raw = record(
+    await generateJson(
+      await apiKey(pool, cipher, userId),
+      MEMORY_QUESTION_PROMPT,
+      JSON.stringify({
+        question,
+        sources: sources.map(({ id, title, createdAt }) => ({ id, title, createdAt })),
+        evidenceCandidates: serializeEvidence(evidenceBySource),
+      }),
+      signal,
+    ),
+  );
+  if (!raw || typeof raw.insufficient !== 'boolean') {
+    throw new OrganizationError('ai_invalid_response', 502);
+  }
+  const citations = validateMemoryCitations(
+    raw.citations,
+    sources,
+    evidenceBySource,
+    raw.insufficient ? 0 : 1,
+  );
+  return {
+    answer: requiredText(raw.answer, 5_000),
+    insufficient: raw.insufficient,
+    citations,
+    suggestedQuestions: stringArray(raw.suggestedQuestions, 3, 120),
+    model: MODEL,
+  };
+}
+
+export async function generateMemoryInsight(
+  pool: Pool,
+  cipher: CredentialCipher,
+  userId: string,
+  body: unknown,
+  signal: AbortSignal,
+): Promise<Record<string, unknown> & { model: string }> {
+  const value = record(body);
+  const period = value?.period === 'week' || value?.period === 'month' ? value.period : null;
+  const periodStart = shortText(value?.periodStart, 64);
+  const periodEnd = shortText(value?.periodEnd, 64);
+  const sources = parseSources(value?.sources);
+  if (!period || !periodStart || !periodEnd || !sources) {
+    throw new OrganizationError('invalid_request');
+  }
+  const evidenceBySource = evidenceMap(sources);
+  const raw = record(
+    await generateJson(
+      await apiKey(pool, cipher, userId),
+      MEMORY_INSIGHT_PROMPT,
+      JSON.stringify({
+        period,
+        periodStart,
+        periodEnd,
+        sources: sources.map(({ id, title, createdAt }) => ({ id, title, createdAt })),
+        evidenceCandidates: serializeEvidence(evidenceBySource),
+      }),
+      signal,
+    ),
+  );
+  if (!raw) throw new OrganizationError('ai_invalid_response', 502);
+  return {
+    title: requiredText(raw.title, 100),
+    summary: requiredText(raw.summary, 500),
+    overview: requiredText(raw.overview, 2_000),
+    patterns: requiredText(raw.patterns, 2_000),
+    changes: requiredText(raw.changes, 2_000),
+    blindSpot: requiredText(raw.blindSpot, 2_000),
+    question: requiredText(raw.question, 500),
+    citations: validateMemoryCitations(raw.citations, sources, evidenceBySource, 2),
+    model: MODEL,
+  };
+}
+
+function evidenceMap(sources: Source[]) {
+  return new Map(
+    sources
+      .map((source) => [source.id, buildEvidence(source.content).slice(0, 5)] as const)
+      .filter(([, evidence]) => evidence.length > 0),
+  );
+}
+
+function serializeEvidence(evidenceBySource: Map<string, ReturnType<typeof buildEvidence>>) {
+  return [...evidenceBySource].map(([sourceId, items]) => ({
+    sourceId,
+    items: items.map(({ id, quote }) => ({ id, text: quote })),
+  }));
+}
+
+function validateMemoryCitations(
+  value: unknown,
+  sources: Source[],
+  evidenceBySource: Map<string, ReturnType<typeof buildEvidence>>,
+  minimum: number,
+): Array<{ sourceId: string; quote: string }> {
+  if (!Array.isArray(value)) throw new OrganizationError('ai_invalid_response', 502);
+  const allowed = new Set(sources.map(({ id }) => id));
+  const citations = value.slice(0, 10).map((raw) => {
+    const item = record(raw);
+    const sourceId = shortText(item?.sourceId, 128);
+    const evidenceId = shortText(item?.evidenceId, 16);
+    const evidence = sourceId && evidenceId
+      ? evidenceBySource.get(sourceId)?.find((candidate) => candidate.id === evidenceId)
+      : null;
+    if (!sourceId || !allowed.has(sourceId) || !evidence) {
+      throw new OrganizationError('ai_invalid_response', 502);
+    }
+    return { sourceId, quote: evidence.quote };
+  });
+  if (citations.length < minimum) {
+    throw new OrganizationError('ai_invalid_response', 502);
+  }
+  return citations;
+}
+
 async function apiKey(pool: Pool, cipher: CredentialCipher, userId: string): Promise<string> {
   const credential = await resolveMediaProviderCredential(pool, cipher, {
     userId,
@@ -331,7 +464,7 @@ function buildEvidence(text: string): Array<{ id: string; quote: string; startOf
 }
 
 function parseSources(value: unknown): Source[] | null {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 20) return null;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 30) return null;
   const parsed: Source[] = [];
   for (const raw of value) {
     const item = record(raw);
@@ -399,3 +532,5 @@ const DAILY_RETRY_PROMPT = `${DAILY_PROMPT}\n上一次输出未通过结构校�
 const LINK_PROMPT = `你是 ReMind 的链接整理助手。只依据 userContext、页面信息和 evidenceCandidates，围绕用户保存意图生成且只生成 1 篇中文 Markdown 笔记，包含内容概括、值得留下的内容、与我的关注点、原始来源。sourceIds 只能含 sourceId；citations 必须选择真实 evidenceId，1 到 6 条，不得改写证据。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[""],"citations":[{"sourceId":"","evidenceId":"E1"}]}],"ignoredSourceIds":[]}。不要额外解释。`;
 const LINK_RETRY_PROMPT = `${LINK_PROMPT}\n上一次输出未通过结构校验。请严格逐字段遵循示例：只输出一个 drafts 元素；sourceIds 和每条 citation.sourceId 必须逐字复制输入 sourceId；citation.evidenceId 只能从输入 evidenceCandidates 的 id 中选择；title、content 均不得为空。`;
 const THEME_PROMPT = `你是 ReMind 的主题笔记编辑助手。只依据输入，判断来源应加入哪个已有主题，或 themeId 为 null 新建长期主题。patch 只写增量，overview 写合并后的理解，冲突单列。输出 JSON：{"themeId":null,"themeTitle":"","rationale":"","patch":"","overview":"","conflicts":[]}。不要额外解释。`;
+const MEMORY_QUESTION_PROMPT = `你是 ReMind 的个人记忆问答助手。只能使用输入的 evidenceCandidates 回答 question，不能用常识补全用户没记过的事实，也不能把推测写成用户的经历。找到依据时给出简洁中文回答，citations 至少选择 1 条真实 evidenceId；材料不足时 insufficient=true，明确说没有找到足够记录，citations 可以为空。suggestedQuestions 最多 3 条。输出 JSON：{"answer":"","insufficient":false,"citations":[{"sourceId":"","evidenceId":"E1"}],"suggestedQuestions":[]}。不要额外解释。`;
+const MEMORY_INSIGHT_PROMPT = `你是 ReMind 的周期回望助手。只依据输入记录，寻找跨多条记录反复出现的具体线索、变化或张力。不得诊断心理疾病、人格或他人动机，不得用空泛鸡汤填充；blindSpot 必须使用“可能、也许、看起来”等不确定措辞。overview 是客观概览，patterns 说明重复线索，changes 说明态度或关注点变化，没有变化时如实说明，question 留下一个值得用户继续思考的问题。citations 至少选择 2 条且来自真实 evidenceId。输出 JSON：{"title":"","summary":"","overview":"","patterns":"","changes":"","blindSpot":"","question":"","citations":[{"sourceId":"","evidenceId":"E1"}]}。不要额外解释。`;

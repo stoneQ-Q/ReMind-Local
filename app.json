@@ -28,6 +28,14 @@
       "expo-sqlite",
       "expo-secure-store",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许 ReMind 读取你选择的照片，用来保存图片记录。",
+          "cameraPermission": "允许 ReMind 使用相机，用来拍下图片记录。",
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {

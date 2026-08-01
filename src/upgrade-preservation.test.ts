@@ -77,7 +77,7 @@ describe('ReMind in-place upgrade preservation', () => {
     expect(appConfig.expo.plugins).toContain('expo-secure-store');
     expect(appConfig.expo.newArchEnabled).not.toBe(false);
     expect(REMIND_DATABASE_NAME).toBe('remind.db');
-    expect(REMIND_DATABASE_SCHEMA_VERSION).toBe(16);
+    expect(REMIND_DATABASE_SCHEMA_VERSION).toBe(17);
     expect(REMIND_SERVICE_MODE_STORAGE_KEY).toBe('remind.service.mode.v1');
     expect(OBSIDIAN_DIRECTORY_URI_SETTING).toBe('obsidian.directory_uri');
     expect(OBSIDIAN_DIRECTORY_NAME_SETTING).toBe('obsidian.directory_name');

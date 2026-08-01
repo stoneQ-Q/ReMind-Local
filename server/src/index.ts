@@ -32,9 +32,12 @@ import {
 } from './wechat';
 import {
   DeepSeekHttpError,
+  answerMemoryQuestionWithDeepSeek,
+  generateMemoryInsightWithDeepSeek,
   organizeLinkWithDeepSeek,
   organizeWithDeepSeek,
   suggestThemeMergeWithDeepSeek,
+  type MemorySource,
   type OrganizeSource,
 } from './deepseek';
 import { fetchLinkPage, validatePublicLinkUrl } from './link-page';
@@ -389,7 +392,7 @@ export default {
     }
 
     const deviceMatch = url.pathname.match(
-      /^\/api\/devices\/([^/]+)\/(status|inbox|ack|binding-code|reply-mode|processing-links|link-retry|link-approve-cost|organize|link-organize|theme-merge)$/,
+      /^\/api\/devices\/([^/]+)\/(status|inbox|ack|binding-code|reply-mode|processing-links|link-retry|link-approve-cost|organize|link-organize|theme-merge|memory-question|memory-insight)$/,
     );
     if (deviceMatch) {
       const [, deviceId, action] = deviceMatch;
@@ -599,6 +602,34 @@ export default {
           );
         } catch (error) {
           console.error('Theme merge failed', error);
+          return aiErrorResponse(error);
+        }
+      }
+      if (request.method === 'POST' && action === 'memory-question') {
+        if (!env.DEEPSEEK_API_KEY) return json({ error: 'ai_not_configured' }, 503);
+        const body = await request.json<{ question?: unknown; sources?: unknown }>();
+        const question = typeof body.question === 'string' ? body.question.trim().slice(0, 500) : '';
+        const sources = parseMemorySources(body.sources);
+        if (!question || !sources) return json({ error: 'invalid_request' }, 400);
+        try {
+          return json(await answerMemoryQuestionWithDeepSeek(env.DEEPSEEK_API_KEY, question, sources));
+        } catch (error) {
+          console.error('Memory question failed', error);
+          return aiErrorResponse(error);
+        }
+      }
+      if (request.method === 'POST' && action === 'memory-insight') {
+        if (!env.DEEPSEEK_API_KEY) return json({ error: 'ai_not_configured' }, 503);
+        const body = await request.json<{ period?: unknown; periodStart?: unknown; periodEnd?: unknown; sources?: unknown }>();
+        const period = body.period === 'week' || body.period === 'month' ? body.period : null;
+        const periodStart = typeof body.periodStart === 'string' ? body.periodStart.slice(0, 64) : '';
+        const periodEnd = typeof body.periodEnd === 'string' ? body.periodEnd.slice(0, 64) : '';
+        const sources = parseMemorySources(body.sources);
+        if (!period || !periodStart || !periodEnd || !sources) return json({ error: 'invalid_request' }, 400);
+        try {
+          return json(await generateMemoryInsightWithDeepSeek(env.DEEPSEEK_API_KEY, { period, periodStart, periodEnd, sources }));
+        } catch (error) {
+          console.error('Memory insight failed', error);
           return aiErrorResponse(error);
         }
       }
@@ -893,6 +924,24 @@ function parseOrganizeSources(value: unknown): OrganizeSource[] | null {
     totalLength += content.length;
     if (totalLength > 60_000) return null;
     sources.push({ id, content, createdAt });
+  }
+  return sources;
+}
+
+function parseMemorySources(value: unknown): MemorySource[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 30) return null;
+  const sources: MemorySource[] = [];
+  let totalLength = 0;
+  for (const item of value) {
+    if (!isRecord(item)) return null;
+    const id = cleanInputString(item.id, 128);
+    const title = cleanInputString(item.title, 160, true);
+    const content = cleanInputString(item.content, 3_000);
+    const createdAt = cleanInputString(item.createdAt, 64);
+    if (!id || !content || !Number.isFinite(Date.parse(createdAt))) return null;
+    totalLength += content.length;
+    if (totalLength > 75_000) return null;
+    sources.push({ id, title, content, createdAt });
   }
   return sources;
 }

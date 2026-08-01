@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import type { ImagePickerAsset } from 'expo-image-picker';
 import * as Linking from 'expo-linking';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,6 +23,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  addNoteAttachments,
   acceptOrganizationDraft,
   acceptThemeMergeDraft,
   createImportedNote,
@@ -39,6 +41,7 @@ import {
   listNotesForOrganization,
   listPendingOrganizationDrafts,
   listNotes,
+  listNoteAttachments,
   listPendingThemeMergeDrafts,
   listRecentlyDeletedThemes,
   listRelatedMemories,
@@ -52,6 +55,7 @@ import {
   saveOrganizationResponse,
   saveThemeMergeDraft,
   setLinkAutomationMode as persistLinkAutomationMode,
+  setNoteContentKind,
   updateNote,
   updateNoteStatus,
   updateThemeOverview,
@@ -62,6 +66,14 @@ import {
   type ThemeSourceContribution,
   type ThemeSourceSummary,
 } from './database';
+import { MemoryAskSheet, MemoryInsightsSheet } from './MemoryFeatures';
+import { PhotoCaptureSheet } from './PhotoCaptureSheet';
+import { PhotoGrid } from './PhotoGrid';
+import {
+  attachmentMap,
+  persistPickedPhotos,
+  removePersistedPhotos,
+} from './photo-records';
 import {
   requestDailyOrganization,
   requestLinkOrganization,
@@ -94,7 +106,12 @@ import { colors } from './theme';
 import { CloudAiSettings } from './CloudAiSettings';
 import { CloudBillingCenter } from './CloudBillingCenter';
 import { CloudTaskCenter } from './CloudTaskCenter';
-import type { Note, OrganizeDraft, ThemeMergeDraft } from './types';
+import type {
+  Note,
+  NoteAttachment,
+  OrganizeDraft,
+  ThemeMergeDraft,
+} from './types';
 import {
   approveWechatProcessingCost,
   getWechatConnection,
@@ -159,7 +176,14 @@ export function ReMindApp() {
     useState<LibraryFilter>('all');
   const [libraryFilterVisible, setLibraryFilterVisible] = useState(false);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [memoryNotes, setMemoryNotes] = useState<Note[]>([]);
   const [activityNotes, setActivityNotes] = useState<Note[]>([]);
+  const [attachmentsByNote, setAttachmentsByNote] = useState<
+    Record<string, NoteAttachment[]>
+  >({});
+  const [photoCaptureVisible, setPhotoCaptureVisible] = useState(false);
+  const [memoryAskVisible, setMemoryAskVisible] = useState(false);
+  const [memoryInsightsVisible, setMemoryInsightsVisible] = useState(false);
   const [draft, setDraft] = useState('');
   const [captureExpanded, setCaptureExpanded] = useState(false);
   const [todayOrganizableCount, setTodayOrganizableCount] = useState(0);
@@ -269,14 +293,20 @@ export function ReMindApp() {
           nextThemeSummaries,
           todaySources,
           nextActivityNotes,
+          nextAttachments,
+          nextMemoryNotes,
         ] = await Promise.all([
           listNotes(db, search),
           listThemeSourceSummaries(db),
           listNotesForOrganization(db, startOfTodayIso()),
           listNotesForActivity(db, activityStart.toISOString()),
+          listNoteAttachments(db),
+          listNotesForActivity(db, '1970-01-01T00:00:00.000Z'),
         ]);
         setNotes(nextNotes);
+        setMemoryNotes(nextMemoryNotes);
         setActivityNotes(nextActivityNotes);
+        setAttachmentsByNote(attachmentMap(nextAttachments));
         setThemeSourceSummaries(nextThemeSummaries);
         setTodayOrganizableCount(todaySources.length);
       } finally {
@@ -616,6 +646,23 @@ export function ReMindApp() {
     }
   };
 
+  const savePhotoRecord = async (
+    caption: string,
+    assets: ImagePickerAsset[],
+  ) => {
+    const photos = persistPickedPhotos(assets);
+    try {
+      const note = await createNote(db, caption);
+      await setNoteContentKind(db, note.id, 'mixed');
+      await addNoteAttachments(db, note.id, photos);
+      await loadNotes('');
+      void syncObsidian();
+    } catch (error) {
+      removePersistedPhotos(photos);
+      throw error;
+    }
+  };
+
   const switchScreen = async (next: Screen) => {
     setScreen(next);
     if (next !== 'search') {
@@ -901,7 +948,16 @@ export function ReMindApp() {
               captureExpanded && styles.homeQuickCaptureExpanded,
             ]}
           >
-            <Text style={styles.homeQuickCaptureMark}>▧</Text>
+            <Pressable
+              accessibilityLabel="添加图片记录"
+              hitSlop={10}
+              onPress={() => {
+                Keyboard.dismiss();
+                setPhotoCaptureVisible(true);
+              }}
+            >
+              <Text style={styles.homeQuickCaptureMark}>▧</Text>
+            </Pressable>
             <TextInput
               ref={captureRef}
               accessibilityLabel="记录一条新笔记"
@@ -1121,28 +1177,48 @@ export function ReMindApp() {
           ) : null}
         </>
       ) : (
-        <View style={styles.searchWrap}>
-          <Text style={styles.searchIcon}>⌕</Text>
-          <TextInput
-            accessibilityLabel="搜索笔记"
-            autoFocus
-            onChangeText={setQuery}
-            placeholder="搜索你记过的内容"
-            placeholderTextColor={colors.faint}
-            returnKeyType="search"
-            style={styles.searchInput}
-            value={query}
-          />
-          {query ? (
-            <Pressable
-              accessibilityLabel="清除搜索"
-              onPress={() => setQuery('')}
-              hitSlop={10}
-            >
-              <Text style={styles.clearSearch}>×</Text>
-            </Pressable>
-          ) : null}
-        </View>
+        <>
+          <View style={styles.searchWrap}>
+            <Text style={styles.searchIcon}>⌕</Text>
+            <TextInput
+              accessibilityLabel="搜索笔记"
+              autoFocus
+              onChangeText={setQuery}
+              placeholder="搜索你记过的内容"
+              placeholderTextColor={colors.faint}
+              returnKeyType="search"
+              style={styles.searchInput}
+              value={query}
+            />
+            {query ? (
+              <Pressable
+                accessibilityLabel="清除搜索"
+                onPress={() => setQuery('')}
+                hitSlop={10}
+              >
+                <Text style={styles.clearSearch}>×</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          <Pressable
+            accessibilityLabel="向自己的笔记提问"
+            onPress={() => {
+              Keyboard.dismiss();
+              setMemoryAskVisible(true);
+            }}
+            style={({ pressed }) => [
+              styles.askMemoryCard,
+              pressed && styles.pressed,
+            ]}
+          >
+            <View style={styles.askMemoryMark}><Text style={styles.askMemoryMarkText}>问</Text></View>
+            <View style={styles.askMemoryCopy}>
+              <Text style={styles.askMemoryTitle}>问 ReMind</Text>
+              <Text style={styles.askMemoryBody}>记不清关键词，也可以直接问自己的笔记。</Text>
+            </View>
+            <Text style={styles.askMemoryArrow}>›</Text>
+          </Pressable>
+        </>
       )}
       {screen === 'search' ? (
         <View style={styles.sectionHeader}>
@@ -1172,9 +1248,7 @@ export function ReMindApp() {
             <View style={styles.homeFooter}>
               <MemoryTrailCard
                 onOpen={() => {
-                  setLibraryTab('raw');
-                  setLibraryFilter('all');
-                  void switchScreen('library');
+                  setMemoryInsightsVisible(true);
                 }}
                 trail={memoryTrail}
               />
@@ -1218,6 +1292,7 @@ export function ReMindApp() {
         renderItem={({ item }) => (
           <View style={styles.noteItemWrap}>
             <CompactNoteCard
+              attachments={attachmentsByNote[item.id] ?? []}
               note={item}
               onPress={() => openNote(item)}
               themeSourceSummary={themeSourceSummaries[item.id]}
@@ -1296,7 +1371,35 @@ export function ReMindApp() {
         visible={libraryFilterVisible}
       />
 
+      <PhotoCaptureSheet
+        onClose={() => setPhotoCaptureVisible(false)}
+        onSave={savePhotoRecord}
+        visible={photoCaptureVisible}
+      />
+
+      <MemoryAskSheet
+        db={db}
+        notes={memoryNotes}
+        onClose={() => setMemoryAskVisible(false)}
+        onOpenNote={openNote}
+        visible={memoryAskVisible}
+      />
+
+      <MemoryInsightsSheet
+        db={db}
+        notes={memoryNotes}
+        onClose={() => setMemoryInsightsVisible(false)}
+        onOpenNote={openNote}
+        onOpenRecords={() => {
+          setLibraryTab('raw');
+          setLibraryFilter('all');
+          void switchScreen('library');
+        }}
+        visible={memoryInsightsVisible}
+      />
+
       <NoteEditor
+        attachments={selectedNote ? attachmentsByNote[selectedNote.id] ?? [] : []}
         currentTheme={selectedSourceTheme}
         note={selectedNote}
         originalCapture={selectedOriginalCapture}
@@ -2185,10 +2288,12 @@ function LibraryFilterSheet({
 }
 
 function CompactNoteCard({
+  attachments,
   note,
   onPress,
   themeSourceSummary,
 }: {
+  attachments: NoteAttachment[];
   note: Note;
   onPress: () => void;
   themeSourceSummary?: ThemeSourceSummary;
@@ -2222,6 +2327,7 @@ function CompactNoteCard({
         pressed && styles.noteCardPressed,
       ]}
     >
+      <PhotoGrid attachments={attachments} compact />
       <View style={styles.compactNoteTopline}>
         <Text numberOfLines={2} style={styles.compactNoteTitle}>
           {note.title}
@@ -2357,6 +2463,7 @@ function EvidenceMarkdown({
 }
 
 function NoteEditor({
+  attachments,
   currentTheme,
   note,
   originalCapture,
@@ -2379,6 +2486,7 @@ function NoteEditor({
   relatedMemories,
   relatedMemoriesLoading,
 }: {
+  attachments: NoteAttachment[];
   currentTheme: SourceThemeAssignment | null;
   note: Note | null;
   originalCapture: Note | null;
@@ -2484,6 +2592,11 @@ function NoteEditor({
           contentContainerStyle={styles.editorBody}
           keyboardShouldPersistTaps="handled"
         >
+          {attachments.length ? (
+            <View style={styles.editorPhotoGrid}>
+              <PhotoGrid attachments={attachments} />
+            </View>
+          ) : null}
           {editingMarkdown ? (
             <>
               <TextInput
@@ -5102,6 +5215,46 @@ const styles = StyleSheet.create({
     fontSize: 24,
     lineHeight: 28,
   },
+  askMemoryCard: {
+    marginTop: 12,
+    marginHorizontal: 18,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 18,
+    backgroundColor: colors.sage,
+  },
+  askMemoryMark: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: colors.surface,
+  },
+  askMemoryMarkText: {
+    color: colors.sageText,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  askMemoryCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  askMemoryTitle: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  askMemoryBody: {
+    color: colors.muted,
+    fontSize: 12,
+  },
+  askMemoryArrow: {
+    color: colors.sageText,
+    fontSize: 24,
+  },
   processingPanel: {
     marginTop: 14,
     marginHorizontal: 18,
@@ -5752,6 +5905,9 @@ const styles = StyleSheet.create({
   editorBody: {
     flexGrow: 1,
     padding: 22,
+  },
+  editorPhotoGrid: {
+    marginBottom: 20,
   },
   editorTitle: {
     color: colors.ink,

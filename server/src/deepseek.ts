@@ -71,6 +71,13 @@ export type ThemeMergeProposal = {
   conflicts: string[];
 };
 
+export type MemorySource = {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: string;
+};
+
 type DeepSeekResponse = {
   choices?: Array<{
     finish_reason?: string;
@@ -218,6 +225,70 @@ export async function suggestThemeMergeWithDeepSeek(
   throw lastError instanceof Error
     ? lastError
     : new Error('DeepSeek returned an invalid theme merge response');
+}
+
+export async function answerMemoryQuestionWithDeepSeek(
+  apiKey: string,
+  question: string,
+  sources: MemorySource[],
+): Promise<Record<string, unknown> & { model: string }> {
+  const evidence = memoryEvidence(sources);
+  const value = await callDeepSeekMessages(
+    apiKey,
+    '你是 ReMind 的个人记忆问答助手。只能依据 evidenceCandidates 回答，不得补充用户没有记录的事实。找到依据时 citations 至少选择一个真实 sourceId 和 evidenceId；找不到时 insufficient=true 并明确说明。输出 JSON：{"answer":"","insufficient":false,"citations":[{"sourceId":"","evidenceId":"E1"}],"suggestedQuestions":[]}。',
+    JSON.stringify({ question, sources: sources.map(({ id, title, createdAt }) => ({ id, title, createdAt })), evidenceCandidates: serializeMemoryEvidence(evidence) }),
+  );
+  if (!isRecord(value) || typeof value.insufficient !== 'boolean') throw new Error('Invalid memory answer');
+  return {
+    answer: cleanString(value.answer, 5_000),
+    insufficient: value.insufficient,
+    citations: validateMemoryCitations(value.citations, evidence, value.insufficient ? 0 : 1),
+    suggestedQuestions: Array.isArray(value.suggestedQuestions)
+      ? value.suggestedQuestions.filter((item): item is string => typeof item === 'string').map((item) => item.trim().slice(0, 120)).filter(Boolean).slice(0, 3)
+      : [],
+    model: MODEL,
+  };
+}
+
+export async function generateMemoryInsightWithDeepSeek(
+  apiKey: string,
+  input: { period: 'week' | 'month'; periodStart: string; periodEnd: string; sources: MemorySource[] },
+): Promise<Record<string, unknown> & { model: string }> {
+  const evidence = memoryEvidence(input.sources);
+  const value = await callDeepSeekMessages(
+    apiKey,
+    '你是 ReMind 的周期回望助手。只能依据输入记录寻找跨多条记录的重复线索和变化，不得诊断人格、疾病或他人动机。blindSpot 必须用“可能、也许、看起来”等不确定措辞。citations 至少选择两条真实证据。输出 JSON：{"title":"","summary":"","overview":"","patterns":"","changes":"","blindSpot":"","question":"","citations":[{"sourceId":"","evidenceId":"E1"}]}。',
+    JSON.stringify({ ...input, sources: input.sources.map(({ id, title, createdAt }) => ({ id, title, createdAt })), evidenceCandidates: serializeMemoryEvidence(evidence) }),
+  );
+  if (!isRecord(value)) throw new Error('Invalid memory insight');
+  return {
+    title: cleanString(value.title, 100), summary: cleanString(value.summary, 500),
+    overview: cleanString(value.overview, 2_000), patterns: cleanString(value.patterns, 2_000),
+    changes: cleanString(value.changes, 2_000), blindSpot: cleanString(value.blindSpot, 2_000),
+    question: cleanString(value.question, 500), citations: validateMemoryCitations(value.citations, evidence, 2), model: MODEL,
+  };
+}
+
+function memoryEvidence(sources: MemorySource[]) {
+  return new Map(sources.map((source) => [source.id, buildEvidenceCandidates(source.content).slice(0, 5)]));
+}
+
+function serializeMemoryEvidence(evidence: Map<string, EvidenceCandidate[]>) {
+  return [...evidence].map(([sourceId, items]) => ({ sourceId, items: items.map(({ id, quote }) => ({ id, text: quote })) }));
+}
+
+function validateMemoryCitations(value: unknown, evidence: Map<string, EvidenceCandidate[]>, minimum: number) {
+  if (!Array.isArray(value)) throw new Error('Memory response is missing citations');
+  const citations = value.slice(0, 10).map((raw) => {
+    if (!isRecord(raw)) throw new Error('Invalid memory citation');
+    const sourceId = cleanString(raw.sourceId, 128);
+    const evidenceId = cleanString(raw.evidenceId, 16);
+    const candidate = evidence.get(sourceId)?.find((item) => item.id === evidenceId);
+    if (!candidate) throw new Error('Memory citation does not match source');
+    return { sourceId, quote: candidate.quote };
+  });
+  if (citations.length < minimum) throw new Error('Memory response has too few citations');
+  return citations;
 }
 
 async function callDeepSeek(

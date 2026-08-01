@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  answerMemoryQuestion,
+  generateMemoryInsight,
   organizeDaily,
   organizeLink,
   OrganizationError,
@@ -9,6 +11,52 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('cloud organization', () => {
+  function memoryDependencies(responseContent: Record<string, unknown>) {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM users')) return { rows: [{ ai_mode: 'bring_your_own_key', status: 'active' }] };
+      if (sql.includes('FROM api_credentials')) return { rows: [{ encrypted_key: Buffer.from('encrypted'), encryption_key_version: 'test-v1' }] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const providerClient = { query: vi.fn(async () => ({ rows: [{ status: 'active' }] })), release: vi.fn() };
+    const pool = { query, connect: vi.fn(async () => providerClient) };
+    const cipher = { activeKeyVersion: 'test-v1', encrypt: vi.fn(), decrypt: vi.fn(() => 'sk-test-private') };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(responseContent) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+    return { pool, cipher };
+  }
+
+  it('answers from a verified source quote', async () => {
+    const { pool, cipher } = memoryDependencies({
+      answer: '你记过循环验证和停止条件。',
+      insufficient: false,
+      citations: [{ sourceId: 'note-1', evidenceId: 'E1' }],
+      suggestedQuestions: ['这和提示词有什么区别？'],
+    });
+    const content = '你记录了 Loop Engineering 的循环验证、状态保存和明确停止条件，这些构成了一个可控的执行过程。';
+    const result = await answerMemoryQuestion(pool as never, cipher as never, 'user-1', {
+      question: '我记过 Loop Engineering 吗？',
+      sources: [{ id: 'note-1', title: 'Loop Engineering', content, createdAt: '2026-08-01T08:00:00.000Z' }],
+    }, new AbortController().signal);
+    expect(result.citations).toEqual([{ sourceId: 'note-1', quote: content }]);
+  });
+
+  it('requires multiple verified records for an insight', async () => {
+    const { pool, cipher } = memoryDependencies({
+      title: '在验证中推进', summary: '你反复通过验证来降低不确定性。',
+      overview: '这一周留下了多个产品验证记录。', patterns: '多次先验证再决定。',
+      changes: '关注点从功能完成转向真实可用。', blindSpot: '你可能低估了持续验证本身的价值。',
+      question: '哪些验证已经足够，可以停止重复确认？',
+      citations: [{ sourceId: 'note-1', evidenceId: 'E1' }, { sourceId: 'note-2', evidenceId: 'E1' }],
+    });
+    const sources = [
+      { id: 'note-1', title: '验证一', content: '今天完成了云端连接的真实设备验证，并确认原有数据在覆盖安装之后仍然完整保留。', createdAt: '2026-08-01T08:00:00.000Z' },
+      { id: 'note-2', title: '验证二', content: '再次检查微信链接进入、笔记整理和证据回看，确认整个流程可以连续完成且没有闪退。', createdAt: '2026-08-02T08:00:00.000Z' },
+    ];
+    const result = await generateMemoryInsight(pool as never, cipher as never, 'user-1', {
+      period: 'week', periodStart: '2026-07-27T00:00:00.000Z', periodEnd: '2026-08-03T00:00:00.000Z', sources,
+    }, new AbortController().signal);
+    expect(result.citations).toHaveLength(2);
+    expect(result.blindSpot).toContain('可能');
+  });
   it('uses the stored BYOK credential and validates daily drafts', async () => {
     const query = vi.fn(async (sql: string) => {
       if (sql.includes('FROM users')) {

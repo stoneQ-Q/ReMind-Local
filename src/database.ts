@@ -9,6 +9,10 @@ import {
 } from './note-utils';
 import type {
   Note,
+  NoteAttachment,
+  MemoryAnswer,
+  MemoryInsight,
+  InsightPeriod,
   NoteRow,
   NoteSource,
   OrganizeDraft,
@@ -459,6 +463,54 @@ export async function migrateDatabase(db: SQLiteDatabase) {
     `);
   }
 
+  if (currentVersion < 17) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS note_attachments (
+        id TEXT PRIMARY KEY NOT NULL,
+        note_id TEXT NOT NULL,
+        uri TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS note_attachments_note_idx
+      ON note_attachments(note_id, sort_order);
+
+      CREATE TABLE IF NOT EXISTS memory_questions (
+        id TEXT PRIMARY KEY NOT NULL,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        insufficient INTEGER NOT NULL DEFAULT 0,
+        citations_json TEXT NOT NULL DEFAULT '[]',
+        suggested_questions_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS memory_questions_created_idx
+      ON memory_questions(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS memory_insights (
+        id TEXT PRIMARY KEY NOT NULL,
+        period TEXT NOT NULL,
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        overview TEXT NOT NULL,
+        patterns TEXT NOT NULL,
+        changes TEXT NOT NULL,
+        blind_spot TEXT NOT NULL,
+        question TEXT NOT NULL,
+        citations_json TEXT NOT NULL DEFAULT '[]',
+        feedback TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS memory_insights_period_idx
+      ON memory_insights(period, period_start DESC);
+    `);
+  }
+
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }
 
@@ -591,6 +643,184 @@ export async function createNote(
   );
 
   return note;
+}
+
+export async function setNoteContentKind(
+  db: SQLiteDatabase,
+  noteId: string,
+  contentKind: Note['contentKind'],
+): Promise<void> {
+  await db.runAsync(
+    'UPDATE notes SET content_kind = ?, updated_at = ? WHERE id = ?',
+    contentKind,
+    new Date().toISOString(),
+    noteId,
+  );
+}
+
+export async function addNoteAttachments(
+  db: SQLiteDatabase,
+  noteId: string,
+  attachments: Array<Omit<NoteAttachment, 'noteId' | 'createdAt'>>,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    for (const attachment of attachments) {
+      await db.runAsync(
+        `INSERT INTO note_attachments
+          (id, note_id, uri, width, height, sort_order, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        attachment.id,
+        noteId,
+        attachment.uri,
+        attachment.width,
+        attachment.height,
+        attachment.sortOrder,
+        now,
+      );
+    }
+  });
+}
+
+export async function listNoteAttachments(
+  db: SQLiteDatabase,
+  noteIds?: string[],
+): Promise<NoteAttachment[]> {
+  if (noteIds && noteIds.length === 0) return [];
+  const rows = noteIds
+    ? await db.getAllAsync<{
+        id: string; note_id: string; uri: string; width: number;
+        height: number; sort_order: number; created_at: string;
+      }>(
+        `SELECT id, note_id, uri, width, height, sort_order, created_at
+         FROM note_attachments
+         WHERE note_id IN (${noteIds.map(() => '?').join(', ')})
+         ORDER BY note_id, sort_order`,
+        ...noteIds,
+      )
+    : await db.getAllAsync<{
+        id: string; note_id: string; uri: string; width: number;
+        height: number; sort_order: number; created_at: string;
+      }>(
+        `SELECT id, note_id, uri, width, height, sort_order, created_at
+         FROM note_attachments ORDER BY note_id, sort_order`,
+      );
+  return rows.map((row) => ({
+    id: row.id,
+    noteId: row.note_id,
+    uri: row.uri,
+    width: row.width,
+    height: row.height,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function saveMemoryAnswer(
+  db: SQLiteDatabase,
+  answer: MemoryAnswer,
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO memory_questions
+      (id, question, answer, insufficient, citations_json,
+       suggested_questions_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    answer.id,
+    answer.question,
+    answer.answer,
+    answer.insufficient ? 1 : 0,
+    JSON.stringify(answer.citations),
+    JSON.stringify(answer.suggestedQuestions),
+    answer.createdAt,
+  );
+  await db.runAsync(
+    `DELETE FROM memory_questions WHERE id NOT IN
+      (SELECT id FROM memory_questions ORDER BY created_at DESC LIMIT 10)`,
+  );
+}
+
+export async function listMemoryAnswers(
+  db: SQLiteDatabase,
+): Promise<MemoryAnswer[]> {
+  const rows = await db.getAllAsync<{
+    id: string; question: string; answer: string; insufficient: number;
+    citations_json: string; suggested_questions_json: string; created_at: string;
+  }>('SELECT * FROM memory_questions ORDER BY created_at DESC LIMIT 10');
+  return rows.map((row) => ({
+    id: row.id,
+    question: row.question,
+    answer: row.answer,
+    insufficient: row.insufficient === 1,
+    citations: JSON.parse(row.citations_json),
+    suggestedQuestions: JSON.parse(row.suggested_questions_json),
+    createdAt: row.created_at,
+  }));
+}
+
+export async function saveMemoryInsight(
+  db: SQLiteDatabase,
+  insight: MemoryInsight,
+): Promise<void> {
+  await db.runAsync(
+    `INSERT OR REPLACE INTO memory_insights
+      (id, period, period_start, period_end, title, summary, overview,
+       patterns, changes, blind_spot, question, citations_json, feedback,
+       created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    insight.id,
+    insight.period,
+    insight.periodStart,
+    insight.periodEnd,
+    insight.title,
+    insight.summary,
+    insight.overview,
+    insight.patterns,
+    insight.changes,
+    insight.blindSpot,
+    insight.question,
+    JSON.stringify(insight.citations),
+    insight.feedback,
+    insight.createdAt,
+  );
+}
+
+export async function listMemoryInsights(
+  db: SQLiteDatabase,
+): Promise<MemoryInsight[]> {
+  const rows = await db.getAllAsync<{
+    id: string; period: InsightPeriod; period_start: string; period_end: string;
+    title: string; summary: string; overview: string; patterns: string;
+    changes: string; blind_spot: string; question: string;
+    citations_json: string; feedback: MemoryInsight['feedback']; created_at: string;
+  }>('SELECT * FROM memory_insights ORDER BY created_at DESC');
+  return rows.map((row) => ({
+    id: row.id,
+    period: row.period,
+    periodStart: row.period_start,
+    periodEnd: row.period_end,
+    title: row.title,
+    summary: row.summary,
+    overview: row.overview,
+    patterns: row.patterns,
+    changes: row.changes,
+    blindSpot: row.blind_spot,
+    question: row.question,
+    citations: JSON.parse(row.citations_json),
+    feedback: row.feedback,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function setMemoryInsightFeedback(
+  db: SQLiteDatabase,
+  insightId: string,
+  feedback: NonNullable<MemoryInsight['feedback']>,
+): Promise<void> {
+  await db.runAsync(
+    'UPDATE memory_insights SET feedback = ? WHERE id = ?',
+    feedback,
+    insightId,
+  );
 }
 
 export async function createImportedNote(

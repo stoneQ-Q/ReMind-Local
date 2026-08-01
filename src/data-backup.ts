@@ -19,6 +19,8 @@ const BACKUP_TABLES = [
   'theme_sources',
   'theme_overviews',
   'recall_states',
+  'memory_questions',
+  'memory_insights',
 ] as const;
 
 type BackupTable = (typeof BACKUP_TABLES)[number];
@@ -130,8 +132,8 @@ function parseBackup(text: string): ReMindBackup {
   let rowCount = 0;
   const tables = {} as Record<BackupTable, BackupRow[]>;
   for (const table of BACKUP_TABLES) {
-    const rows = value.tables[table];
-    if (!Array.isArray(rows)) throw new Error(`备份缺少 ${table} 数据`);
+    const rows = value.tables[table] ?? [];
+    if (!Array.isArray(rows)) throw new Error(`备份中的 ${table} 数据无效`);
     if (!rows.every(isBackupRow)) throw new Error(`备份中的 ${table} 数据无效`);
     rowCount += rows.length;
     tables[table] = rows;

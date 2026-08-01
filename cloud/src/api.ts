@@ -66,6 +66,8 @@ import {
   OrganizationError,
   organizeDaily,
   organizeLink,
+  answerMemoryQuestion,
+  generateMemoryInsight,
   suggestThemeMerge,
 } from './organization.js';
 import {
@@ -898,7 +900,7 @@ const server = createServer(async (request, response) => {
     }
 
     const organizationMatch = request.url?.match(
-      /^\/api\/v1\/organize\/(organize|link-organize|theme-merge)$/,
+      /^\/api\/v1\/organize\/(organize|link-organize|theme-merge|memory-question|memory-insight)$/,
     );
     if (request.method === 'POST' && organizationMatch) {
       const account = await authenticateAccessToken(
@@ -931,13 +933,29 @@ const server = createServer(async (request, response) => {
                   body,
                   controller.signal,
                 )
-              : await suggestThemeMerge(
+              : action === 'theme-merge'
+                ? await suggestThemeMerge(
                   database,
                   credentialCipher,
                   account.userId,
                   body,
                   controller.signal,
-                );
+                  )
+                : action === 'memory-question'
+                  ? await answerMemoryQuestion(
+                      database,
+                      credentialCipher,
+                      account.userId,
+                      body,
+                      controller.signal,
+                    )
+                  : await generateMemoryInsight(
+                      database,
+                      credentialCipher,
+                      account.userId,
+                      body,
+                      controller.signal,
+                    );
         sendJson(response, 200, result);
       } finally {
         clearTimeout(timer);
