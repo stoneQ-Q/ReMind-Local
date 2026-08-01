@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { preparePhotoPreviews, removePhotoPreviews } from './photo-records';
 import { colors } from './theme';
 
 export function PhotoCaptureSheet({
@@ -30,27 +29,21 @@ export function PhotoCaptureSheet({
   const insets = useSafeAreaInsets();
   const [assets, setAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [caption, setCaption] = useState('');
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!visible) {
-      setAssets((current) => {
-        removePhotoPreviews(current);
-        return [];
-      });
+      setAssets([]);
       setCaption('');
+      setPreviewFailed(false);
       setSaving(false);
     }
   }, [visible]);
 
   const replaceAssets = (next: ImagePicker.ImagePickerAsset[]) => {
-    try {
-      const prepared = preparePhotoPreviews(next);
-      removePhotoPreviews(assets);
-      setAssets(prepared);
-    } catch {
-      Alert.alert('图片没有准备好', '无法读取这张图片，请重新选择一次。');
-    }
+    setPreviewFailed(false);
+    setAssets(next.slice(0, 4));
   };
 
   const pick = async () => {
@@ -79,7 +72,7 @@ export function PhotoCaptureSheet({
   };
 
   const save = async () => {
-    if (!assets.length || !caption.trim() || saving) return;
+    if (!assets.length || !caption.trim() || previewFailed || saving) return;
     setSaving(true);
     try {
       await onSave(caption.trim(), assets);
@@ -98,16 +91,28 @@ export function PhotoCaptureSheet({
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable hitSlop={10} onPress={onClose}><Text style={styles.cancel}>取消</Text></Pressable>
           <Text style={styles.heading}>图片记录</Text>
-          <Pressable disabled={!assets.length || !caption.trim() || saving} hitSlop={10} onPress={() => void save()}>
-            <Text style={[styles.save, (!assets.length || !caption.trim() || saving) && styles.disabledText]}>{saving ? '保存中' : '保存'}</Text>
+          <Pressable disabled={!assets.length || !caption.trim() || previewFailed || saving} hitSlop={10} onPress={() => void save()}>
+            <Text style={[styles.save, (!assets.length || !caption.trim() || previewFailed || saving) && styles.disabledText]}>{saving ? '保存中' : '保存'}</Text>
           </Pressable>
         </View>
         <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 32 }]} keyboardShouldPersistTaps="handled">
           {assets.length ? (
             <View style={styles.photos}>
               {assets.map((asset, index) => (
-                <Image key={`${asset.uri}-${index}`} contentFit="cover" source={{ uri: asset.uri }} style={assets.length === 1 ? styles.hero : styles.tile} />
+                <Image
+                  key={`${asset.uri}-${index}`}
+                  contentFit="cover"
+                  onDisplay={() => setPreviewFailed(false)}
+                  onError={() => setPreviewFailed(true)}
+                  source={asset.uri}
+                  style={assets.length === 1 ? styles.hero : styles.tile}
+                />
               ))}
+              {previewFailed ? (
+                <View style={styles.previewError}>
+                  <Text style={styles.previewErrorText}>这张图片暂时无法预览，请重新选择</Text>
+                </View>
+              ) : null}
               <Pressable accessibilityLabel="重新选择图片" onPress={() => void pick()} style={styles.replaceButton}><Text style={styles.replaceText}>重新选择</Text></Pressable>
             </View>
           ) : (
@@ -154,6 +159,8 @@ const styles = StyleSheet.create({
   tile: { width: '49.4%', aspectRatio: 1, flexGrow: 1, backgroundColor: colors.line },
   replaceButton: { position: 'absolute', right: 12, bottom: 12, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 16, backgroundColor: 'rgba(44,52,48,0.72)' },
   replaceText: { color: colors.white, fontWeight: '700' },
+  previewError: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: colors.sage },
+  previewErrorText: { color: colors.sageText, fontSize: 15, fontWeight: '800', textAlign: 'center' },
   emptyPhoto: { minHeight: 300, padding: 28, borderRadius: 26, alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: colors.sage },
   emptyMark: { color: colors.sageText, fontSize: 38 },
   emptyTitle: { color: colors.ink, fontSize: 21, fontWeight: '800' },

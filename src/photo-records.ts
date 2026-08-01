@@ -5,7 +5,6 @@ import { createLocalId } from './note-utils';
 import type { NoteAttachment } from './types';
 
 const MEDIA_DIRECTORY = 'remind-media';
-const PREVIEW_DIRECTORY = 'remind-photo-previews';
 
 export type PendingPhoto = Pick<
   NoteAttachment,
@@ -49,38 +48,6 @@ export function persistPickedPhotos(assets: ImagePickerAsset[]): PendingPhoto[] 
       sortOrder,
     };
   });
-}
-
-export function preparePhotoPreviews(
-  assets: ImagePickerAsset[],
-): ImagePickerAsset[] {
-  const directory = new Directory(Paths.cache, PREVIEW_DIRECTORY);
-  if (!directory.exists) directory.create();
-
-  const prepared: ImagePickerAsset[] = [];
-  try {
-    for (const asset of assets.slice(0, 4)) {
-      const destination = new File(
-        directory,
-        `${createLocalId()}.${imageExtension(asset)}`,
-      );
-      new File(asset.uri).copy(destination);
-      prepared.push({ ...asset, uri: destination.uri });
-    }
-    return prepared;
-  } catch (error) {
-    removePhotoPreviews(prepared);
-    throw error;
-  }
-}
-
-export function removePhotoPreviews(assets: ImagePickerAsset[]): void {
-  const previewDirectory = new Directory(Paths.cache, PREVIEW_DIRECTORY);
-  for (const asset of assets) {
-    if (!asset.uri.startsWith(previewDirectory.uri)) continue;
-    const file = new File(asset.uri);
-    if (file.exists) file.delete();
-  }
 }
 
 export function removePersistedPhotos(photos: PendingPhoto[]): void {
