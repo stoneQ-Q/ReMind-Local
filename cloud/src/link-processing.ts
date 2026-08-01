@@ -252,11 +252,6 @@ export async function ensureNextLinkVideoMediaRequest(
        AND owner.ai_mode = 'bring_your_own_key'
        AND EXISTS (
          SELECT 1 FROM api_credentials
-         WHERE user_id = note.user_id AND provider = 'zhipu'
-           AND revoked_at IS NULL
-       )
-       AND EXISTS (
-         SELECT 1 FROM api_credentials
          WHERE user_id = note.user_id AND provider = 'deepseek'
            AND revoked_at IS NULL
        )

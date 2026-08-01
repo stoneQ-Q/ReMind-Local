@@ -16,6 +16,16 @@ services:
     pids_limit: 256
     init: true
 
+  whisper-model:
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 32
+
+  whisper:
+    cpus: 1.5
+    mem_limit: 1024m
+    pids_limit: 64
+
   backup:
     cpus: 0.25
     mem_limit: 256m

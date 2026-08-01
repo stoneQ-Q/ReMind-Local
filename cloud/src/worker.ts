@@ -3,8 +3,13 @@ import { hostname } from 'node:os';
 import {
   ByokMediaProcessingProvider,
   RemoteMediaProcessingProvider,
+  WhisperFirstByokMediaProcessingProvider,
 } from './byok-media-provider.js';
-import { mediaProviderMode, workerPollMs } from './config.js';
+import {
+  mediaProviderMode,
+  whisperServiceUrl,
+  workerPollMs,
+} from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 import {
@@ -36,12 +41,14 @@ import {
   createWechatPollHandler,
   ensureNextWechatPollJob,
 } from './wechat-connections.js';
+import { WhisperMediaClient } from './whisper-media-client.js';
 
 const pollMs = workerPollMs();
 const workerId = `${hostname()}:${process.pid}`;
 const credentialCipher = credentialCipherFromEnvironment();
 const objectStore = objectStoreFromEnvironment();
 const mediaMode = mediaProviderMode();
+const whisperUrl = whisperServiceUrl();
 const mediaHandlers: JobHandlers =
   mediaMode === 'mock'
     ? createMediaProcessingHandlers(database, objectStore)
@@ -49,7 +56,13 @@ const mediaHandlers: JobHandlers =
       ? createMediaProcessingHandlers(
           database,
           objectStore,
-          new ByokMediaProcessingProvider(database, credentialCipher),
+          whisperUrl
+            ? new WhisperFirstByokMediaProcessingProvider(
+                database,
+                credentialCipher,
+                new WhisperMediaClient(whisperUrl),
+              )
+            : new ByokMediaProcessingProvider(database, credentialCipher),
         )
       : mediaMode === 'remote'
         ? createMediaProcessingHandlers(
@@ -83,6 +96,7 @@ let stopping = false;
 
 console.log(`ReMind cloud Worker started as ${workerId}`);
 console.log(`Media processing provider: ${mediaMode}`);
+console.log(`Server Whisper: ${whisperUrl ? 'enabled' : 'disabled'}`);
 void run().finally(async () => {
   await closeDatabase();
 });

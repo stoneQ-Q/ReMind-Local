@@ -8,6 +8,7 @@ import {
 } from './media-provider-clients.js';
 import {
   resolveMediaProviderCredential,
+  MediaProviderAuthorizationError,
   type ManagedProviderCredentials,
 } from './media-provider-routing.js';
 import {
@@ -25,6 +26,7 @@ import {
   recordProviderFailure,
   recordProviderSuccess,
 } from './provider-health.js';
+import { WhisperMediaClient } from './whisper-media-client.js';
 
 type RemoteMediaProviderOptions = {
   managedCredentials?: ManagedProviderCredentials;
@@ -176,6 +178,61 @@ export class ByokMediaProcessingProvider extends RemoteMediaProcessingProvider {
     deepseek = new DeepSeekMediaClient(),
   ) {
     super(pool, cipher, {}, zhipu, deepseek);
+  }
+}
+
+export class WhisperFirstByokMediaProcessingProvider extends ByokMediaProcessingProvider {
+  constructor(
+    private readonly localPool: Pool,
+    cipher: CredentialCipher,
+    private readonly whisper: WhisperMediaClient,
+    zhipu = new ZhipuMediaClient(),
+    deepseek = new DeepSeekMediaClient(),
+  ) {
+    super(localPool, cipher, zhipu, deepseek);
+  }
+
+  override async transcribeAudio(
+    content: Buffer,
+    signal: AbortSignal,
+    context?: MediaProviderContext,
+    contentType = 'audio/mpeg',
+  ): Promise<MediaProviderStageResult<string>> {
+    try {
+      const result = await this.whisper.transcribeAudio(
+        { content, contentType },
+        signal,
+      );
+      return { output: result.transcript, actualCostMicros: 0n };
+    } catch (whisperError) {
+      if (signal.aborted) throw whisperError;
+      const required = requireContext(context);
+      const fallback = await this.localPool.query<{ present: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM api_credentials
+           WHERE user_id = $1 AND provider = 'zhipu'
+             AND revoked_at IS NULL
+         ) AS present`,
+        [required.userId],
+      );
+      if (fallback.rows[0]?.present !== true) throw whisperError;
+      try {
+        return await super.transcribeAudio(
+          content,
+          signal,
+          context,
+          contentType,
+        );
+      } catch (fallbackError) {
+        if (
+          fallbackError instanceof MediaProviderAuthorizationError &&
+          fallbackError.code === 'user_provider_credential_required'
+        ) {
+          throw whisperError;
+        }
+        throw fallbackError;
+      }
+    }
   }
 }
 

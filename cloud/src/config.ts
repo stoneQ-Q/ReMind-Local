@@ -40,3 +40,8 @@ export function mediaProviderMode(): 'disabled' | 'mock' | 'byok' | 'remote' {
   }
   return value;
 }
+
+export function whisperServiceUrl(): string | null {
+  const value = process.env.REMIND_WHISPER_URL?.trim();
+  return value || null;
+}

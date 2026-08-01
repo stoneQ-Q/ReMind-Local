@@ -330,8 +330,7 @@ export async function createByokMediaProcessingRequest(
     }
     throw new MediaRequestError('media_source_not_found');
   }
-  const requiredProviders =
-    mediaKind === 'video' ? ['zhipu', 'deepseek'] : ['zhipu'];
+  const requiredProviders = mediaKind === 'video' ? ['deepseek'] : ['zhipu'];
   const credentials = await pool.query<{ provider: string }>(
     `SELECT provider
      FROM api_credentials
@@ -922,7 +921,7 @@ function createMediaHandler(
             content: segment.content,
             purpose: 'temporary',
             originalName: `video-audio-${segment.sequenceNumber}.mp3`,
-            temporaryTtlSeconds: 300,
+            temporaryTtlSeconds: 4 * 60 * 60,
           });
           segmentFileIds.push(temporary.id);
         }
@@ -1479,7 +1478,8 @@ function jobTypeForStage(
 
 function timeoutForStage(stage: MediaStage): number {
   if (stage === 'video_prepare') return 600;
-  if (stage === 'audio_transcribe' || stage === 'video_transcribe') return 900;
+  if (stage === 'video_transcribe') return 3_600;
+  if (stage === 'audio_transcribe') return 900;
   return 120;
 }
 
