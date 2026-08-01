@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('expo-file-system', () => ({
   Directory: class {},
   File: class {},
-  Paths: { document: '' },
+  Paths: { cache: '', document: '' },
 }));
 
 import { attachmentMap, imageExtension } from './photo-records';

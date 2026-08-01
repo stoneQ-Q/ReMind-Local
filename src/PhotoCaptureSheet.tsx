@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { preparePhotoPreviews, removePhotoPreviews } from './photo-records';
 import { colors } from './theme';
 
 export function PhotoCaptureSheet({
@@ -33,11 +34,24 @@ export function PhotoCaptureSheet({
 
   useEffect(() => {
     if (!visible) {
-      setAssets([]);
+      setAssets((current) => {
+        removePhotoPreviews(current);
+        return [];
+      });
       setCaption('');
       setSaving(false);
     }
   }, [visible]);
+
+  const replaceAssets = (next: ImagePicker.ImagePickerAsset[]) => {
+    try {
+      const prepared = preparePhotoPreviews(next);
+      removePhotoPreviews(assets);
+      setAssets(prepared);
+    } catch {
+      Alert.alert('图片没有准备好', '无法读取这张图片，请重新选择一次。');
+    }
+  };
 
   const pick = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -47,7 +61,7 @@ export function PhotoCaptureSheet({
       quality: 0.82,
       exif: false,
     });
-    if (!result.canceled) setAssets(result.assets.slice(0, 4));
+    if (!result.canceled) replaceAssets(result.assets);
   };
 
   const camera = async () => {
@@ -61,7 +75,7 @@ export function PhotoCaptureSheet({
       quality: 0.82,
       exif: false,
     });
-    if (!result.canceled && result.assets[0]) setAssets([result.assets[0]]);
+    if (!result.canceled && result.assets[0]) replaceAssets([result.assets[0]]);
   };
 
   const save = async () => {
