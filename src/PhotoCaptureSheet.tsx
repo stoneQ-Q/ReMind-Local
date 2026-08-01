@@ -126,6 +126,11 @@ export function PhotoCaptureSheet({
               </View>
             </View>
           )}
+          <View style={styles.localOnlyNotice}>
+            <Text style={styles.localOnlyNoticeText}>
+              图片目前只保存在这台手机上，不会上传云端。
+            </Text>
+          </View>
           <View style={styles.captionCard}>
             <Text style={styles.captionLabel}>这一刻我想记住</Text>
             <TextInput
@@ -166,6 +171,8 @@ const styles = StyleSheet.create({
   emptyTitle: { color: colors.ink, fontSize: 21, fontWeight: '800' },
   emptyBody: { color: colors.muted, fontSize: 14, lineHeight: 22, textAlign: 'center' },
   actions: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  localOnlyNotice: { paddingHorizontal: 14, paddingVertical: 11, borderRadius: 14, backgroundColor: colors.sage },
+  localOnlyNoticeText: { color: colors.sageText, fontSize: 13, lineHeight: 19, textAlign: 'center', fontWeight: '700' },
   secondaryButton: { minWidth: 92, padding: 13, borderRadius: 16, alignItems: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line },
   secondaryText: { color: colors.sageText, fontWeight: '800' },
   primaryButton: { minWidth: 124, padding: 13, borderRadius: 16, alignItems: 'center', backgroundColor: colors.accent },

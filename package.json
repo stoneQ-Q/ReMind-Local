@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@expo/vector-icons": "^15.0.3",
     "expo": "^54.0.36",
     "expo-build-properties": "~1.0.10",
     "expo-document-picker": "~14.0.8",

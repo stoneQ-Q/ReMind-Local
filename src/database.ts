@@ -716,6 +716,13 @@ export async function listNoteAttachments(
   }));
 }
 
+export async function deleteNoteAttachments(
+  db: SQLiteDatabase,
+  noteId: string,
+): Promise<void> {
+  await db.runAsync('DELETE FROM note_attachments WHERE note_id = ?', noteId);
+}
+
 export async function saveMemoryAnswer(
   db: SQLiteDatabase,
   answer: MemoryAnswer,

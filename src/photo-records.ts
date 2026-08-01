@@ -51,8 +51,14 @@ export function persistPickedPhotos(assets: ImagePickerAsset[]): PendingPhoto[] 
 }
 
 export function removePersistedPhotos(photos: PendingPhoto[]): void {
+  const directoryUri = `${new Directory(Paths.document, MEDIA_DIRECTORY).uri.replace(/\/$/, '')}/`;
   for (const photo of photos) {
-    const file = new File(photo.uri);
-    if (file.exists) file.delete();
+    if (!photo.uri.startsWith(directoryUri)) continue;
+    try {
+      const file = new File(photo.uri);
+      if (file.exists) file.delete();
+    } catch {
+      // A failed cleanup must not prevent the note itself from being deleted.
+    }
   }
 }

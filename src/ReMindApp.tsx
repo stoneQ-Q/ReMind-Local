@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import * as Linking from 'expo-linking';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -28,6 +29,7 @@ import {
   acceptThemeMergeDraft,
   createImportedNote,
   createNote,
+  deleteNoteAttachments,
   deleteNote,
   dismissOrganizationDraft,
   dismissThemeMergeDraft,
@@ -752,11 +754,14 @@ export function ReMindApp() {
   const removeNote = (note: Note) => {
     const isTheme = note.recordType === 'theme';
     const sourceCount = themeSourceSummaries[note.id]?.count ?? 0;
+    const photoAttachments = attachmentsByNote[note.id] ?? [];
     Alert.alert(
       isTheme ? '把这个主题移到最近删除？' : '删除这条笔记？',
       isTheme
         ? `主题主页会被隐藏，但下面的 ${sourceCount} 篇来源笔记不会删除。之后可以在“主题”分类中恢复。`
-        : '笔记会从当前列表中移除。',
+        : photoAttachments.length
+          ? '笔记和保存在本机的图片会一起删除。'
+          : '笔记会从当前列表中移除。',
       [
         { text: '取消', style: 'cancel' },
         {
@@ -764,6 +769,15 @@ export function ReMindApp() {
           style: 'destructive',
           onPress: async () => {
             await deleteNote(db, note.id);
+            if (!isTheme && photoAttachments.length) {
+              removePersistedPhotos(photoAttachments);
+              await deleteNoteAttachments(db, note.id);
+              setAttachmentsByNote((current) => {
+                const next = { ...current };
+                delete next[note.id];
+                return next;
+              });
+            }
             setSelectedNote(null);
             await loadNotes(screen === 'search' ? query : '');
             if (isTheme) {
@@ -1338,7 +1352,7 @@ export function ReMindApp() {
       >
         <TabButton
           active={screen === 'inbox'}
-          icon="□"
+          icon="add-circle-outline"
           label="记录"
           onPress={() =>
             screen === 'inbox'
@@ -1348,13 +1362,13 @@ export function ReMindApp() {
         />
         <TabButton
           active={screen === 'library'}
-          icon="▤"
+          icon="documents-outline"
           label="笔记"
           onPress={() => void switchScreen('library')}
         />
         <TabButton
           active={screen === 'search'}
-          icon="⌕"
+          icon="search-outline"
           label="找回"
           onPress={() => void switchScreen('search')}
         />
@@ -2395,7 +2409,7 @@ function TabButton({
   onPress,
 }: {
   active: boolean;
-  icon: string;
+  icon: 'add-circle-outline' | 'documents-outline' | 'search-outline';
   label: string;
   onPress: () => void;
 }) {
@@ -2406,9 +2420,11 @@ function TabButton({
       onPress={onPress}
       style={styles.tabButton}
     >
-      <Text style={[styles.tabIcon, active && styles.tabIconActive]}>
-        {icon}
-      </Text>
+      <Ionicons
+        color={active ? colors.accent : colors.faint}
+        name={icon}
+        size={25}
+      />
       <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
         {label}
       </Text>
@@ -5857,15 +5873,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     gap: 2,
-  },
-  tabIcon: {
-    color: colors.faint,
-    fontSize: 25,
-    fontWeight: '500',
-    lineHeight: 28,
-  },
-  tabIconActive: {
-    color: colors.accent,
   },
   tabLabel: {
     color: colors.faint,
