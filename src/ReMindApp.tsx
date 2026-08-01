@@ -2158,12 +2158,19 @@ function MemoryTrailCard({
   });
 
   return (
-    <View style={styles.memoryTrailCard}>
+    <Pressable
+      accessibilityLabel="打开周月回望"
+      onPress={onOpen}
+      style={({ pressed }) => [
+        styles.memoryTrailCard,
+        pressed && styles.pressed,
+      ]}
+    >
       <View style={styles.memoryTrailHeader}>
         <Text style={styles.memoryTrailTitle}>本周记忆轨迹</Text>
-        <Pressable hitSlop={8} onPress={onOpen}>
+        <View>
           <Text style={styles.memoryTrailOpen}>查看 ›</Text>
-        </Pressable>
+        </View>
       </View>
       <View style={styles.memoryTrailDays}>
         {trail.days.map((day, index) => {
@@ -2217,7 +2224,7 @@ function MemoryTrailCard({
             : '这一周还留着空白，随时可以从一条想法开始'}
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
