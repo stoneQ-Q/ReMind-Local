@@ -71,6 +71,7 @@ import {
   MarkdownView,
   normalizeEvidenceMarkerLabels,
 } from './MarkdownView';
+import { splitOriginalEvidenceMarkdown } from './evidence-markdown';
 import { formatNoteTime, notePreview } from './note-utils';
 import {
   chooseObsidianVault,
@@ -2194,6 +2195,59 @@ function TabButton({
   );
 }
 
+function EvidenceMarkdown({
+  markdown,
+  resetKey,
+}: {
+  markdown: string;
+  resetKey?: string;
+}) {
+  const sections = useMemo(
+    () => splitOriginalEvidenceMarkdown(markdown),
+    [markdown],
+  );
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [resetKey]);
+
+  if (!sections) return <MarkdownView markdown={markdown} />;
+
+  const countLabel =
+    sections.evidenceCount > 0
+      ? `${sections.evidenceCount} 条逐字引用`
+      : '查看逐字引用';
+
+  return (
+    <View>
+      {sections.body ? <MarkdownView markdown={sections.body} /> : null}
+      <View style={styles.collapsedEvidenceSection}>
+        <Pressable
+          accessibilityLabel={`原始证据，${countLabel}，${expanded ? '收起' : '展开'}`}
+          accessibilityRole="button"
+          onPress={() => setExpanded((current) => !current)}
+          style={({ pressed }) => [
+            styles.collapsedEvidenceHeader,
+            pressed && styles.pressed,
+          ]}
+        >
+          <View>
+            <Text style={styles.sourceSectionLabel}>原始证据</Text>
+            <Text style={styles.evidenceCount}>{countLabel}</Text>
+          </View>
+          <Text style={styles.evidenceChevron}>{expanded ? '⌃' : '⌄'}</Text>
+        </Pressable>
+        {expanded && sections.evidence ? (
+          <View style={styles.collapsedEvidenceBody}>
+            <MarkdownView markdown={sections.evidence} />
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function NoteEditor({
   currentTheme,
   note,
@@ -2358,7 +2412,7 @@ function NoteEditor({
                 {title}
               </Text>
               <View style={styles.editorMarkdownBody}>
-                <MarkdownView markdown={content} />
+                <EvidenceMarkdown markdown={content} resetKey={note?.id} />
               </View>
             </View>
           )}
@@ -2952,7 +3006,10 @@ function RelatedSourceNote({
             </Text>
           ) : null}
           <View style={styles.editorMarkdownBody}>
-            <MarkdownView markdown={note?.content ?? ''} />
+            <EvidenceMarkdown
+              markdown={note?.content ?? ''}
+              resetKey={note?.id}
+            />
           </View>
           {note?.sourceUrl ? (
             <Pressable
@@ -3082,11 +3139,13 @@ function OrganizationReview({
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [editingMarkdown, setEditingMarkdown] = useState(false);
+  const [evidenceExpanded, setEvidenceExpanded] = useState(false);
 
   useEffect(() => {
     setTitle(draft?.title ?? '');
     setContent(normalizeEvidenceMarkerLabels(draft?.content ?? ''));
     setEditingMarkdown(false);
+    setEvidenceExpanded(false);
   }, [draft?.id]);
 
   return (
@@ -3207,23 +3266,40 @@ function OrganizationReview({
             )}
             {draft.citations.length > 0 ? (
               <View style={styles.evidenceSection}>
-                <View style={styles.evidenceHeadingRow}>
-                  <Text style={styles.sourceSectionLabel}>原始证据</Text>
-                  <Text style={styles.evidenceCount}>
-                    {draft.citations.length} 条逐字引用
-                  </Text>
-                </View>
-                {draft.citations.map((citation, index) => (
-                  <View key={citation.id} style={styles.evidenceCard}>
-                    <Text style={styles.evidenceIndex}>证据 {index + 1}</Text>
-                    <Text selectable style={styles.evidenceQuote}>
-                      {citation.quote}
+                <Pressable
+                  accessibilityLabel={`原始证据，${draft.citations.length} 条逐字引用，${evidenceExpanded ? '收起' : '展开'}`}
+                  accessibilityRole="button"
+                  onPress={() => setEvidenceExpanded((current) => !current)}
+                  style={({ pressed }) => [
+                    styles.evidenceHeadingRow,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View>
+                    <Text style={styles.sourceSectionLabel}>原始证据</Text>
+                    <Text style={styles.evidenceCount}>
+                      {draft.citations.length} 条逐字引用
                     </Text>
                   </View>
-                ))}
-                <Text style={styles.evidenceHint}>
-                  这些片段已由服务端核对，均可在抓取到的网页正文中找到。
-                </Text>
+                  <Text style={styles.evidenceChevron}>
+                    {evidenceExpanded ? '⌃' : '⌄'}
+                  </Text>
+                </Pressable>
+                {evidenceExpanded ? (
+                  <>
+                    {draft.citations.map((citation, index) => (
+                      <View key={citation.id} style={styles.evidenceCard}>
+                        <Text style={styles.evidenceIndex}>证据 {index + 1}</Text>
+                        <Text selectable style={styles.evidenceQuote}>
+                          {citation.quote}
+                        </Text>
+                      </View>
+                    ))}
+                    <Text style={styles.evidenceHint}>
+                      这些片段已由服务端核对，均可在抓取到的网页正文中找到。
+                    </Text>
+                  </>
+                ) : null}
               </View>
             ) : null}
             {error ? <Text style={styles.obsidianError}>{error}</Text> : null}
@@ -6303,14 +6379,50 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
   evidenceHeadingRow: {
+    minHeight: 58,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
   },
   evidenceCount: {
+    marginTop: 4,
     color: colors.faint,
     fontSize: 10,
     fontWeight: '700',
+  },
+  evidenceChevron: {
+    color: colors.accent,
+    fontSize: 19,
+    fontWeight: '800',
+  },
+  collapsedEvidenceSection: {
+    marginTop: 18,
+  },
+  collapsedEvidenceHeader: {
+    minHeight: 58,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
+  },
+  collapsedEvidenceBody: {
+    marginTop: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
   },
   evidenceCard: {
     marginTop: 9,
