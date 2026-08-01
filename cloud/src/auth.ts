@@ -181,22 +181,35 @@ export async function authenticateAccessToken(
     ai_mode: AuthenticatedUser['aiMode'];
     created_at: Date;
   }>(
-    `UPDATE user_sessions AS session
-     SET last_seen_at = now()
-     FROM users AS account, devices AS device
-     WHERE session.token_hash = $1
-       AND session.user_id = account.id
-       AND session.user_id = device.user_id
-       AND session.device_id = device.id
-       AND session.expires_at > now()
-       AND session.revoked_at IS NULL
-       AND device.revoked_at IS NULL
-       AND account.status = 'active'
-     RETURNING
-       session.user_id,
-       session.device_id,
-       account.ai_mode,
-       account.created_at`,
+    `WITH authenticated AS (
+       UPDATE user_sessions AS session
+       SET last_seen_at = now()
+       FROM users AS account, devices AS device
+       WHERE session.token_hash = $1
+         AND session.user_id = account.id
+         AND session.user_id = device.user_id
+         AND session.device_id = device.id
+         AND session.expires_at > now()
+         AND session.revoked_at IS NULL
+         AND device.revoked_at IS NULL
+         AND account.status = 'active'
+       RETURNING
+         session.user_id,
+         session.device_id,
+         account.ai_mode,
+         account.created_at
+     ), touched_device AS (
+       UPDATE devices AS device
+       SET last_seen_at = now()
+       FROM authenticated
+       WHERE device.user_id = authenticated.user_id
+         AND device.id = authenticated.device_id
+       RETURNING device.id
+     )
+     SELECT authenticated.*
+     FROM authenticated
+     INNER JOIN touched_device
+       ON touched_device.id = authenticated.device_id`,
     [hashSecret(token)],
   );
   const row = result.rows[0];

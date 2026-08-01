@@ -18,7 +18,10 @@ import type {
   OrganizationResponse,
   ThemeMergeResponse,
 } from './ai-organize';
-import { REMIND_DATABASE_SCHEMA_VERSION } from './persistence-contract';
+import {
+  LINK_AUTOMATION_MODE_SETTING,
+  REMIND_DATABASE_SCHEMA_VERSION,
+} from './persistence-contract';
 
 // v16 is intentionally schema-neutral. It preserves migration monotonicity
 // after the discarded local-media prototype without storing media in SQLite.
@@ -59,6 +62,39 @@ export type RecallSuggestion = {
   anchor: Note;
   reason: string;
 };
+
+export type LinkAutomationMode =
+  | 'review'
+  | 'auto_note'
+  | 'auto_note_and_theme';
+
+export async function getLinkAutomationMode(
+  db: SQLiteDatabase,
+): Promise<LinkAutomationMode> {
+  const row = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM app_settings WHERE key = ?',
+    LINK_AUTOMATION_MODE_SETTING,
+  );
+  return row?.value === 'auto_note' || row?.value === 'auto_note_and_theme'
+    ? row.value
+    : 'review';
+}
+
+export async function setLinkAutomationMode(
+  db: SQLiteDatabase,
+  mode: LinkAutomationMode,
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       value = excluded.value,
+       updated_at = excluded.updated_at`,
+    LINK_AUTOMATION_MODE_SETTING,
+    mode,
+    new Date().toISOString(),
+  );
+}
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL');
@@ -723,7 +759,7 @@ export async function listNotesForOrganization(
          WHERE ois.note_id = n.id
        )
      ORDER BY n.created_at ASC
-     LIMIT 80`,
+     LIMIT 20`,
     sinceIso,
   );
   return rows.map(mapNoteRow);
@@ -741,6 +777,7 @@ export async function listLinksReadyForOrganization(
        AND n.record_type = 'capture'
        AND n.status IN ('saved', 'failed')
        AND n.source_url IS NOT NULL
+       AND length(trim(COALESCE(n.source_page_text, ''))) >= 20
        AND length(trim(COALESCE(n.user_context, ''))) >= 4
        AND NOT EXISTS (
          SELECT 1 FROM organize_draft_sources ods
@@ -1053,7 +1090,7 @@ function buildAcceptedContent(
     sections.push(`## 我的保存意图\n\n${userContext.trim()}`);
   }
   sections.push(content.trim());
-  if (contentKind === 'link' && citations.length > 0) {
+  if (citations.length > 0) {
     const evidence = citations
       .map((quote, index) => {
         const lines = quote
@@ -1066,7 +1103,9 @@ function buildAcceptedContent(
     const source = sourceUrl
       ? `\n\n[打开原文：${sourceTitle?.trim() || sourceUrl}](${sourceUrl})`
       : '';
-    sections.push(`## 原始证据\n\n${evidence}${source}`);
+    sections.push(
+      `${contentKind === 'link' ? '## 原始证据' : '## 来源记录'}\n\n${evidence}${source}`,
+    );
   }
   return sections.filter(Boolean).join('\n\n');
 }
@@ -1389,8 +1428,22 @@ export async function getRecallSuggestion(
       getNoteById(db, active.anchor_note_id),
     ]);
     if (memory && anchor) {
-      return { memory, anchor, reason: active.reason };
+      const relation = await recallRelation(db, anchor, memory);
+      if (relation) {
+        return {
+          memory,
+          anchor,
+          reason: `因为你最近记下「${shortRecallTitle(anchor.title)}」，${relation.reason}`,
+        };
+      }
     }
+    await db.runAsync(
+      `UPDATE recall_states
+       SET status = 'dismissed', updated_at = ?
+       WHERE memory_note_id = ? AND status = 'shown'`,
+      now.toISOString(),
+      active.memory_note_id,
+    );
   }
 
   const sevenDaysAgo = new Date(
@@ -1429,7 +1482,8 @@ export async function getRecallSuggestion(
       (item) =>
         item.note.createdAt < twoDaysAgo &&
         item.note.createdAt < anchor.createdAt &&
-        !blocked.has(item.note.id),
+        !blocked.has(item.note.id) &&
+        compareNotesForRecall(anchor, item.note) !== null,
     );
     if (!match) continue;
 
@@ -1553,9 +1607,55 @@ const RECALL_STOPWORDS = new Set([
   '进行',
   '问题',
   '观点',
+  '用户',
+  '与用户',
+  '方法',
+  '方式',
+  '主题',
+  '事情',
+  '自己',
+  '觉得',
+  'ai',
+  '视频',
+  '阅读',
+  '工作',
+  '知识',
 ]);
 
-function compareNotesForRecall(
+async function recallRelation(
+  db: SQLiteDatabase,
+  current: Note,
+  candidate: Note,
+): Promise<{
+  reason: string;
+  relation: RelatedMemory['relation'];
+  score: number;
+} | null> {
+  const [currentId, candidateId] = await Promise.all([
+    resolveCanonicalSourceNoteId(db, current.id),
+    resolveCanonicalSourceNoteId(db, candidate.id),
+  ]);
+  const [currentTheme, candidateTheme] = await Promise.all([
+    getSourceThemeAssignment(db, currentId),
+    getSourceThemeAssignment(db, candidateId),
+  ]);
+  if (
+    currentTheme &&
+    candidateTheme &&
+    currentTheme.themeId === candidateTheme.themeId
+  ) {
+    const semanticRelation = compareNotesForRecall(current, candidate);
+    if (!semanticRelation) return null;
+    return {
+      reason: `同属「${currentTheme.themeTitle}」主题`,
+      relation: 'same-theme',
+      score: 100,
+    };
+  }
+  return compareNotesForRecall(current, candidate);
+}
+
+export function compareNotesForRecall(
   current: Note,
   candidate: Note,
 ): {
@@ -1589,17 +1689,26 @@ function compareNotesForRecall(
       (keyword, index, keywords) =>
         !keywords.slice(0, index).some((other) => other.includes(keyword)),
     );
-  const strongest = sharedKeywords[0];
-  if (!strongest || (strongest.length === 2 && sharedKeywords.length < 2)) {
+  const meaningfulKeywords = sharedKeywords.filter(
+    (keyword) => keyword.length >= 3,
+  );
+  const strongest = meaningfulKeywords[0];
+  if (
+    !strongest ||
+    (strongest.length < 4 && meaningfulKeywords.length < 2)
+  ) {
     return null;
   }
   return {
-    reason: `都提到了「${sharedKeywords.slice(0, 2).join('、')}」`,
+    reason: `都提到了「${meaningfulKeywords.slice(0, 2).join('、')}」`,
     relation: 'shared-keywords',
     score:
       35 +
       Math.min(
-        sharedKeywords.reduce((total, keyword) => total + keyword.length, 0),
+        meaningfulKeywords.reduce(
+          (total, keyword) => total + keyword.length,
+          0,
+        ),
         24,
       ),
   };

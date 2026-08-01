@@ -3,6 +3,7 @@ import type { Note, NoteContentKind } from './types';
 
 export type OrganizationSource = {
   id: string;
+  title: string;
   content: string;
   createdAt: string;
 };

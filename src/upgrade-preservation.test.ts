@@ -20,7 +20,11 @@ vi.mock('expo-secure-store', () => ({
 }));
 
 import { getCloudAccessToken } from './cloud-auth';
-import { migrateDatabase } from './database';
+import {
+  getLinkAutomationMode,
+  migrateDatabase,
+  setLinkAutomationMode,
+} from './database';
 import {
   cloudSessionStorageKey,
   OBSIDIAN_DIRECTORY_NAME_SETTING,
@@ -118,6 +122,19 @@ describe('ReMind in-place upgrade preservation', () => {
     } finally {
       await rm(fixtureDirectory, { recursive: true, force: true });
     }
+  });
+
+  it('stores link automation as an explicit device preference', async () => {
+    const database = new DatabaseSync(':memory:');
+    const adapter = sqliteAdapter(database);
+    await migrateDatabase(adapter);
+
+    await expect(getLinkAutomationMode(adapter)).resolves.toBe('review');
+    await setLinkAutomationMode(adapter, 'auto_note_and_theme');
+    await expect(getLinkAutomationMode(adapter)).resolves.toBe(
+      'auto_note_and_theme',
+    );
+    database.close();
   });
 
   it('reads existing SecureStore values after the code upgrade', async () => {

@@ -24,6 +24,7 @@ import {
   type CloudAiProvider,
   type CloudAiSettings as CloudAiSettingsValue,
 } from './cloud-ai-settings';
+import type { LinkAutomationMode } from './database';
 import { colors } from './theme';
 
 const PROVIDERS: Array<{
@@ -47,10 +48,14 @@ const PROVIDERS: Array<{
 ];
 
 export function CloudAiSettings({
+  linkAutomationMode,
   onClose,
+  onLinkAutomationModeChange,
   visible,
 }: {
+  linkAutomationMode: LinkAutomationMode;
   onClose: () => void;
+  onLinkAutomationModeChange: (mode: LinkAutomationMode) => Promise<void>;
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -60,7 +65,9 @@ export function CloudAiSettings({
     zhipu: '',
   });
   const [loading, setLoading] = useState(false);
-  const [acting, setActing] = useState<CloudAiProvider | 'mode' | null>(null);
+  const [acting, setActing] = useState<
+    CloudAiProvider | 'mode' | 'automation' | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [byokSelected, setByokSelected] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -179,6 +186,19 @@ export function CloudAiSettings({
     }
   };
 
+  const changeLinkAutomation = async (mode: LinkAutomationMode) => {
+    if (acting || mode === linkAutomationMode) return;
+    setActing('automation');
+    setError(null);
+    try {
+      await onLinkAutomationModeChange(mode);
+    } catch {
+      setError('自动整理偏好暂时没有保存成功，请稍后重试。');
+    } finally {
+      setActing(null);
+    }
+  };
+
   return (
     <Modal
       animationType="slide"
@@ -255,6 +275,35 @@ export function CloudAiSettings({
                   不保存完整值，服务端加密存储，之后只返回末四位。
                 </Text>
               </View>
+
+              <Text style={styles.sectionTitle}>链接自动整理</Text>
+              <Text style={styles.sectionCopy}>
+                只处理已经取得可追溯正文或视频转写的链接。自动模式会直接使用你的
+                DeepSeek Key；原始链接和证据仍会保留。
+              </Text>
+              <AiModeCard
+                active={linkAutomationMode === 'review'}
+                description="保持逐篇生成、审核和确认，不自动创建正式笔记。"
+                disabled={Boolean(acting)}
+                label="每次由我审核"
+                onPress={() => void changeLinkAutomation('review')}
+              />
+              <AiModeCard
+                active={linkAutomationMode === 'auto_note'}
+                description="链接处理完成后自动生成正式来源笔记；主题仍由你决定。"
+                disabled={Boolean(acting)}
+                label="自动生成笔记"
+                onPress={() => void changeLinkAutomation('auto_note')}
+              />
+              <AiModeCard
+                active={linkAutomationMode === 'auto_note_and_theme'}
+                description="自动生成笔记并接受主题建议；之后可在来源笔记中随时重新归类。"
+                disabled={Boolean(acting)}
+                label="自动生成并归入主题"
+                onPress={() =>
+                  void changeLinkAutomation('auto_note_and_theme')
+                }
+              />
 
               <Text style={styles.sectionTitle}>你的 API Key</Text>
               {PROVIDERS.map((item) => {
@@ -612,6 +661,13 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontSize: 14,
     fontWeight: '800',
+  },
+  sectionCopy: {
+    marginTop: -4,
+    marginBottom: 12,
+    color: colors.muted,
+    fontSize: 11,
+    lineHeight: 17,
   },
   providerCard: {
     marginBottom: 12,

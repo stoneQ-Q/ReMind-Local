@@ -30,6 +30,7 @@ import {
   dismissOrganizationDraft,
   dismissThemeMergeDraft,
   getOriginalCaptureForNote,
+  getLinkAutomationMode,
   getThemeOverview,
   getRecallSuggestion,
   getSourceThemeAssignment,
@@ -49,12 +50,14 @@ import {
   restoreNote,
   saveOrganizationResponse,
   saveThemeMergeDraft,
+  setLinkAutomationMode as persistLinkAutomationMode,
   updateNote,
   updateNoteStatus,
   updateThemeOverview,
   type SourceThemeAssignment,
   type RelatedMemory,
   type RecallSuggestion,
+  type LinkAutomationMode,
   type ThemeSourceContribution,
   type ThemeSourceSummary,
 } from './database';
@@ -235,6 +238,9 @@ export function ReMindApp() {
   );
   const [serviceModeReady, setServiceModeReady] = useState(false);
   const [cloudOverlay, setCloudOverlay] = useState<CloudOverlay>(null);
+  const [linkAutomationMode, setLinkAutomationMode] =
+    useState<LinkAutomationMode>('review');
+  const [linkAutomationReady, setLinkAutomationReady] = useState(false);
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -270,11 +276,14 @@ export function ReMindApp() {
     return status;
   }, [db]);
 
-  const processReadyLinks = useCallback(async () => {
-    if (getActiveReMindAppMode() !== 'local') return;
+  const processReadyLinks = useCallback(async (
+    requestedMode?: LinkAutomationMode,
+  ) => {
+    const mode = requestedMode ?? linkAutomationMode;
+    if (getActiveReMindAppMode() === 'cloud' && mode === 'review') return;
     if (linkAutoProcessing.current) return;
     linkAutoProcessing.current = true;
-    let generated = false;
+    let reviewGenerated = false;
     try {
       const links = await listLinksReadyForOrganization(db);
       for (const note of links) {
@@ -285,14 +294,66 @@ export function ReMindApp() {
             note,
             note.userContext,
           );
-          await saveOrganizationResponse(db, response);
+          const drafts = await saveOrganizationResponse(db, response);
           await updateNoteStatus(db, note.id, 'ready');
-          generated = true;
+          const draft = drafts.find((item) => item.sourceIds.includes(note.id));
+          if (mode === 'review') {
+            reviewGenerated = Boolean(draft) || reviewGenerated;
+            continue;
+          }
+          if (!draft) continue;
+          const sourceNote = await acceptOrganizationDraft(
+            db,
+            draft.id,
+            draft.title,
+            draft.content,
+          );
+          if (obsidianStatus.configured) {
+            await requestObsidianExport(db, sourceNote.id);
+          }
+          if (mode === 'auto_note_and_theme') {
+            try {
+              const [themes, overviews] = await Promise.all([
+                listThemeNotes(db),
+                listThemeOverviewMap(db),
+              ]);
+              const suggestion = await requestThemeMerge(
+                sourceNote,
+                themes,
+                overviews,
+              );
+              const themeDrafts = await saveThemeMergeDraft(
+                db,
+                sourceNote.id,
+                suggestion,
+              );
+              const themeDraft = themeDrafts.find(
+                (item) => item.sourceNoteId === sourceNote.id,
+              );
+              if (themeDraft) {
+                const theme = await acceptThemeMergeDraft(
+                  db,
+                  themeDraft.id,
+                  themeDraft.patch,
+                  themeDraft.overview,
+                  themeDraft.themeNoteId,
+                  themeDraft.themeTitle,
+                );
+                if (obsidianStatus.configured) {
+                  await requestObsidianExport(db, theme.id);
+                }
+              }
+            } catch {
+              setThemeMergeError(
+                '来源笔记已自动保存，但主题自动归类暂时失败，可以稍后从来源笔记重试。',
+              );
+            }
+          }
         } catch {
           await updateNoteStatus(db, note.id, 'failed');
         }
       }
-      if (generated) {
+      if (reviewGenerated) {
         const drafts = await listPendingOrganizationDrafts(db);
         setOrganizeDrafts(drafts);
         setOrganizeVisible(true);
@@ -300,11 +361,21 @@ export function ReMindApp() {
           Haptics.NotificationFeedbackType.Success,
         );
       }
+      setOrganizeDrafts(await listPendingOrganizationDrafts(db));
+      setThemeMergeDrafts(await listPendingThemeMergeDrafts(db));
+      setThemeNotes(await listThemeNotes(db));
       await loadNotes('');
+      if (obsidianStatus.configured) void syncObsidian();
     } finally {
       linkAutoProcessing.current = false;
     }
-  }, [db, loadNotes]);
+  }, [
+    db,
+    linkAutomationMode,
+    loadNotes,
+    obsidianStatus.configured,
+    syncObsidian,
+  ]);
 
   const startDailyOrganization = useCallback(async () => {
     if (organizing) return;
@@ -325,7 +396,8 @@ export function ReMindApp() {
       const response = await requestDailyOrganization(
         sources.map((note) => ({
           id: note.id,
-          content: note.content,
+          title: note.title,
+          content: note.content.slice(0, 3_000),
           createdAt: note.createdAt,
         })),
       );
@@ -395,6 +467,9 @@ export function ReMindApp() {
     void listPendingThemeMergeDrafts(db).then(setThemeMergeDrafts);
     void listThemeNotes(db).then(setThemeNotes);
     void listRecentlyDeletedThemes(db).then(setDeletedThemes);
+    void getLinkAutomationMode(db)
+      .then(setLinkAutomationMode)
+      .finally(() => setLinkAutomationReady(true));
   }, [db]);
 
   useEffect(() => {
@@ -414,10 +489,14 @@ export function ReMindApp() {
   }, [db, notes.length, notes[0]?.updatedAt, screen]);
 
   useEffect(() => {
-    if (!serviceModeReady || initialLinkScanCompleted.current) return;
+    if (
+      !serviceModeReady ||
+      !linkAutomationReady ||
+      initialLinkScanCompleted.current
+    ) return;
     initialLinkScanCompleted.current = true;
     void processReadyLinks();
-  }, [processReadyLinks, serviceModeReady]);
+  }, [linkAutomationReady, processReadyLinks, serviceModeReady]);
 
   useEffect(() => {
     void getObsidianSyncStatus(db).then((status) => {
@@ -458,7 +537,7 @@ export function ReMindApp() {
           getWechatProcessingLinks(),
         ]);
         setWechatProcessingLinks(processingLinks);
-        if (imported > 0) {
+        if (imported > 0 || linkAutomationMode !== 'review') {
           await loadNotes('');
           void syncObsidian();
           void processReadyLinks();
@@ -474,6 +553,7 @@ export function ReMindApp() {
   }, [
     db,
     loadNotes,
+    linkAutomationMode,
     processReadyLinks,
     syncObsidian,
     wechatConnection?.bound,
@@ -1660,6 +1740,7 @@ export function ReMindApp() {
       />
 
       <CloudAiSettings
+        linkAutomationMode={linkAutomationMode}
         onClose={() => {
           setCloudOverlay(null);
           void refreshCloudAccount().catch(() => {
@@ -1667,6 +1748,11 @@ export function ReMindApp() {
               '暂时无法刷新云端账号，手机里的笔记不受影响。',
             );
           });
+        }}
+        onLinkAutomationModeChange={async (mode) => {
+          await persistLinkAutomationMode(db, mode);
+          setLinkAutomationMode(mode);
+          if (mode !== 'review') void processReadyLinks(mode);
         }}
         visible={cloudOverlay === 'ai'}
       />

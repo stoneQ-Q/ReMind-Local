@@ -10,6 +10,7 @@ export const REMIND_APPLICATION_ID = 'app.remind.notes';
 
 export const OBSIDIAN_DIRECTORY_URI_SETTING = 'obsidian.directory_uri';
 export const OBSIDIAN_DIRECTORY_NAME_SETTING = 'obsidian.directory_name';
+export const LINK_AUTOMATION_MODE_SETTING = 'links.automation_mode';
 export const REMIND_SERVICE_MODE_STORAGE_KEY = 'remind.service.mode.v1';
 
 const WECHAT_DEVICE_ID_STORAGE_KEY = 'remind.wechat.device-id';

@@ -7,7 +7,7 @@ import { resolveMediaProviderCredential } from './media-provider-routing.js';
 const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
 const MODEL = 'deepseek-v4-flash';
 
-type Source = { id: string; content: string; createdAt: string };
+type Source = { id: string; title: string; content: string; createdAt: string };
 type Citation = {
   sourceId: string;
   quote: string;
@@ -38,13 +38,50 @@ export async function organizeDaily(
 ): Promise<{ drafts: Draft[]; ignoredSourceIds: string[]; model: string }> {
   const sources = parseSources(record(body)?.sources);
   if (!sources) throw new OrganizationError('invalid_request');
-  const raw = await generateJson(
-    await apiKey(pool, cipher, userId),
-    DAILY_PROMPT,
-    JSON.stringify({ sources }),
-    signal,
+  const evidenceBySource = new Map(
+    sources
+      .map(
+        (source) =>
+          [source.id, buildEvidence(source.content).slice(0, 4)] as const,
+      )
+      .filter(([, evidence]) => evidence.length > 0),
   );
-  return { ...validateDrafts(raw, sources), model: MODEL };
+  const request = JSON.stringify({
+    sources,
+    evidenceCandidates: sources.map((source) => ({
+      sourceId: source.id,
+      items: (evidenceBySource.get(source.id) ?? []).map((item) => ({
+          id: item.id,
+          text: item.quote,
+        })),
+    })),
+  });
+  const key = await apiKey(pool, cipher, userId);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const raw = await generateJson(
+        key,
+        attempt === 0 ? DAILY_PROMPT : DAILY_RETRY_PROMPT,
+        request,
+        signal,
+      );
+      const validated = validateDrafts(raw, sources, evidenceBySource);
+      if (validated.drafts.length > 1) {
+        throw new OrganizationError('ai_invalid_response', 502);
+      }
+      return { ...validated, model: MODEL };
+    } catch (error) {
+      if (
+        attempt === 0 &&
+        error instanceof OrganizationError &&
+        error.code === 'ai_invalid_response'
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new OrganizationError('ai_invalid_response', 502);
 }
 
 export async function organizeLink(
@@ -78,7 +115,12 @@ export async function organizeLink(
   const evidence = buildEvidence(page.text);
   if (!evidence.length) throw new OrganizationError('link_unavailable', 422);
   const sources: Source[] = [
-    { id: sourceId, content: `${userContext}\n${url}`, createdAt: new Date().toISOString() },
+    {
+      id: sourceId,
+      title: page.title,
+      content: `${userContext}\n${url}`,
+      createdAt: new Date().toISOString(),
+    },
   ];
   const key = await apiKey(pool, cipher, userId);
   const request = JSON.stringify({
@@ -222,8 +264,16 @@ function validateDrafts(
     if (!item) throw new OrganizationError('ai_invalid_response', 502);
     const sourceIds = stringArray(item.sourceIds, sources.length, 128).filter((id) => allowed.has(id));
     if (!sourceIds.length) throw new OrganizationError('ai_invalid_response', 502);
-    const citations = evidenceBySource.size
-      ? validateCitations(item.citations, sourceIds, evidenceBySource)
+    const selectedEvidence = new Map(
+      sourceIds
+        .map((sourceId) => [sourceId, evidenceBySource.get(sourceId)] as const)
+        .filter(
+          (entry): entry is readonly [string, ReturnType<typeof buildEvidence>] =>
+            Boolean(entry[1]?.length),
+        ),
+    );
+    const citations = selectedEvidence.size
+      ? validateCitations(item.citations, sourceIds, selectedEvidence)
       : [];
     return {
       title: requiredText(item.title, 80),
@@ -281,15 +331,16 @@ function buildEvidence(text: string): Array<{ id: string; quote: string; startOf
 }
 
 function parseSources(value: unknown): Source[] | null {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 60) return null;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 20) return null;
   const parsed: Source[] = [];
   for (const raw of value) {
     const item = record(raw);
     const id = shortText(item?.id, 128);
-    const content = shortText(item?.content, 12_000);
+    const title = shortText(item?.title, 300, true) ?? '';
+    const content = shortText(item?.content, 3_000);
     const createdAt = shortText(item?.createdAt, 64);
     if (!id || !content || !createdAt) return null;
-    parsed.push({ id, content, createdAt });
+    parsed.push({ id, title, content, createdAt });
   }
   return parsed;
 }
@@ -343,7 +394,8 @@ function record(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-const DAILY_PROMPT = `你是 ReMind 的每日整理助手。只依据输入碎片，最多生成 3 篇中文 Markdown 整理稿；测试词和无上下文短句放入 ignoredSourceIds。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[]}],"ignoredSourceIds":[]}。不要额外解释。`;
+const DAILY_PROMPT = `你是 ReMind 的每日综合整理助手。你的任务不是逐条改写记录，而是比较同一天的多条记录，找出共同主题、相互支持、补充、冲突或时间上的联系。只依据输入 sources 和 evidenceCandidates：有两条以上值得联系的记录时，只生成 1 篇跨记录中文 Markdown 综合稿；纯测试词、无上下文短句和无法形成理解的碎片放入 ignoredSourceIds。content 使用“今日脉络、已记录的事实、基于记录的联系、仍待回答的问题”四类小节；事实必须能回到来源，推断必须明确写成基于记录的推断，开放问题不得写成既定结论，不得为了显得有探索而扩写。sourceIds 列出实际使用的全部来源；citations 从对应 sourceId 的真实 evidenceId 中选择，不得改写证据。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[""],"citations":[{"sourceId":"","evidenceId":"E1"}]}],"ignoredSourceIds":[]}。没有足够内容时 drafts 可为空。不要额外解释。`;
+const DAILY_RETRY_PROMPT = `${DAILY_PROMPT}\n上一次输出未通过结构校验。请严格只输出零篇或一篇 draft；sourceIds 和 citation.sourceId 必须逐字复制输入 ID；citation.evidenceId 只能从该来源的 evidenceCandidates 中选择；不要把每条来源分别写成独立文档。`;
 const LINK_PROMPT = `你是 ReMind 的链接整理助手。只依据 userContext、页面信息和 evidenceCandidates，围绕用户保存意图生成且只生成 1 篇中文 Markdown 笔记，包含内容概括、值得留下的内容、与我的关注点、原始来源。sourceIds 只能含 sourceId；citations 必须选择真实 evidenceId，1 到 6 条，不得改写证据。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[""],"citations":[{"sourceId":"","evidenceId":"E1"}]}],"ignoredSourceIds":[]}。不要额外解释。`;
 const LINK_RETRY_PROMPT = `${LINK_PROMPT}\n上一次输出未通过结构校验。请严格逐字段遵循示例：只输出一个 drafts 元素；sourceIds 和每条 citation.sourceId 必须逐字复制输入 sourceId；citation.evidenceId 只能从输入 evidenceCandidates 的 id 中选择；title、content 均不得为空。`;
 const THEME_PROMPT = `你是 ReMind 的主题笔记编辑助手。只依据输入，判断来源应加入哪个已有主题，或 themeId 为 null 新建长期主题。patch 只写增量，overview 写合并后的理解，冲突单列。输出 JSON：{"themeId":null,"themeTitle":"","rationale":"","patch":"","overview":"","conflicts":[]}。不要额外解释。`;
