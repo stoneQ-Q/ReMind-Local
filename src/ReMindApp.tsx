@@ -6280,7 +6280,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  homeQuickCapture: {
+  quickCapture: {
     flex: 1,
     backgroundColor: colors.paper,
   },
@@ -7578,7 +7578,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
   },
-  quickCapture: {
+  homeQuickCapture: {
     minHeight: 66,
     marginHorizontal: 18,
     paddingHorizontal: 14,
