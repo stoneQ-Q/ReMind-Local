@@ -80,22 +80,46 @@ export async function organizeLink(
   const sources: Source[] = [
     { id: sourceId, content: `${userContext}\n${url}`, createdAt: new Date().toISOString() },
   ];
-  const raw = await generateJson(
-    await apiKey(pool, cipher, userId),
-    LINK_PROMPT,
-    JSON.stringify({
-      sourceId,
-      url,
-      userContext,
-      page: { title: page.title, site: page.site },
-      evidenceCandidates: evidence.map((item) => ({ id: item.id, text: item.quote })),
-    }),
-    signal,
-  );
-  return {
-    ...validateDrafts(raw, sources, new Map([[sourceId, evidence]])),
-    model: MODEL,
-  };
+  const key = await apiKey(pool, cipher, userId);
+  const request = JSON.stringify({
+    sourceId,
+    url,
+    userContext,
+    page: { title: page.title, site: page.site },
+    evidenceCandidates: evidence.map((item) => ({ id: item.id, text: item.quote })),
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const raw = await generateJson(
+        key,
+        attempt === 0 ? LINK_PROMPT : LINK_RETRY_PROMPT,
+        request,
+        signal,
+      );
+      const validated = validateDrafts(
+        raw,
+        sources,
+        new Map([[sourceId, evidence]]),
+      );
+      if (validated.drafts.length !== 1) {
+        throw new OrganizationError('ai_invalid_response', 502);
+      }
+      return {
+        ...validated,
+        model: MODEL,
+      };
+    } catch (error) {
+      if (
+        attempt === 0 &&
+        error instanceof OrganizationError &&
+        error.code === 'ai_invalid_response'
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new OrganizationError('ai_invalid_response', 502);
 }
 
 export async function suggestThemeMerge(
@@ -321,4 +345,5 @@ function record(value: unknown): Record<string, unknown> | null {
 
 const DAILY_PROMPT = `你是 ReMind 的每日整理助手。只依据输入碎片，最多生成 3 篇中文 Markdown 整理稿；测试词和无上下文短句放入 ignoredSourceIds。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[]}],"ignoredSourceIds":[]}。不要额外解释。`;
 const LINK_PROMPT = `你是 ReMind 的链接整理助手。只依据 userContext、页面信息和 evidenceCandidates，围绕用户保存意图生成且只生成 1 篇中文 Markdown 笔记，包含内容概括、值得留下的内容、与我的关注点、原始来源。sourceIds 只能含 sourceId；citations 必须选择真实 evidenceId，1 到 6 条，不得改写证据。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[""],"citations":[{"sourceId":"","evidenceId":"E1"}]}],"ignoredSourceIds":[]}。不要额外解释。`;
+const LINK_RETRY_PROMPT = `${LINK_PROMPT}\n上一次输出未通过结构校验。请严格逐字段遵循示例：只输出一个 drafts 元素；sourceIds 和每条 citation.sourceId 必须逐字复制输入 sourceId；citation.evidenceId 只能从输入 evidenceCandidates 的 id 中选择；title、content 均不得为空。`;
 const THEME_PROMPT = `你是 ReMind 的主题笔记编辑助手。只依据输入，判断来源应加入哪个已有主题，或 themeId 为 null 新建长期主题。patch 只写增量，overview 写合并后的理解，冲突单列。输出 JSON：{"themeId":null,"themeTitle":"","rationale":"","patch":"","overview":"","conflicts":[]}。不要额外解释。`;
