@@ -35,6 +35,7 @@ import {
   getRecallSuggestion,
   getSourceThemeAssignment,
   listLinksReadyForOrganization,
+  listNotesForActivity,
   listNotesForOrganization,
   listPendingOrganizationDrafts,
   listNotes,
@@ -72,6 +73,13 @@ import {
   normalizeEvidenceMarkerLabels,
 } from './MarkdownView';
 import { splitOriginalEvidenceMarkdown } from './evidence-markdown';
+import {
+  buildMemoryTrail,
+  filterLibraryNotes,
+  type LibraryFilter,
+  type LibraryTab,
+  type MemoryTrail,
+} from './library-layout';
 import { formatNoteTime, notePreview } from './note-utils';
 import {
   chooseObsidianVault,
@@ -125,25 +133,15 @@ import {
   type ReMindAppMode,
 } from './service-contract';
 
-type Screen = 'inbox' | 'search';
+type Screen = 'inbox' | 'library' | 'search';
 type CloudOverlay = 'ai' | 'billing' | 'tasks' | null;
-type NoteCategory =
-  | 'inbox'
-  | 'all'
-  | 'remind'
-  | 'wechat'
-  | 'synthesis'
-  | 'theme'
-  | 'link';
 
-const NOTE_CATEGORIES: { value: NoteCategory; label: string }[] = [
-  { value: 'inbox', label: '收件箱' },
-  { value: 'all', label: '全部' },
-  { value: 'remind', label: '随手记' },
+const LIBRARY_FILTERS: { value: LibraryFilter; label: string }[] = [
+  { value: 'all', label: '全部来源' },
+  { value: 'manual', label: 'ReMind 与系统分享' },
   { value: 'wechat', label: '微信' },
-  { value: 'synthesis', label: '整理笔记' },
-  { value: 'theme', label: '主题' },
   { value: 'link', label: '链接' },
+  { value: 'failed', label: '处理失败' },
 ];
 
 export function ReMindApp() {
@@ -156,9 +154,15 @@ export function ReMindApp() {
   const lastHandledUrl = useRef<string | null>(null);
   const incomingUrl = Linking.useLinkingURL();
   const [screen, setScreen] = useState<Screen>('inbox');
-  const [noteCategory, setNoteCategory] = useState<NoteCategory>('inbox');
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>('organized');
+  const [libraryFilter, setLibraryFilter] =
+    useState<LibraryFilter>('all');
+  const [libraryFilterVisible, setLibraryFilterVisible] = useState(false);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [activityNotes, setActivityNotes] = useState<Note[]>([]);
   const [draft, setDraft] = useState('');
+  const [captureExpanded, setCaptureExpanded] = useState(false);
+  const [todayOrganizableCount, setTodayOrganizableCount] = useState(0);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -257,12 +261,24 @@ export function ReMindApp() {
   const loadNotes = useCallback(
     async (search = query) => {
       try {
-        const [nextNotes, nextThemeSummaries] = await Promise.all([
+        const activityStart = new Date();
+        activityStart.setHours(0, 0, 0, 0);
+        activityStart.setDate(activityStart.getDate() - 6);
+        const [
+          nextNotes,
+          nextThemeSummaries,
+          todaySources,
+          nextActivityNotes,
+        ] = await Promise.all([
           listNotes(db, search),
           listThemeSourceSummaries(db),
+          listNotesForOrganization(db, startOfTodayIso()),
+          listNotesForActivity(db, activityStart.toISOString()),
         ]);
         setNotes(nextNotes);
+        setActivityNotes(nextActivityNotes);
         setThemeSourceSummaries(nextThemeSummaries);
+        setTodayOrganizableCount(todaySources.length);
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -584,6 +600,7 @@ export function ReMindApp() {
     try {
       await createNote(db, content);
       setDraft('');
+      setCaptureExpanded(false);
       Keyboard.dismiss();
       await Haptics.notificationAsync(
         Haptics.NotificationFeedbackType.Success,
@@ -601,7 +618,7 @@ export function ReMindApp() {
 
   const switchScreen = async (next: Screen) => {
     setScreen(next);
-    if (next === 'inbox') {
+    if (next !== 'search') {
       setQuery('');
       await loadNotes('');
     }
@@ -719,46 +736,62 @@ export function ReMindApp() {
         body: '换一个词试试，ReMind 会同时搜索标题和正文。',
       };
     }
-    if (screen === 'inbox' && noteCategory !== 'all') {
-      const category = NOTE_CATEGORIES.find(
-        (item) => item.value === noteCategory,
-      );
+    if (screen === 'library') {
       return {
-        title: `还没有${category?.label ?? '这类'}内容`,
+        title:
+          libraryTab === 'organized'
+            ? '还没有整理笔记'
+            : libraryTab === 'theme'
+              ? '还没有长期主题'
+              : '还没有原始记录',
         body:
-          noteCategory === 'link'
-            ? '以后从微信或分享入口贴进来的链接，会集中显示在这里。'
-            : '切换到“全部”可以查看其他记录。',
+          libraryFilter === 'all'
+            ? '继续记录，ReMind 会把不同阶段的内容清楚地放在这里。'
+            : '当前筛选下没有内容，可以换一个来源看看。',
       };
     }
     return {
       title: '先记下第一件事',
       body: '灵感、待办、看到的一句话，都可以从这里开始。',
     };
-  }, [noteCategory, query, screen]);
+  }, [libraryFilter, libraryTab, query, screen]);
 
-  const displayedNotes = useMemo(
-    () =>
-      screen === 'search'
-        ? notes
-        : notes.filter((note) => noteMatchesCategory(note, noteCategory)),
-    [noteCategory, notes, screen],
-  );
+  const displayedNotes = useMemo(() => {
+    if (screen === 'search') return notes;
+    if (screen === 'library') {
+      return filterLibraryNotes(notes, libraryTab, libraryFilter);
+    }
+    return notes.slice(0, 3);
+  }, [libraryFilter, libraryTab, notes, screen]);
   const noteSections = useMemo(
-    () => groupNotesByRecency(displayedNotes, screen === 'search'),
+    () =>
+      groupNotesByRecency(
+        displayedNotes,
+        screen === 'search' || screen === 'inbox',
+      ),
     [displayedNotes, screen],
   );
 
-  const categoryCounts = useMemo(
-    () =>
-      Object.fromEntries(
-        NOTE_CATEGORIES.map(({ value }) => [
-          value,
-          notes.filter((note) => noteMatchesCategory(note, value)).length,
-        ]),
-      ) as Record<NoteCategory, number>,
+  const libraryCounts = useMemo(
+    () => ({
+      organized: filterLibraryNotes(notes, 'organized', 'all').length,
+      theme: filterLibraryNotes(notes, 'theme', 'all').length,
+      raw: filterLibraryNotes(notes, 'raw', 'all').length,
+    }),
     [notes],
   );
+  const memoryTrail = useMemo(
+    () => buildMemoryTrail(activityNotes),
+    [activityNotes],
+  );
+  const todayCaptureCount = useMemo(() => {
+    const start = new Date(startOfTodayIso()).getTime();
+    return activityNotes.filter(
+      (note) =>
+        note.recordType === 'capture' &&
+        new Date(note.createdAt).getTime() >= start,
+    ).length;
+  }, [activityNotes]);
 
   const listHeader = (
     <View style={styles.scrollHeader}>
@@ -861,218 +894,205 @@ export function ReMindApp() {
       </View>
 
       {screen === 'inbox' ? (
-        <View style={styles.captureShell}>
-          <View pointerEvents="none" style={styles.captureOffsetOutline} />
-          <View style={styles.capture}>
-            <View pointerEvents="none" style={styles.capturePin}>
-              <View style={styles.capturePinDot} />
-            </View>
-            <Text maxFontSizeMultiplier={1.1} style={styles.captureLabel}>
-              QUICK NOTE
-            </Text>
+        <>
+          <View
+            style={[
+              styles.homeQuickCapture,
+              captureExpanded && styles.homeQuickCaptureExpanded,
+            ]}
+          >
+            <Text style={styles.homeQuickCaptureMark}>▧</Text>
             <TextInput
               ref={captureRef}
               accessibilityLabel="记录一条新笔记"
-              multiline
               maxFontSizeMultiplier={1.15}
+              multiline={captureExpanded}
+              onBlur={() => {
+                if (!draft.trim()) setCaptureExpanded(false);
+              }}
               onChangeText={setDraft}
+              onFocus={() => setCaptureExpanded(true)}
               placeholder="此刻在想什么？"
               placeholderTextColor={colors.faint}
-              style={styles.captureInput}
-              textAlignVertical="top"
+              style={[
+                styles.homeQuickCaptureInput,
+                captureExpanded && styles.homeQuickCaptureInputExpanded,
+              ]}
+              textAlignVertical={captureExpanded ? 'top' : 'center'}
               value={draft}
             />
-            <View style={styles.captureFooter}>
-              <Text maxFontSizeMultiplier={1.1} style={styles.captureHint}>
-                {draft.trim() ? `${draft.trim().length} 字` : '不用先整理'}
-              </Text>
-              <Pressable
-                accessibilityLabel="保存笔记"
-                disabled={!draft.trim() || saving}
-                onPress={() => void saveDraft()}
-                style={({ pressed }) => [
-                  styles.saveButton,
-                  (!draft.trim() || saving) && styles.saveButtonDisabled,
-                  pressed && styles.pressed,
-                ]}
-              >
-                {saving ? (
-                  <ActivityIndicator color={colors.white} size="small" />
-                ) : (
-                  <Text
-                    maxFontSizeMultiplier={1.1}
-                    style={styles.saveButtonText}
-                  >
-                    收下
-                  </Text>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.searchWrap}>
-          <Text style={styles.searchIcon}>⌕</Text>
-          <TextInput
-            accessibilityLabel="搜索笔记"
-            autoFocus
-            onChangeText={setQuery}
-            placeholder="搜索你记过的内容"
-            placeholderTextColor={colors.faint}
-            returnKeyType="search"
-            style={styles.searchInput}
-            value={query}
-          />
-          {query ? (
             <Pressable
-              accessibilityLabel="清除搜索"
-              onPress={() => setQuery('')}
-              hitSlop={10}
+              accessibilityLabel={draft.trim() ? '保存笔记' : '开始记录'}
+              disabled={saving}
+              onPress={() => {
+                if (draft.trim()) void saveDraft();
+                else captureRef.current?.focus();
+              }}
+              style={({ pressed }) => [
+                styles.homeQuickCaptureAction,
+                pressed && styles.pressed,
+              ]}
             >
-              <Text style={styles.clearSearch}>×</Text>
+              {saving ? (
+                <ActivityIndicator color={colors.white} size="small" />
+              ) : (
+                <Text style={styles.homeQuickCaptureActionText}>
+                  {draft.trim() ? '收' : '＋'}
+                </Text>
+              )}
             </Pressable>
-          ) : null}
-        </View>
-      )}
+          </View>
 
-      {screen === 'inbox' && wechatProcessingLinks.length > 0 ? (
-        <ProcessingLinksPanel
-          links={wechatProcessingLinks}
-          onApprove={async (messageId) => {
-            setWechatProcessingLinks((current) =>
-              current.map((item) =>
-                item.messageId === messageId
-                  ? {
-                      ...item,
-                      cloudCostApproved: true,
-                      stage: 'queued',
-                      current: 0,
-                      total: 0,
-                    }
-                  : item,
-              ),
-            );
-            try {
-              await approveWechatProcessingCost(messageId);
-            } catch {
-              setWechatError('费用确认暂时没有提交成功');
-              setWechatProcessingLinks(await getWechatProcessingLinks());
-            }
-          }}
-          onRetry={async (messageId) => {
-            setWechatProcessingLinks((current) =>
-              current.map((item) =>
-                item.messageId === messageId
-                  ? {
-                      ...item,
-                      status: 'pending',
-                      stage: 'queued',
-                      current: 0,
-                      total: 0,
-                      errorCode: null,
-                    }
-                  : item,
-              ),
-            );
-            try {
-              await retryWechatProcessingLink(messageId);
-            } catch {
-              setWechatError('视频重试暂时没有提交成功');
-              setWechatProcessingLinks(await getWechatProcessingLinks());
-            }
-          }}
-        />
-      ) : null}
-
-      <View style={styles.sectionHeader}>
-        <Text maxFontSizeMultiplier={1.15} style={styles.sectionTitle}>
-          {screen === 'search' ? '搜索结果' : '最近记下'}
-        </Text>
-        <Text maxFontSizeMultiplier={1} style={styles.sectionCount}>
-          {displayedNotes.length}
-        </Text>
-        {screen === 'inbox' ? (
-          <Pressable
-            disabled={organizing || themeMergeLoading}
-            onPress={() => {
-              if (themeMergeDrafts.length > 0) {
-                setThemeMergeVisible(true);
-              } else {
-                void startDailyOrganization();
-              }
-            }}
-            style={({ pressed }) => [
-              styles.organizeButton,
-              organizing && styles.organizeButtonDisabled,
-              pressed && styles.pressed,
-            ]}
-          >
-            {organizing ? (
-              <ActivityIndicator color={colors.accent} size="small" />
-            ) : (
-              <Text
-                maxFontSizeMultiplier={1.1}
-                style={styles.organizeButtonText}
-              >
-                {themeMergeDrafts.length > 0
-                  ? `归入主题 ${themeMergeDrafts.length}`
-                  : organizeDrafts.length > 0
-                    ? `审核 ${organizeDrafts.length}`
-                    : '整理今天'}
+          <View style={styles.todaySummaryCard}>
+            <View style={styles.todaySummaryCopy}>
+              <Text style={styles.todaySummaryTitle}>今天</Text>
+              <Text style={styles.todaySummaryMeta}>
+                记下 {todayCaptureCount} 条 · 待整理 {todayOrganizableCount} 条
               </Text>
-            )}
-          </Pressable>
-        ) : null}
-      </View>
+            </View>
+            <Pressable
+              disabled={organizing || themeMergeLoading}
+              onPress={() => {
+                if (themeMergeDrafts.length > 0) {
+                  setThemeMergeVisible(true);
+                } else if (organizeDrafts.length > 0) {
+                  setOrganizeVisible(true);
+                } else {
+                  void startDailyOrganization();
+                }
+              }}
+              style={({ pressed }) => [
+                styles.todayOrganizeAction,
+                organizing && styles.organizeButtonDisabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              {organizing ? (
+                <ActivityIndicator color={colors.white} size="small" />
+              ) : (
+                <Text style={styles.todayOrganizeActionText}>
+                  {themeMergeDrafts.length > 0
+                    ? `归入主题 ${themeMergeDrafts.length}`
+                    : organizeDrafts.length > 0
+                      ? `审核 ${organizeDrafts.length}`
+                      : '整理今天'}
+                </Text>
+              )}
+            </Pressable>
+          </View>
 
-      {screen === 'inbox' ? (
+          {wechatProcessingLinks.length > 0 ? (
+            <ProcessingLinksPanel
+              links={wechatProcessingLinks}
+              onApprove={async (messageId) => {
+                setWechatProcessingLinks((current) =>
+                  current.map((item) =>
+                    item.messageId === messageId
+                      ? {
+                          ...item,
+                          cloudCostApproved: true,
+                          stage: 'queued',
+                          current: 0,
+                          total: 0,
+                        }
+                      : item,
+                  ),
+                );
+                try {
+                  await approveWechatProcessingCost(messageId);
+                } catch {
+                  setWechatError('费用确认暂时没有提交成功');
+                  setWechatProcessingLinks(await getWechatProcessingLinks());
+                }
+              }}
+              onRetry={async (messageId) => {
+                try {
+                  await retryWechatProcessingLink(messageId);
+                } catch {
+                  setWechatError('视频重试暂时没有提交成功');
+                } finally {
+                  setWechatProcessingLinks(await getWechatProcessingLinks());
+                }
+              }}
+            />
+          ) : null}
+
+          <View style={styles.homeRecentHeader}>
+            <Text style={styles.homeRecentTitle}>最近记下</Text>
+            <Pressable
+              hitSlop={8}
+              onPress={() => void switchScreen('library')}
+            >
+              <Text style={styles.homeRecentAction}>查看全部 ›</Text>
+            </Pressable>
+          </View>
+        </>
+      ) : screen === 'library' ? (
         <>
-          <ScrollView
-            contentContainerStyle={styles.categoryBarContent}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.categoryBar}
-          >
-            {NOTE_CATEGORIES.map((category) => {
-              const active = noteCategory === category.value;
+          <View style={styles.libraryHeadingRow}>
+            <Text style={styles.libraryHeading}>笔记</Text>
+            <Pressable
+              accessibilityLabel="筛选笔记"
+              onPress={() => setLibraryFilterVisible(true)}
+              style={({ pressed }) => [
+                styles.libraryFilterAction,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.libraryFilterIcon}>▽</Text>
+              <Text style={styles.libraryFilterText}>
+                {libraryFilter === 'all'
+                  ? '筛选'
+                  : LIBRARY_FILTERS.find(
+                      (item) => item.value === libraryFilter,
+                    )?.label}
+              </Text>
+            </Pressable>
+          </View>
+          <View style={styles.libraryTabs}>
+            {(
+              [
+                ['organized', '整理笔记', libraryCounts.organized],
+                ['theme', '主题', libraryCounts.theme],
+                ['raw', '原始记录', libraryCounts.raw],
+              ] as const
+            ).map(([value, label, count]) => {
+              const active = libraryTab === value;
               return (
                 <Pressable
-                  accessibilityRole="button"
+                  accessibilityRole="tab"
                   accessibilityState={{ selected: active }}
-                  key={category.value}
+                  key={value}
                   onPress={() => {
-                    setNoteCategory(category.value);
+                    setLibraryTab(value);
+                    setLibraryFilter('all');
                     void Haptics.selectionAsync();
                   }}
-                  style={({ pressed }) => [
-                    styles.categoryChip,
-                    active && styles.categoryChipActive,
-                    pressed && styles.pressed,
+                  style={[
+                    styles.libraryTab,
+                    active && styles.libraryTabActive,
                   ]}
                 >
                   <Text
-                    maxFontSizeMultiplier={1.1}
                     style={[
-                      styles.categoryChipText,
-                      active && styles.categoryChipTextActive,
+                      styles.libraryTabText,
+                      active && styles.libraryTabTextActive,
                     ]}
                   >
-                    {category.label}
-                  </Text>
-                  <Text
-                    maxFontSizeMultiplier={1}
-                    style={[
-                      styles.categoryChipCount,
-                      active && styles.categoryChipCountActive,
-                    ]}
-                  >
-                    {categoryCounts[category.value]}
+                    {label} {count}
                   </Text>
                 </Pressable>
               );
             })}
-          </ScrollView>
-          {noteCategory === 'theme' && deletedThemes.length > 0 ? (
+          </View>
+          <Text style={styles.libraryDescription}>
+            {libraryTab === 'organized'
+              ? '从零散记录中整理出的内容，会留在这里继续生长。'
+              : libraryTab === 'theme'
+                ? '经过确认的长期主题，会连接相关来源和新的理解。'
+                : '微信、随手记和分享内容按时间保留，随时可以重新整理。'}
+          </Text>
+          {libraryTab === 'theme' && deletedThemes.length > 0 ? (
             <View style={styles.deletedThemeRow}>
               <View style={styles.deletedThemeCopy}>
                 <Text style={styles.deletedThemeEyebrow}>最近删除</Text>
@@ -1099,32 +1119,36 @@ export function ReMindApp() {
               </Pressable>
             </View>
           ) : null}
-          {noteCategory === 'inbox' &&
-          (recallLoading || recallSuggestion) ? (
-            <RecallSpotlight
-              loading={recallLoading}
-              onOpen={async (suggestion) => {
-                await recordRecallAction(
-                  db,
-                  suggestion.memory.id,
-                  'opened',
-                );
-                setRecallSuggestion(null);
-                openNote(suggestion.memory);
-              }}
-              onSnooze={async (suggestion) => {
-                await recordRecallAction(
-                  db,
-                  suggestion.memory.id,
-                  'snoozed',
-                );
-                setRecallSuggestion(null);
-                await Haptics.selectionAsync();
-              }}
-              suggestion={recallSuggestion}
-            />
-          ) : null}
         </>
+      ) : (
+        <View style={styles.searchWrap}>
+          <Text style={styles.searchIcon}>⌕</Text>
+          <TextInput
+            accessibilityLabel="搜索笔记"
+            autoFocus
+            onChangeText={setQuery}
+            placeholder="搜索你记过的内容"
+            placeholderTextColor={colors.faint}
+            returnKeyType="search"
+            style={styles.searchInput}
+            value={query}
+          />
+          {query ? (
+            <Pressable
+              accessibilityLabel="清除搜索"
+              onPress={() => setQuery('')}
+              hitSlop={10}
+            >
+              <Text style={styles.clearSearch}>×</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      )}
+      {screen === 'search' ? (
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>搜索结果</Text>
+          <Text style={styles.sectionCount}>{displayedNotes.length}</Text>
+        </View>
       ) : null}
     </View>
   );
@@ -1143,6 +1167,44 @@ export function ReMindApp() {
         keyExtractor={(item) => item.id}
         keyboardDismissMode="on-drag"
         ListHeaderComponent={listHeader}
+        ListFooterComponent={
+          screen === 'inbox' ? (
+            <View style={styles.homeFooter}>
+              <MemoryTrailCard
+                onOpen={() => {
+                  setLibraryTab('raw');
+                  setLibraryFilter('all');
+                  void switchScreen('library');
+                }}
+                trail={memoryTrail}
+              />
+              {recallLoading || recallSuggestion ? (
+                <RecallSpotlight
+                  loading={recallLoading}
+                  onOpen={async (suggestion) => {
+                    await recordRecallAction(
+                      db,
+                      suggestion.memory.id,
+                      'opened',
+                    );
+                    setRecallSuggestion(null);
+                    openNote(suggestion.memory);
+                  }}
+                  onSnooze={async (suggestion) => {
+                    await recordRecallAction(
+                      db,
+                      suggestion.memory.id,
+                      'snoozed',
+                    );
+                    setRecallSuggestion(null);
+                    await Haptics.selectionAsync();
+                  }}
+                  suggestion={recallSuggestion}
+                />
+              ) : null}
+            </View>
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1155,7 +1217,7 @@ export function ReMindApp() {
         }
         renderItem={({ item }) => (
           <View style={styles.noteItemWrap}>
-            <NoteCard
+            <CompactNoteCard
               note={item}
               onPress={() => openNote(item)}
               themeSourceSummary={themeSourceSummaries[item.id]}
@@ -1201,7 +1263,7 @@ export function ReMindApp() {
       >
         <TabButton
           active={screen === 'inbox'}
-          icon="＋"
+          icon="□"
           label="记录"
           onPress={() =>
             screen === 'inbox'
@@ -1210,12 +1272,29 @@ export function ReMindApp() {
           }
         />
         <TabButton
+          active={screen === 'library'}
+          icon="▤"
+          label="笔记"
+          onPress={() => void switchScreen('library')}
+        />
+        <TabButton
           active={screen === 'search'}
           icon="⌕"
           label="找回"
           onPress={() => void switchScreen('search')}
         />
       </View>
+
+      <LibraryFilterSheet
+        onClose={() => setLibraryFilterVisible(false)}
+        onSelect={(filter) => {
+          setLibraryFilter(filter);
+          setLibraryFilterVisible(false);
+          void Haptics.selectionAsync();
+        }}
+        selected={libraryFilter}
+        visible={libraryFilterVisible}
+      />
 
       <NoteEditor
         currentTheme={selectedSourceTheme}
@@ -1961,7 +2040,151 @@ function ProcessingLinksPanel({
   );
 }
 
-function NoteCard({
+function MemoryTrailCard({
+  onOpen,
+  trail,
+}: {
+  onOpen: () => void;
+  trail: MemoryTrail;
+}) {
+  let labelsShown = 0;
+  const themeLabels = trail.days.map((day) => {
+    if (!day.themeLabel || labelsShown >= 3) return null;
+    labelsShown += 1;
+    return day.themeLabel;
+  });
+
+  return (
+    <View style={styles.memoryTrailCard}>
+      <View style={styles.memoryTrailHeader}>
+        <Text style={styles.memoryTrailTitle}>本周记忆轨迹</Text>
+        <Pressable hitSlop={8} onPress={onOpen}>
+          <Text style={styles.memoryTrailOpen}>查看 ›</Text>
+        </Pressable>
+      </View>
+      <View style={styles.memoryTrailDays}>
+        {trail.days.map((day, index) => {
+          const size = 13 + Math.min(day.captureCount, 3) * 5;
+          const active = day.captureCount > 0 || day.organizedCount > 0;
+          return (
+            <View key={day.dateKey} style={styles.memoryTrailDay}>
+              <Text
+                style={[
+                  styles.memoryTrailDayLabel,
+                  day.isToday && styles.memoryTrailDayLabelToday,
+                ]}
+              >
+                {day.dayLabel}
+              </Text>
+              <View style={styles.memoryTrailNodeRow}>
+                <View
+                  style={[
+                    styles.memoryTrailLine,
+                    index === 0 && styles.memoryTrailLineHidden,
+                  ]}
+                />
+                <View
+                  accessibilityLabel={`${day.dayLabel}，记下 ${day.captureCount} 条，整理 ${day.organizedCount} 篇`}
+                  style={[
+                    styles.memoryTrailNode,
+                    active && styles.memoryTrailNodeActive,
+                    day.organizedCount > 0 && styles.memoryTrailNodeOrganized,
+                    { width: size, height: size, borderRadius: size / 2 },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.memoryTrailLine,
+                    index === trail.days.length - 1 &&
+                      styles.memoryTrailLineHidden,
+                  ]}
+                />
+              </View>
+              <Text numberOfLines={1} style={styles.memoryTrailTheme}>
+                {themeLabels[index] ?? ' '}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+      <View style={styles.memoryTrailFooter}>
+        <Text style={styles.memoryTrailSummary}>
+          {trail.captureCount > 0 || trail.organizedCount > 0
+            ? `这周记下 ${trail.captureCount} 条，整理成 ${trail.organizedCount} 篇`
+            : '这一周还留着空白，随时可以从一条想法开始'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function LibraryFilterSheet({
+  onClose,
+  onSelect,
+  selected,
+  visible,
+}: {
+  onClose: () => void;
+  onSelect: (filter: LibraryFilter) => void;
+  selected: LibraryFilter;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onClose}
+      transparent
+      visible={visible}
+    >
+      <Pressable onPress={onClose} style={styles.libraryFilterBackdrop}>
+        <Pressable
+          onPress={(event) => event.stopPropagation()}
+          style={[
+            styles.libraryFilterSheet,
+            { paddingBottom: Math.max(insets.bottom, 18) },
+          ]}
+        >
+          <View style={styles.libraryFilterHandle} />
+          <Text style={styles.libraryFilterHeading}>筛选笔记</Text>
+          <Text style={styles.libraryFilterDescription}>
+            内容阶段在笔记页顶部切换，这里只筛选来源和处理状态。
+          </Text>
+          {LIBRARY_FILTERS.map((filter) => {
+            const active = selected === filter.value;
+            return (
+              <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{ checked: active }}
+                key={filter.value}
+                onPress={() => onSelect(filter.value)}
+                style={({ pressed }) => [
+                  styles.libraryFilterOption,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.libraryFilterRadio,
+                    active && styles.libraryFilterRadioActive,
+                  ]}
+                >
+                  {active ? <View style={styles.libraryFilterRadioDot} /> : null}
+                </View>
+                <Text style={styles.libraryFilterOptionText}>
+                  {filter.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function CompactNoteCard({
   note,
   onPress,
   themeSourceSummary,
@@ -1970,178 +2193,63 @@ function NoteCard({
   onPress: () => void;
   themeSourceSummary?: ThemeSourceSummary;
 }) {
-  const categoryLabel =
+  const typeLabel =
     note.recordType === 'theme'
-      ? '主题笔记'
+      ? '主题'
       : note.recordType === 'source'
-      ? '来源笔记'
-      : note.recordType === 'synthesis'
         ? '整理笔记'
-      : note.source === 'wechat'
-        ? '微信记录'
-        : note.source === 'share'
-          ? '分享记录'
-          : '随手记';
-  const containsLink =
-    note.contentKind === 'link' || note.contentKind === 'mixed';
-  const linkIntentLabel =
-    note.recordType === 'capture' && containsLink
-      ? note.status === 'processing'
-        ? '生成中'
-        : note.status === 'failed'
-          ? '生成失败'
-          : note.status === 'ready'
-            ? '已生成'
-            : note.userContext &&
-                note.userContext.replace(/\s+/g, '').length >= 4
-              ? '待生成'
-              : '待补描述'
-      : null;
-
-  const cardTone =
-    note.recordType === 'theme'
-      ? styles.noteCardTheme
-      : note.recordType === 'source'
-        ? styles.noteCardSource
         : note.recordType === 'synthesis'
-          ? styles.noteCardSynthesis
-          : styles.noteCardCapture;
+          ? '整理今天'
+          : note.source === 'wechat'
+            ? '来自微信'
+            : note.source === 'share'
+              ? '来自系统分享'
+              : '来自 ReMind';
+  const statusLabel =
+    note.status === 'processing'
+      ? '处理中'
+      : note.status === 'failed'
+        ? '处理失败'
+        : null;
+  const tags = note.tags.slice(0, 2);
 
   return (
-    <View style={styles.noteCardStack}>
-      <View pointerEvents="none" style={styles.noteCardBack} />
-      <Pressable
-        accessibilityLabel={`打开笔记：${note.title}`}
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.noteCard,
-          cardTone,
-          pressed && styles.noteCardPressed,
-        ]}
-      >
-      <View
-        pointerEvents="none"
-        style={[
-          styles.noteCardTab,
-          note.recordType === 'theme'
-            ? styles.noteCardTabTheme
-            : note.recordType === 'source'
-              ? styles.noteCardTabSource
-              : note.recordType === 'synthesis'
-                ? styles.noteCardTabSynthesis
-                : styles.noteCardTabCapture,
-        ]}
-      />
-      <View style={styles.noteTopline}>
-        <Text
-          maxFontSizeMultiplier={1.15}
-          numberOfLines={1}
-          style={styles.noteTitle}
-        >
+    <Pressable
+      accessibilityLabel={`打开笔记：${note.title}`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.compactNoteCard,
+        pressed && styles.noteCardPressed,
+      ]}
+    >
+      <View style={styles.compactNoteTopline}>
+        <Text numberOfLines={2} style={styles.compactNoteTitle}>
           {note.title}
         </Text>
-        <Text maxFontSizeMultiplier={1} style={styles.noteTime}>
-          {formatNoteTime(note.updatedAt)}
-        </Text>
+        <Text style={styles.compactNoteTime}>{formatNoteTime(note.updatedAt)}</Text>
       </View>
-      <Text
-        maxFontSizeMultiplier={1.15}
-        numberOfLines={2}
-        style={styles.notePreview}
-      >
+      <Text numberOfLines={2} style={styles.compactNotePreview}>
         {note.recordType === 'theme' && themeSourceSummary
           ? `${themeSourceSummary.count} 篇来源 · 最近补充于 ${formatNoteTime(
               themeSourceSummary.lastAddedAt,
             )}`
           : notePreview(note.summary?.trim() || note.content)}
       </Text>
-      <View style={styles.noteMeta}>
-        <View style={styles.noteCategories}>
-          <View
-            style={[
-              styles.pendingPill,
-              note.recordType !== 'capture' && styles.readyPill,
-            ]}
-          >
-            <View
-              style={[
-                styles.pendingDot,
-                note.recordType !== 'capture' && styles.readyDot,
-              ]}
-            />
-            <Text
-              maxFontSizeMultiplier={1}
-              style={[
-                styles.pendingText,
-                note.recordType !== 'capture' && styles.readyText,
-              ]}
-            >
-              {categoryLabel}
-            </Text>
-          </View>
-          {containsLink ? (
-            <View style={styles.kindPill}>
-            <Text maxFontSizeMultiplier={1} style={styles.kindPillText}>
-              链接
-            </Text>
+      <View style={styles.compactNoteMeta}>
+        <View style={styles.compactNoteTags}>
+          {tags.map((tag) => (
+            <View key={tag} style={styles.compactNoteTag}>
+              <Text style={styles.compactNoteTagText}>{tag}</Text>
             </View>
-          ) : null}
-          {linkIntentLabel ? (
-            <View
-              style={[
-                styles.linkStatePill,
-                (linkIntentLabel === '待生成' ||
-                  linkIntentLabel === '生成中' ||
-                  linkIntentLabel === '已生成') &&
-                  styles.linkStatePillReady,
-              ]}
-            >
-              <Text
-                maxFontSizeMultiplier={1}
-                style={[
-                  styles.linkStatePillText,
-                  (linkIntentLabel === '待生成' ||
-                    linkIntentLabel === '生成中' ||
-                    linkIntentLabel === '已生成') &&
-                    styles.linkStatePillTextReady,
-                ]}
-              >
-                {linkIntentLabel}
-              </Text>
-            </View>
-          ) : null}
+          ))}
+          <Text style={styles.compactNoteSource}>
+            {[typeLabel, statusLabel].filter(Boolean).join(' · ')}
+          </Text>
         </View>
-        <Text maxFontSizeMultiplier={1} style={styles.noteArrow}>↗</Text>
+        <Text style={styles.compactNoteArrow}>›</Text>
       </View>
-      </Pressable>
-    </View>
+    </Pressable>
   );
-}
-
-function noteMatchesCategory(note: Note, category: NoteCategory): boolean {
-  switch (category) {
-    case 'inbox':
-      return (
-        note.recordType !== 'theme' &&
-        !(
-          note.recordType === 'capture' &&
-          note.sourceUrl &&
-          note.status === 'ready'
-        )
-      );
-    case 'remind':
-      return note.recordType === 'capture' && note.source !== 'wechat';
-    case 'wechat':
-      return note.source === 'wechat';
-    case 'synthesis':
-      return note.recordType === 'source' || note.recordType === 'synthesis';
-    case 'theme':
-      return note.recordType === 'theme';
-    case 'link':
-      return note.contentKind === 'link' || note.contentKind === 'mixed';
-    default:
-      return true;
-  }
 }
 
 function groupNotesByRecency(notes: Note[], singleSection: boolean) {
@@ -6172,7 +6280,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  quickCapture: {
+  homeQuickCapture: {
     flex: 1,
     backgroundColor: colors.paper,
   },
@@ -7469,5 +7577,412 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: 15,
     fontWeight: '800',
+  },
+  quickCapture: {
+    minHeight: 66,
+    marginHorizontal: 18,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    borderWidth: 1,
+    borderColor: '#C8CEC7',
+    borderRadius: 19,
+    backgroundColor: colors.surface,
+  },
+  homeQuickCaptureExpanded: {
+    minHeight: 136,
+    paddingVertical: 13,
+    alignItems: 'flex-start',
+  },
+  homeQuickCaptureMark: {
+    color: colors.muted,
+    fontSize: 22,
+    lineHeight: 30,
+  },
+  homeQuickCaptureInput: {
+    flex: 1,
+    height: 52,
+    color: colors.ink,
+    fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
+    fontSize: 18,
+    lineHeight: 26,
+  },
+  homeQuickCaptureInputExpanded: {
+    height: 108,
+    paddingTop: 3,
+  },
+  homeQuickCaptureAction: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+    backgroundColor: colors.accent,
+  },
+  homeQuickCaptureActionText: {
+    color: colors.white,
+    fontSize: 24,
+    fontWeight: '500',
+    lineHeight: 28,
+  },
+  todaySummaryCard: {
+    minHeight: 94,
+    marginTop: 16,
+    marginHorizontal: 18,
+    paddingHorizontal: 17,
+    paddingVertical: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+  },
+  todaySummaryCopy: {
+    flex: 1,
+  },
+  todaySummaryTitle: {
+    color: colors.ink,
+    fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  todaySummaryMeta: {
+    marginTop: 8,
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  todayOrganizeAction: {
+    minWidth: 104,
+    minHeight: 48,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: colors.accent,
+  },
+  todayOrganizeActionText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  homeRecentHeader: {
+    marginTop: 26,
+    marginBottom: 8,
+    paddingHorizontal: 21,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  homeRecentTitle: {
+    color: colors.ink,
+    fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  homeRecentAction: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  homeFooter: {
+    paddingTop: 8,
+  },
+  compactNoteCard: {
+    marginBottom: 9,
+    paddingHorizontal: 15,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#D1D4CE',
+    borderRadius: 15,
+    backgroundColor: colors.surface,
+  },
+  compactNoteTopline: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  compactNoteTitle: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 21,
+  },
+  compactNoteTime: {
+    paddingTop: 2,
+    color: colors.faint,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  compactNotePreview: {
+    marginTop: 6,
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  compactNoteMeta: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  compactNoteTags: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  compactNoteTag: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#CDD6CE',
+    borderRadius: 6,
+    backgroundColor: colors.accentSoft,
+  },
+  compactNoteTagText: {
+    color: colors.sageText,
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  compactNoteSource: {
+    color: colors.faint,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  compactNoteArrow: {
+    color: colors.muted,
+    fontSize: 20,
+  },
+  memoryTrailCard: {
+    marginTop: 14,
+    marginHorizontal: 18,
+    marginBottom: 18,
+    padding: 17,
+    borderWidth: 1,
+    borderColor: '#C8D3C9',
+    borderRadius: 20,
+    backgroundColor: colors.sage,
+  },
+  memoryTrailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  memoryTrailTitle: {
+    color: colors.sageText,
+    fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  memoryTrailOpen: {
+    color: colors.sageText,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  memoryTrailDays: {
+    marginTop: 17,
+    flexDirection: 'row',
+  },
+  memoryTrailDay: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  memoryTrailDayLabel: {
+    color: colors.muted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  memoryTrailDayLabelToday: {
+    color: colors.sageText,
+    fontWeight: '900',
+  },
+  memoryTrailNodeRow: {
+    width: '100%',
+    height: 34,
+    marginTop: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  memoryTrailLine: {
+    flex: 1,
+    height: 1.5,
+    backgroundColor: '#AEBEAE',
+  },
+  memoryTrailLineHidden: {
+    opacity: 0,
+  },
+  memoryTrailNode: {
+    borderWidth: 1.5,
+    borderColor: '#9CAB9E',
+    backgroundColor: colors.surface,
+  },
+  memoryTrailNodeActive: {
+    borderColor: colors.accent,
+    backgroundColor: '#B7C7B8',
+  },
+  memoryTrailNodeOrganized: {
+    backgroundColor: colors.accent,
+  },
+  memoryTrailTheme: {
+    width: '120%',
+    minHeight: 14,
+    color: colors.sageText,
+    fontSize: 8,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  memoryTrailFooter: {
+    marginTop: 12,
+    paddingTop: 11,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#BFCABE',
+  },
+  memoryTrailSummary: {
+    color: colors.sageText,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  libraryHeadingRow: {
+    marginTop: 6,
+    paddingHorizontal: 21,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  libraryHeading: {
+    color: colors.ink,
+    fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
+    fontSize: 30,
+    fontWeight: '700',
+  },
+  libraryFilterAction: {
+    minHeight: 36,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 11,
+  },
+  libraryFilterIcon: {
+    color: colors.muted,
+    fontSize: 17,
+  },
+  libraryFilterText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  libraryTabs: {
+    height: 46,
+    marginTop: 20,
+    marginHorizontal: 18,
+    flexDirection: 'row',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 13,
+    backgroundColor: colors.surface,
+  },
+  libraryTab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: colors.line,
+  },
+  libraryTabActive: {
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: 12,
+    backgroundColor: colors.accentSoft,
+  },
+  libraryTabText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  libraryTabTextActive: {
+    color: colors.accent,
+    fontWeight: '900',
+  },
+  libraryDescription: {
+    marginTop: 12,
+    marginBottom: 12,
+    paddingHorizontal: 21,
+    color: colors.muted,
+    fontSize: 11,
+    lineHeight: 17,
+  },
+  libraryFilterBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(31, 38, 34, 0.24)',
+  },
+  libraryFilterSheet: {
+    paddingHorizontal: 21,
+    paddingTop: 10,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: colors.paper,
+  },
+  libraryFilterHandle: {
+    width: 42,
+    height: 4,
+    alignSelf: 'center',
+    borderRadius: 2,
+    backgroundColor: colors.line,
+  },
+  libraryFilterHeading: {
+    marginTop: 18,
+    color: colors.ink,
+    fontFamily: Platform.select({ ios: 'Songti SC', android: 'serif' }),
+    fontSize: 23,
+    fontWeight: '700',
+  },
+  libraryFilterDescription: {
+    marginTop: 6,
+    marginBottom: 10,
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  libraryFilterOption: {
+    minHeight: 51,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.line,
+  },
+  libraryFilterRadio: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    borderRadius: 10,
+  },
+  libraryFilterRadioActive: {
+    borderColor: colors.accent,
+  },
+  libraryFilterRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.accent,
+  },
+  libraryFilterOptionText: {
+    marginLeft: 12,
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

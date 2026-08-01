@@ -514,6 +514,23 @@ export async function listNotes(
   return rows.map(mapNoteRow);
 }
 
+export async function listNotesForActivity(
+  db: SQLiteDatabase,
+  since: string,
+): Promise<Note[]> {
+  const rows = await db.getAllAsync<NoteRow>(
+    `SELECT id, title, content, summary, status, source, record_type, content_kind,
+            source_url, user_context, source_page_title, source_page_site,
+            source_page_text, tags_json, created_at, updated_at
+     FROM notes
+     WHERE deleted_at IS NULL
+       AND created_at >= ?
+     ORDER BY created_at DESC`,
+    since,
+  );
+  return rows.map(mapNoteRow);
+}
+
 export async function createNote(
   db: SQLiteDatabase,
   content: string,
