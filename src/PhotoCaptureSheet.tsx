@@ -1,11 +1,11 @@
 import * as Haptics from 'expo-haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -137,10 +137,10 @@ export function PhotoCaptureSheet({
               {assets.map((asset, index) => (
                 <Image
                   key={`${asset.uri}-${index}`}
-                  contentFit="cover"
-                  onDisplay={() => setPreviewStatus(asset.uri, false)}
+                  onLoad={() => setPreviewStatus(asset.uri, false)}
                   onError={() => setPreviewStatus(asset.uri, true)}
-                  source={asset.uri}
+                  resizeMode="cover"
+                  source={{ uri: asset.uri }}
                   style={assets.length === 1 ? styles.hero : styles.tile}
                 />
               ))}
