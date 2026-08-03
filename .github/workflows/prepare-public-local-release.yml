@@ -1,0 +1,58 @@
+name: Prepare ReMind Local Draft Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful APK build workflow run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out verified source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download verified APK inside GitHub
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.build_run_id }}
+          name: ReMind-Local-1.0.3-preview.1
+          path: artifacts
+
+      - name: Verify APK again
+        run: |
+          cd artifacts
+          sha256sum --check SHA256SUMS.txt
+          cd ..
+          node scripts/check-public-apk.mjs artifacts/ReMind-Local-1.0.3-preview.1.apk
+
+      - name: Create draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v1.0.3-local-preview.1 >/dev/null 2>&1; then
+            echo "Release v1.0.3-local-preview.1 already exists; refusing to overwrite it."
+            exit 1
+          fi
+          gh release create v1.0.3-local-preview.1 \
+            artifacts/ReMind-Local-1.0.3-preview.1.apk \
+            artifacts/SHA256SUMS.txt \
+            --draft \
+            --prerelease \
+            --target "${GITHUB_SHA}" \
+            --title "ReMind Local 1.0.3 preview.1" \
+            --notes-file docs/RELEASE_NOTES_1.0.3_LOCAL_PREVIEW_1.md
