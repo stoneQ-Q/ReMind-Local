@@ -44,6 +44,11 @@ npm run release:check
 npx eas-cli build --platform android --profile public-local
 ```
 
+如果 EAS 云端额度不可用，可在 GitHub 的 Actions 页面手动运行
+`Build ReMind Local APK`。该工作流在 GitHub 的 Linux 构建机上执行 EAS local build，构建
+前后都会检查边界，并上传 APK 与 `SHA256SUMS.txt` 作为临时工作流产物。仓库只需设置
+`EXPO_TOKEN` Secret 以读取 Expo 签名凭据；不要把模型 API Key 设置到 GitHub。
+
 该 profile 的固定边界：
 
 - App 名称：`ReMind Local`；

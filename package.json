@@ -37,6 +37,7 @@
     "services:logs": "node scripts/remind-services.mjs logs",
     "setup:local": "node scripts/remind-local-setup.mjs",
     "release:check": "node scripts/check-public-release.mjs",
+    "release:check-apk": "node scripts/check-public-apk.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npx expo export --platform ios --output-dir dist"
