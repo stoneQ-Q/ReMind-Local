@@ -36,17 +36,18 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npm --prefix server ci
+          npm --prefix gateway ci
 
       - name: Verify release boundary
         run: |
           npm run release:check
           npm run typecheck
           npm test -- --run
-          npm --prefix server ci
           npm --prefix server run typecheck
           npm --prefix server test -- --run
-          npm --prefix gateway ci
           npm --prefix gateway run typecheck
           npm --prefix gateway test -- --run
 
