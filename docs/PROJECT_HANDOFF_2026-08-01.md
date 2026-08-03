@@ -36,6 +36,25 @@ https://docs.expo.dev/versions/v54.0.0/
 
 ## 2. 当前可交付版本
 
+2026-08-03 已生成待真机验收的 build 28：
+
+```text
+App：ReMind 1.0.2
+Android package：app.remind.notes
+Android build：28
+APK：/Users/stone/Downloads/ReMind-1.0.2-build28-local-parity-photo-fix.apk
+SHA-256：ec4a8fb4e83027b314b4e55837d340d7b52c1fff27f2b32dc42e28f3d1b92044
+EAS Build ID：93bb41c9-a86a-4691-88df-2daff1afaa93
+实现提交：22ed7f6
+```
+
+build 28 已补齐当前本地后台启动版本，移除斜纹方框图片入口，改为点击“＋”后
+在首页原位选择相册或相机，并在系统选图后立即把临时 URI 物化为 App 私有文件。
+自动检查与 APK 完整性已通过，但当前没有 USB 连接设备，尚未覆盖安装；真实相机照片、
+截图、微信保存图及 JPEG／PNG／HEIC 仍需完成真机回归后才能最终关闭图片 P0。
+
+Redmi 当前已完成真机验证的版本仍是 build 27：
+
 ```text
 App：ReMind 1.0.2
 Android package：app.remind.notes
