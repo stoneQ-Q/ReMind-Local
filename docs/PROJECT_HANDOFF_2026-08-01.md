@@ -36,48 +36,40 @@ https://docs.expo.dev/versions/v54.0.0/
 
 ## 2. 当前可交付版本
 
-2026-08-03 已生成待真机验收的 build 28：
+2026-08-03 当前实机交付版本为 build 31：
 
 ```text
 App：ReMind 1.0.2
 Android package：app.remind.notes
-Android build：28
-APK：/Users/stone/Downloads/ReMind-1.0.2-build28-local-parity-photo-fix.apk
-SHA-256：ec4a8fb4e83027b314b4e55837d340d7b52c1fff27f2b32dc42e28f3d1b92044
-EAS Build ID：93bb41c9-a86a-4691-88df-2daff1afaa93
-实现提交：22ed7f6
+Android build：31
+APK：/Users/stone/Downloads/ReMind-1.0.2-build31-photo-layout-fix.apk
+SHA-256：522ecca193f3e13b9eb79104cd78d06b54d5ebb1927bbeae61351d23fd6cc810
+EAS Build ID：efc0f130-cf52-43dd-838f-18587516ddac
+主要实现提交：22ed7f6、c85e3a3、e32c1ca、37e000d
 ```
 
-build 28 已补齐当前本地后台启动版本，移除斜纹方框图片入口，改为点击“＋”后
-在首页原位选择相册或相机，并在系统选图后立即把临时 URI 物化为 App 私有文件。
-自动检查与 APK 完整性已通过，但当前没有 USB 连接设备，尚未覆盖安装；真实相机照片、
-截图、微信保存图及 JPEG／PNG／HEIC 仍需完成真机回归后才能最终关闭图片 P0。
+build 31 已补齐当前本地后台启动版本，移除斜纹方框图片入口，改为点击“＋”后
+在首页原位选择“选择图片 / 拍一张”，并在系统选图后立即把临时 URI 物化为 App
+私有文件。图片感想提示已简化为“写下当时的感受”。真实相册预览空白的根因不是权限、
+格式或文件复制，而是 Android 上百分比宽度配合 `aspectRatio` 时图片视图被布局为 0 高；
+build 31 改用原生图片视图和明确高度后修复。
 
-Redmi 当前已完成真机验证的版本仍是 build 27：
-
-```text
-App：ReMind 1.0.2
-Android package：app.remind.notes
-Android build：27
-APK：/Users/stone/Downloads/ReMind-1.0.2-build27-polished-navigation-photo-cleanup.apk
-SHA-256：24dc51ef3804598e81ce93d494f59e79d01f704f02a4c5d91f9f8f4cff50187b
-EAS Build ID：5ad533fc-176d-437e-9963-805c946c69b2
-```
-
-build 27 已覆盖安装到 Redmi Note 13 Pro（Android 16）：
+build 31 已覆盖安装到 Redmi Note 13 Pro（Android 16）：
 
 - 首次安装时间仍为 2026-07-31 17:02，证明覆盖升级没有清空 App 数据；
 - 云端账号、微信连接、BYOK 和现有本地记录均保留；
 - “记录 / 笔记 / 找回”三页可以正常切换；
 - 图片记录页的“仅本机保存”提示正常显示；
-- 最终真机进程 PID 为 `28631`，测试前后未变化；
-- Android 崩溃缓冲区为空，没有 Fabric 挂载错误。
+- 使用 QQ 相册中的真实 1279×1358 JPEG 完成“选择 → 可见预览 → 写感想 → 保存 →
+  首页图片卡片 → 详情图片”端到端验证；预览 ImageView 从此前 0 高恢复为 840 像素；
+- 测试记录标题为 `build31-photo-preview-ok`，当前仍保留在手机中，未擅自删除；
+- Android 崩溃缓冲区为空，没有图片解码、React Native 或 Fabric 挂载错误。
 
 build 26 因根级 `expo-font` 被错误解析为 57.0.1，和 Expo SDK 54 原生核心不兼容，
 真机启动会触发 `NoSuchMethodError`。该构建已废弃并从 Downloads 移入废纸篓，
 不要恢复或安装。build 27 已固定 `expo-font ~14.0.12`。
 
-### 收工后新增的已知阻塞：真实相册图片预览空白
+### 已关闭的 P0：真实相册图片预览空白
 
 用户在 build 27 的 Redmi 真机从相册选择一张真实图片后发现：
 
@@ -87,11 +79,10 @@ build 26 因根级 `expo-font` 被错误解析为 57.0.1，和 Expo SDK 54 原�
 - 重新选择入口仍可用，App 没有退出；
 - 用户截图时间为 2026-08-01 20:57，截图由用户保留在本次对话附件中。
 
-这说明此前用受控 PNG 测试图通过的验证不能代表所有真实相册资源。当前应把图片记录
-标记为“入口与测试图链路已实现，但真实相册兼容性仍有 P0 阻塞”，不能对外宣称图片记录
-已在 Android 16 完整可用。下一次先确认失败图片的格式、来源、系统选择器返回字段、
-URI 读取权限与 `expo-image` 错误回调，再用相机照片、截图、微信保存图、JPEG、PNG、HEIC
-分别建立回归样本。不要通过取消错误拦截或允许空白预览保存来绕过问题。
+实机诊断确认原图、系统选择器读取和私有文件副本均正常；Android 无障碍层明确报告预览
+ImageView 边界为宽 1100、高 0。build 31 使用原生图片视图并给单图和多图预览明确高度，
+同一张失败图片随后在选图预览、首页和详情页全部可见，保存按钮正常启用，P0 已关闭。
+相机照片、截图、PNG 和 HEIC 仍建议作为常规兼容性样本继续观察，但不再阻塞本次交付。
 
 ## 3. 当前产品定位与原则
 
@@ -160,22 +151,25 @@ ReMind 是移动端优先、本地优先的个人记忆与知识整理 App。核
 - 删除图片笔记时会删除 App 私有 `remind-media` 文件和附件索引；
 - 清理范围只允许 App 私有目录，不会删除用户相册原图或外部地址。
 
-以上是已实现设计和受控测试图验证结果；真实相册图片在 build 27 新发现预览空白并导致
-无法保存，当前整体状态必须按第 2 节的 P0 已知阻塞理解。
+以上设计已使用真实 QQ 相册 JPEG 在 build 31 完成端到端真机验证；相机照片、截图、
+PNG、HEIC 和 2 至 4 图组合仍作为后续兼容性观察样本。
 
 ### 4.5 当前自动检查基线
 
 - App TypeScript：通过；
 - Android Expo 离线导出：通过；
-- App 测试：64 个测试文件、229 项通过；
-- build 27 APK ZIP 完整性和 SHA-256：通过；
+- App 测试：64 个测试文件、231 项通过；
+- build 31 APK ZIP 完整性和 SHA-256：通过；
 - 云端最近记录基线：40 个测试文件、144 项通过；
 - 本地服务最近记录基线：6 个测试文件、25 项通过。
 
 最新相关提交：
 
 ```text
-609594e docs: record build 27 navigation validation
+37e000d fix: give Android photo previews a stable height
+e32c1ca fix: use native image preview on Android
+c85e3a3 fix: stabilize photo preview rendering
+22ed7f6 fix: simplify photo capture and restore local parity
 3c2eb6f fix: align icon font with Expo SDK 54
 615c61d feat: polish navigation and photo storage lifecycle
 3d9047b docs: record memory features build 25 validation
@@ -217,7 +211,8 @@ ff47f11 fix: make memory trail card fully tappable
 
 ### P0：先处理真实使用阻塞
 
-- **当前第一项：修复 Android 16 真实相册图片选择后预览空白、保存不可用；**
+- Android 16 真实相册图片预览空白已在 build 31 关闭；后续如出现新的具体样本，
+  再按图片来源与格式重新升级处理；
 - 闪退、数据丢失、重复入库、图片损坏、Key 失效、微信漏收；
 - 自动整理生成错误正式笔记或无法重新归类；
 - 任务卡住但页面没有可理解状态；
@@ -226,8 +221,8 @@ ff47f11 fix: make memory trail card fully tappable
 ### P1：使用几天后优先评审
 
 - 根据真实截图继续降低首页和笔记页的信息密度，但先讨论方案再动结构；
-- 首页“此刻在想什么？”左侧的斜纹方框是图片记录入口，但用户首次使用时没有找到；
-  下次优先讨论改为更明确的图片／相机图标、文字按钮或独立快捷入口，不要继续依赖抽象符号；
+- 图片入口已改为点击输入框右侧“＋”后原位显示“选择图片 / 拍一张”，并使用相册与
+  相机线性图标；继续观察用户是否能自然发现，不再恢复斜纹方框或单独空窗口；
 - 用足够跨天的真实记录生成第一份周回望／月回望，评估是否真的带来用户自己未察觉的洞察；
 - 用新链接覆盖验证三种自动整理模式，检查重复、失败恢复和主题可编辑性；
 - 继续校准 Ask ReMind 的候选检索、引用颗粒度和“证据不足”判断；
@@ -263,7 +258,7 @@ ff47f11 fix: make memory trail card fully tappable
 - 足够真实数据下的周／月回望质量验收；
 - 面向多用户规模的 Whisper 吞吐、排队和成本验证；
 - 中国移动网络样本以及完整 7 至 14 天三网观察；
-- 本轮 build 27 后的 Obsidian 全量回归；
+- 本轮 build 31 后的 Obsidian 全量回归；
 - iOS 真机、Share Extension、TestFlight 和商店发布；
 - 托管 AI／媒体收费、隐私政策、账户删除和公开发布准备；
 - 完整自助微信重新连接流程；
@@ -280,10 +275,9 @@ ff47f11 fix: make memory trail card fully tappable
 7. 只有用户明确要求时才生成新 APK，不要为每个小调整连续出包；
 8. build 12 的任务页 Fabric 压力测试已经完成，不要重复；build 26 已废弃，不要安装。
 
-除非用户改变优先级，下次第一个代码任务应是复现并修复真实相册图片预览空白；修复前先
-阅读 Expo SDK 54 的 ImagePicker、Image 和 FileSystem 精确版本文档。修复后至少使用真实
-相机照片、系统截图和微信保存图片验证“选择 → 可见预览 → 写感想 → 保存 → 首页 → 详情”，
-再决定是否生成 APK。
+下次优先听取 build 31 的真实使用反馈；图片预览 P0 已关闭，不要重新复现已完成的 QQ JPEG
+样本。若用户提供新的失败图片，再先记录来源与格式，并补充相机照片、系统截图、PNG、HEIC
+或多图组合的针对性回归。任何代码修改前仍需阅读 Expo SDK 54 精确版本文档。
 
 ## 10. 下次新窗口可直接发送
 
@@ -298,8 +292,8 @@ ff47f11 fix: make memory trail card fully tappable
 codex/stage7-cloud-health-baseline；不要从明显落后的
 /Users/stone/Documents/remind main 直接开发。
 
-最终测试版本是 ReMind 1.0.2 build 27，已覆盖安装到 Redmi，原账号、微信、
-BYOK 和本地数据均保留。build 26 已废弃，不要安装。不要重复已完成的 build 12
+最终测试版本是 ReMind 1.0.2 build 31，已覆盖安装到 Redmi，原账号、微信、
+BYOK 和本地数据均保留。build 26 已废弃，build 28 至 30 已被 build 31 取代；不要重复已完成的 build 12
 任务页 Fabric 压力测试。
 
 我已经使用了几天。先听我反馈具体问题，结合交接文档按 P0 / P1 排序；先讨论
@@ -307,7 +301,7 @@ BYOK 和本地数据均保留。build 26 已废弃，不要安装。不要重复
 精确版本文档。不要清除 remind.db、SecureStore、云端数据、微信连接、API Key
 或 Obsidian 授权。只有我明确要求时再生成新 APK。
 
-当前已经确认一个 P0 问题：build 27 在 Redmi Android 16 从相册选择真实图片后，
-页面出现“重新选择”但预览区域空白，保存按钮仍不可用。先按交接文档中的样本矩阵
-复现和修复，不要允许空白图片绕过校验保存。
+图片 P0 已在 build 31 关闭：真实 QQ 相册 JPEG 已完成“选择 → 可见预览 → 写感想 →
+保存 → 首页 → 详情”真机验证。入口为“＋ → 选择图片 / 拍一张”，感想提示为
+“写下当时的感受”。继续观察相机、截图、PNG、HEIC 与多图组合，不要恢复旧斜纹图标。
 ```
