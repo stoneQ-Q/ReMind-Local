@@ -1,0 +1,19 @@
+{
+  "cli": {
+    "version": ">= 16.28.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "public-local": {
+      "distribution": "internal",
+      "autoIncrement": true,
+      "environment": "development",
+      "env": {
+        "REMIND_APP_VARIANT": "public-local"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    }
+  }
+}

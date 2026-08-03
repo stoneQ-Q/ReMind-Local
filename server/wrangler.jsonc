@@ -1,0 +1,15 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "remind-wechat",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-07-26",
+	"workers_dev": true,
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "remind-wechat",
+			"migrations_dir": "migrations",
+			"database_id": "00000000-0000-0000-0000-000000000000"
+		}
+	]
+}
