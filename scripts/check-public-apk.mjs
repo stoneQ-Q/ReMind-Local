@@ -20,7 +20,7 @@ const extractionDirectory = mkdtempSync(join(tmpdir(), 'remind-apk-scan-'));
 const findings = [];
 
 try {
-  execFileSync('unzip', ['-qq', apkPath, '-d', extractionDirectory]);
+  execFileSync('unzip', ['-oq', apkPath, '-d', extractionDirectory]);
   for (const path of walk(extractionDirectory)) {
     const size = statSync(path).size;
     if (size === 0 || size > 80 * 1024 * 1024) continue;
