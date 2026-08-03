@@ -77,12 +77,30 @@ function install() {
     });
     chmodSync(plistPath, 0o644);
     runLaunchctl(['bootout', `${domain}/${service.label}`], true);
+    waitForServiceUnload(service.label);
     runLaunchctl(['bootstrap', domain, plistPath]);
     runLaunchctl(['kickstart', '-k', `${domain}/${service.label}`]);
   }
 
   console.log('ReMind 后台服务已安装，会在 Mac 登录后自动启动。');
   console.log(`日志目录：${logsDirectory}`);
+}
+
+function waitForServiceUnload(label) {
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const result = spawnSync(
+      '/bin/launchctl',
+      ['print', `${domain}/${label}`],
+      { encoding: 'utf8' },
+    );
+    if (result.status !== 0) {
+      Atomics.wait(pause, 0, 0, 150);
+      return;
+    }
+    Atomics.wait(pause, 0, 0, 50);
+  }
+  fail(`后台服务未能及时卸载：${label}`);
 }
 
 function restart() {

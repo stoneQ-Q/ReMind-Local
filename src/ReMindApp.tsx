@@ -1,5 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as ImagePicker from 'expo-image-picker';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import * as Linking from 'expo-linking';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -73,7 +74,9 @@ import { PhotoCaptureSheet } from './PhotoCaptureSheet';
 import { PhotoGrid } from './PhotoGrid';
 import {
   attachmentMap,
+  materializePhotoDrafts,
   persistPickedPhotos,
+  removePhotoDrafts,
   removePersistedPhotos,
 } from './photo-records';
 import {
@@ -184,6 +187,8 @@ export function ReMindApp() {
     Record<string, NoteAttachment[]>
   >({});
   const [photoCaptureVisible, setPhotoCaptureVisible] = useState(false);
+  const [photoDraftAssets, setPhotoDraftAssets] = useState<ImagePickerAsset[]>([]);
+  const [captureMenuVisible, setCaptureMenuVisible] = useState(false);
   const [memoryAskVisible, setMemoryAskVisible] = useState(false);
   const [memoryInsightsVisible, setMemoryInsightsVisible] = useState(false);
   const [draft, setDraft] = useState('');
@@ -659,9 +664,47 @@ export function ReMindApp() {
       await addNoteAttachments(db, note.id, photos);
       await loadNotes('');
       void syncObsidian();
+      removePhotoDrafts(assets);
     } catch (error) {
       removePersistedPhotos(photos);
       throw error;
+    }
+  };
+
+  const beginPhotoRecord = async (source: 'library' | 'camera') => {
+    setCaptureMenuVisible(false);
+    Keyboard.dismiss();
+    try {
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('需要相机权限', '允许 ReMind 使用相机后，才能拍下这一刻。');
+          return;
+        }
+      }
+      const result =
+        source === 'library'
+          ? await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ['images'],
+              allowsMultipleSelection: true,
+              selectionLimit: 4,
+              quality: 0.82,
+              exif: false,
+            })
+          : await ImagePicker.launchCameraAsync({
+              mediaTypes: ['images'],
+              quality: 0.82,
+              exif: false,
+            });
+      if (result.canceled || !result.assets.length) return;
+      const drafts = await materializePhotoDrafts(result.assets);
+      setPhotoDraftAssets(drafts);
+      setPhotoCaptureVisible(true);
+    } catch {
+      Alert.alert(
+        '无法读取这张图片',
+        'ReMind 没有改动你的相册，请换一张图片或重新拍摄。',
+      );
     }
   };
 
@@ -962,16 +1005,6 @@ export function ReMindApp() {
               captureExpanded && styles.homeQuickCaptureExpanded,
             ]}
           >
-            <Pressable
-              accessibilityLabel="添加图片记录"
-              hitSlop={10}
-              onPress={() => {
-                Keyboard.dismiss();
-                setPhotoCaptureVisible(true);
-              }}
-            >
-              <Text style={styles.homeQuickCaptureMark}>▧</Text>
-            </Pressable>
             <TextInput
               ref={captureRef}
               accessibilityLabel="记录一条新笔记"
@@ -981,7 +1014,10 @@ export function ReMindApp() {
                 if (!draft.trim()) setCaptureExpanded(false);
               }}
               onChangeText={setDraft}
-              onFocus={() => setCaptureExpanded(true)}
+              onFocus={() => {
+                setCaptureMenuVisible(false);
+                setCaptureExpanded(true);
+              }}
               placeholder="此刻在想什么？"
               placeholderTextColor={colors.faint}
               style={[
@@ -996,7 +1032,11 @@ export function ReMindApp() {
               disabled={saving}
               onPress={() => {
                 if (draft.trim()) void saveDraft();
-                else captureRef.current?.focus();
+                else {
+                  Keyboard.dismiss();
+                  setCaptureExpanded(false);
+                  setCaptureMenuVisible((current) => !current);
+                }
               }}
               style={({ pressed }) => [
                 styles.homeQuickCaptureAction,
@@ -1007,11 +1047,51 @@ export function ReMindApp() {
                 <ActivityIndicator color={colors.white} size="small" />
               ) : (
                 <Text style={styles.homeQuickCaptureActionText}>
-                  {draft.trim() ? '收' : '＋'}
+                  {draft.trim() ? '收' : captureMenuVisible ? '×' : '＋'}
                 </Text>
               )}
             </Pressable>
           </View>
+
+          {captureMenuVisible ? (
+            <View style={styles.captureAddMenu}>
+              <Pressable
+                accessibilityLabel="从相册选择图片"
+                onPress={() => void beginPhotoRecord('library')}
+                style={({ pressed }) => [
+                  styles.captureAddOption,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={[styles.captureAddIcon, styles.captureAddIconPhotos]}>
+                  <Ionicons color={colors.sageText} name="images-outline" size={23} />
+                </View>
+                <View style={styles.captureAddCopy}>
+                  <Text style={styles.captureAddTitle}>选择图片</Text>
+                  <Text style={styles.captureAddBody}>从相册选 1–4 张，再写下这一刻</Text>
+                </View>
+                <Ionicons color={colors.faint} name="chevron-forward" size={18} />
+              </Pressable>
+              <View style={styles.captureAddDivider} />
+              <Pressable
+                accessibilityLabel="拍照记录"
+                onPress={() => void beginPhotoRecord('camera')}
+                style={({ pressed }) => [
+                  styles.captureAddOption,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={[styles.captureAddIcon, styles.captureAddIconCamera]}>
+                  <Ionicons color={colors.mistText} name="camera-outline" size={23} />
+                </View>
+                <View style={styles.captureAddCopy}>
+                  <Text style={styles.captureAddTitle}>拍一张</Text>
+                  <Text style={styles.captureAddBody}>打开相机，照片仍只保存在本机</Text>
+                </View>
+                <Ionicons color={colors.faint} name="chevron-forward" size={18} />
+              </Pressable>
+            </View>
+          ) : null}
 
           <View style={styles.todaySummaryCard}>
             <View style={styles.todaySummaryCopy}>
@@ -1386,7 +1466,11 @@ export function ReMindApp() {
       />
 
       <PhotoCaptureSheet
-        onClose={() => setPhotoCaptureVisible(false)}
+        initialAssets={photoDraftAssets}
+        onClose={() => {
+          setPhotoCaptureVisible(false);
+          setPhotoDraftAssets([]);
+        }}
         onSave={savePhotoRecord}
         visible={photoCaptureVisible}
       />
@@ -7765,11 +7849,6 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     alignItems: 'flex-start',
   },
-  homeQuickCaptureMark: {
-    color: colors.muted,
-    fontSize: 22,
-    lineHeight: 30,
-  },
   homeQuickCaptureInput: {
     flex: 1,
     height: 52,
@@ -7795,6 +7874,54 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '500',
     lineHeight: 28,
+  },
+  captureAddMenu: {
+    marginTop: 8,
+    marginHorizontal: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+  },
+  captureAddOption: {
+    minHeight: 72,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  captureAddIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+  },
+  captureAddIconPhotos: {
+    backgroundColor: colors.sage,
+  },
+  captureAddIconCamera: {
+    backgroundColor: colors.mist,
+  },
+  captureAddCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  captureAddTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  captureAddBody: {
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  captureAddDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 68,
+    backgroundColor: colors.line,
   },
   todaySummaryCard: {
     minHeight: 94,

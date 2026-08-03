@@ -1,4 +1,5 @@
 import * as Haptics from 'expo-haptics';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
@@ -16,34 +17,55 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from './theme';
+import {
+  materializePhotoDrafts,
+  removePhotoDrafts,
+} from './photo-records';
 
 export function PhotoCaptureSheet({
   onClose,
+  initialAssets,
   onSave,
   visible,
 }: {
   onClose: () => void;
+  initialAssets: ImagePicker.ImagePickerAsset[];
   onSave: (caption: string, assets: ImagePicker.ImagePickerAsset[]) => Promise<void>;
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const [assets, setAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [caption, setCaption] = useState('');
-  const [previewFailed, setPreviewFailed] = useState(false);
+  const [failedPreviewUris, setFailedPreviewUris] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!visible) {
-      setAssets([]);
+    if (visible) {
+      setAssets(initialAssets);
       setCaption('');
-      setPreviewFailed(false);
+      setFailedPreviewUris([]);
       setSaving(false);
     }
-  }, [visible]);
+  }, [initialAssets, visible]);
+
+  const close = () => {
+    removePhotoDrafts(assets);
+    onClose();
+  };
 
   const replaceAssets = (next: ImagePicker.ImagePickerAsset[]) => {
-    setPreviewFailed(false);
+    setFailedPreviewUris([]);
     setAssets(next.slice(0, 4));
+  };
+
+  const setPreviewStatus = (uri: string, failed: boolean) => {
+    setFailedPreviewUris((current) =>
+      failed
+        ? current.includes(uri)
+          ? current
+          : [...current, uri]
+        : current.filter((item) => item !== uri),
+    );
   };
 
   const pick = async () => {
@@ -54,7 +76,15 @@ export function PhotoCaptureSheet({
       quality: 0.82,
       exif: false,
     });
-    if (!result.canceled) replaceAssets(result.assets);
+    if (!result.canceled) {
+      try {
+        const next = await materializePhotoDrafts(result.assets);
+        removePhotoDrafts(assets);
+        replaceAssets(next);
+      } catch {
+        Alert.alert('无法读取这张图片', '请重新选择，原来的图片仍然保留。');
+      }
+    }
   };
 
   const camera = async () => {
@@ -68,16 +98,24 @@ export function PhotoCaptureSheet({
       quality: 0.82,
       exif: false,
     });
-    if (!result.canceled && result.assets[0]) replaceAssets([result.assets[0]]);
+    if (!result.canceled && result.assets[0]) {
+      try {
+        const next = await materializePhotoDrafts([result.assets[0]]);
+        removePhotoDrafts(assets);
+        replaceAssets(next);
+      } catch {
+        Alert.alert('无法读取这张照片', '请重新拍摄，原来的图片仍然保留。');
+      }
+    }
   };
 
   const save = async () => {
-    if (!assets.length || !caption.trim() || previewFailed || saving) return;
+    if (!assets.length || !caption.trim() || failedPreviewUris.length || saving) return;
     setSaving(true);
     try {
       await onSave(caption.trim(), assets);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      onClose();
+      close();
     } catch {
       Alert.alert('图片没有保存下来', '文字和图片还在这里，请重新试一次。');
     } finally {
@@ -86,13 +124,13 @@ export function PhotoCaptureSheet({
   };
 
   return (
-    <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}>
+    <Modal animationType="slide" onRequestClose={close} presentationStyle="pageSheet" visible={visible}>
       <View style={styles.page}>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <Pressable hitSlop={10} onPress={onClose}><Text style={styles.cancel}>取消</Text></Pressable>
+          <Pressable hitSlop={10} onPress={close}><Text style={styles.cancel}>取消</Text></Pressable>
           <Text style={styles.heading}>图片记录</Text>
-          <Pressable disabled={!assets.length || !caption.trim() || previewFailed || saving} hitSlop={10} onPress={() => void save()}>
-            <Text style={[styles.save, (!assets.length || !caption.trim() || previewFailed || saving) && styles.disabledText]}>{saving ? '保存中' : '保存'}</Text>
+          <Pressable disabled={!assets.length || !caption.trim() || failedPreviewUris.length > 0 || saving} hitSlop={10} onPress={() => void save()}>
+            <Text style={[styles.save, (!assets.length || !caption.trim() || failedPreviewUris.length > 0 || saving) && styles.disabledText]}>{saving ? '保存中' : '保存'}</Text>
           </Pressable>
         </View>
         <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 32 }]} keyboardShouldPersistTaps="handled">
@@ -102,13 +140,13 @@ export function PhotoCaptureSheet({
                 <Image
                   key={`${asset.uri}-${index}`}
                   contentFit="cover"
-                  onDisplay={() => setPreviewFailed(false)}
-                  onError={() => setPreviewFailed(true)}
-                  source={asset.uri}
+                  onDisplay={() => setPreviewStatus(asset.uri, false)}
+                  onError={() => setPreviewStatus(asset.uri, true)}
+                  source={{ uri: asset.uri }}
                   style={assets.length === 1 ? styles.hero : styles.tile}
                 />
               ))}
-              {previewFailed ? (
+              {failedPreviewUris.length ? (
                 <View style={styles.previewError}>
                   <Text style={styles.previewErrorText}>这张图片暂时无法预览，请重新选择</Text>
                 </View>
@@ -117,7 +155,9 @@ export function PhotoCaptureSheet({
             </View>
           ) : (
             <View style={styles.emptyPhoto}>
-              <Text style={styles.emptyMark}>▧</Text>
+              <View style={styles.emptyMark}>
+                <Ionicons color={colors.sageText} name="images-outline" size={34} />
+              </View>
               <Text style={styles.emptyTitle}>图片是这一刻的主体</Text>
               <Text style={styles.emptyBody}>ReMind 不会识别画面，只保存你选择的图片和亲手写下的感受。</Text>
               <View style={styles.actions}>
@@ -167,7 +207,7 @@ const styles = StyleSheet.create({
   previewError: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: colors.sage },
   previewErrorText: { color: colors.sageText, fontSize: 15, fontWeight: '800', textAlign: 'center' },
   emptyPhoto: { minHeight: 300, padding: 28, borderRadius: 26, alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: colors.sage },
-  emptyMark: { color: colors.sageText, fontSize: 38 },
+  emptyMark: { width: 58, height: 58, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
   emptyTitle: { color: colors.ink, fontSize: 21, fontWeight: '800' },
   emptyBody: { color: colors.muted, fontSize: 14, lineHeight: 22, textAlign: 'center' },
   actions: { flexDirection: 'row', gap: 10, marginTop: 10 },
