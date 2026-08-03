@@ -32,12 +32,14 @@ import {
   REMIND_APPLICATION_ID,
   REMIND_DATABASE_NAME,
   REMIND_DATABASE_SCHEMA_VERSION,
+  REMIND_LOCAL_API_URL_STORAGE_KEY,
   REMIND_SERVICE_MODE_STORAGE_KEY,
   wechatDeviceIdStorageKey,
   wechatDeviceSecretStorageKey,
 } from './persistence-contract';
 import {
   setActiveReMindAppMode,
+  setRuntimeLocalServiceBaseUrl,
 } from './service-contract';
 import { initializeReMindServiceMode } from './service-mode';
 import { getWechatConnection } from './wechat-sync';
@@ -54,6 +56,7 @@ afterEach(() => {
   secureValues.clear();
   for (const key of ENV_KEYS) delete process.env[key];
   setActiveReMindAppMode(null);
+  setRuntimeLocalServiceBaseUrl(null);
   vi.unstubAllGlobals();
 });
 
@@ -79,6 +82,9 @@ describe('ReMind in-place upgrade preservation', () => {
     expect(REMIND_DATABASE_NAME).toBe('remind.db');
     expect(REMIND_DATABASE_SCHEMA_VERSION).toBe(17);
     expect(REMIND_SERVICE_MODE_STORAGE_KEY).toBe('remind.service.mode.v1');
+    expect(REMIND_LOCAL_API_URL_STORAGE_KEY).toBe(
+      'remind.service.local-api-url.v1',
+    );
     expect(OBSIDIAN_DIRECTORY_URI_SETTING).toBe('obsidian.directory_uri');
     expect(OBSIDIAN_DIRECTORY_NAME_SETTING).toBe('obsidian.directory_name');
     expect(

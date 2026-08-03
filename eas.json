@@ -16,6 +16,17 @@
         "buildType": "apk"
       }
     },
+    "public-local": {
+      "distribution": "internal",
+      "autoIncrement": true,
+      "environment": "development",
+      "env": {
+        "REMIND_APP_VARIANT": "public-local"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
     "production": {
       "autoIncrement": true
     }

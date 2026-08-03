@@ -13,9 +13,12 @@ vi.mock('expo-secure-store', () => ({
 import {
   getActiveReMindAppMode,
   setActiveReMindAppMode,
+  setRuntimeLocalServiceBaseUrl,
 } from './service-contract';
 import {
+  configureLocalReMindService,
   initializeReMindServiceMode,
+  normalizeUserLocalBaseUrl,
   selectReMindServiceMode,
 } from './service-mode';
 
@@ -33,11 +36,13 @@ beforeEach(() => {
     'https://api.remind.example';
   secureValues.clear();
   setActiveReMindAppMode(null);
+  setRuntimeLocalServiceBaseUrl(null);
 });
 
 afterEach(() => {
   for (const key of ENV_KEYS) delete process.env[key];
   setActiveReMindAppMode(null);
+  setRuntimeLocalServiceBaseUrl(null);
   vi.unstubAllGlobals();
 });
 
@@ -88,5 +93,61 @@ describe('ReMind service mode persistence', () => {
     );
     expect(getActiveReMindAppMode()).toBe('local');
     expect(secureValues.has('remind.service.mode.v1')).toBe(false);
+  });
+
+  it('stores a checked user-provided local address and switches to it', async () => {
+    delete process.env.EXPO_PUBLIC_REMIND_LOCAL_API_URL;
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const status = await configureLocalReMindService(
+      'macbook-pro.local:8787',
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://macbook-pro.local:8787/health',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    );
+    expect(status).toMatchObject({
+      active: 'local',
+      localBaseUrl: 'http://macbook-pro.local:8787',
+    });
+    expect(secureValues.get('remind.service.local-api-url.v1')).toBe(
+      'http://macbook-pro.local:8787',
+    );
+  });
+
+  it('restores a user-provided local address before resolving the mode', async () => {
+    delete process.env.EXPO_PUBLIC_REMIND_LOCAL_API_URL;
+    secureValues.set(
+      'remind.service.local-api-url.v1',
+      'http://192.168.50.10:8787',
+    );
+    secureValues.set('remind.service.mode.v1', 'local');
+
+    await expect(initializeReMindServiceMode()).resolves.toMatchObject({
+      active: 'local',
+      localBaseUrl: 'http://192.168.50.10:8787',
+    });
+  });
+
+  it('accepts only bare HTTP(S) service origins', () => {
+    expect(normalizeUserLocalBaseUrl('192.168.1.9:8787')).toBe(
+      'http://192.168.1.9:8787',
+    );
+    expect(normalizeUserLocalBaseUrl('https://remind.local/')).toBe(
+      'https://remind.local',
+    );
+    expect(() => normalizeUserLocalBaseUrl('ftp://host/path')).toThrow(
+      'local_service_address_invalid',
+    );
+    expect(() =>
+      normalizeUserLocalBaseUrl('http://user:pass@host:8787'),
+    ).toThrow('local_service_address_invalid');
   });
 });

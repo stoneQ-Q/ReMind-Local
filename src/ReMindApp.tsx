@@ -145,6 +145,7 @@ import {
   type CloudDeviceRegistration,
 } from './cloud-auth';
 import {
+  configureLocalReMindService,
   getReMindModeStatus,
   initializeReMindServiceMode,
   selectReMindServiceMode,
@@ -1918,6 +1919,27 @@ export function ReMindApp() {
           }
           setCloudOverlay(null);
           setCloudAccountVisible(false);
+        }}
+        onConfigureLocal={async (address) => {
+          setCloudAccountLoading(true);
+          setCloudAccountError(null);
+          try {
+            const status = await configureLocalReMindService(address);
+            setServiceMode(status);
+            setWechatConnection(null);
+            setWechatProcessingLinks([]);
+            void processReadyLinks();
+            await Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success,
+            );
+          } catch (error) {
+            setCloudAccountError(localServiceAddressErrorMessage(error));
+            await Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Error,
+            );
+          } finally {
+            setCloudAccountLoading(false);
+          }
         }}
         onRecover={async (recoveryCode) => {
           setCloudAccountLoading(true);
@@ -4344,6 +4366,7 @@ function CloudAccountSettings({
   onAcknowledgeRecoveryCode,
   onClose,
   onCloseTasks,
+  onConfigureLocal,
   onOpenAi,
   onOpenBilling,
   onOpenTasks,
@@ -4364,6 +4387,7 @@ function CloudAccountSettings({
   onAcknowledgeRecoveryCode: () => void;
   onClose: () => void;
   onCloseTasks: () => void;
+  onConfigureLocal: (address: string) => Promise<void>;
   onOpenAi: () => void;
   onOpenBilling: () => void;
   onOpenTasks: () => void;
@@ -4379,6 +4403,13 @@ function CloudAccountSettings({
   const insets = useSafeAreaInsets();
   const [recovering, setRecovering] = useState(false);
   const [recoveryInput, setRecoveryInput] = useState('');
+  const [localAddress, setLocalAddress] = useState(
+    serviceMode.localBaseUrl ?? '',
+  );
+
+  useEffect(() => {
+    if (visible) setLocalAddress(serviceMode.localBaseUrl ?? '');
+  }, [serviceMode.localBaseUrl, visible]);
 
   return (
     <Modal
@@ -4475,6 +4506,53 @@ function CloudAccountSettings({
                 </Pressable>
               );
             })}
+          </View>
+          <View style={styles.localServiceSetup}>
+            <View style={styles.localServiceSetupHeader}>
+              <Ionicons color={colors.sageText} name="laptop-outline" size={22} />
+              <View style={styles.localServiceSetupCopy}>
+                <Text style={styles.localServiceSetupTitle}>连接自己的 Mac</Text>
+                <Text style={styles.localServiceSetupBody}>
+                  填写安装 ReMind 本地服务后显示的地址。手机和 Mac 需要在同一网络。
+                </Text>
+              </View>
+            </View>
+            <TextInput
+              accessibilityLabel="本地服务地址"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!loading}
+              keyboardType="url"
+              onChangeText={setLocalAddress}
+              placeholder="例如 192.168.1.8:8787"
+              placeholderTextColor={colors.faint}
+              style={styles.localServiceAddressInput}
+              value={localAddress}
+            />
+            <Pressable
+              accessibilityLabel="检查并连接本地服务"
+              disabled={loading || !localAddress.trim()}
+              onPress={() => void onConfigureLocal(localAddress)}
+              style={({ pressed }) => [
+                styles.localServiceConnectButton,
+                (loading || !localAddress.trim()) &&
+                  styles.localServiceConnectButtonDisabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              {loading ? (
+                <ActivityIndicator color={colors.white} size="small" />
+              ) : (
+                <Text style={styles.localServiceConnectButtonText}>
+                  {serviceMode.available.local ? '检查并更新地址' : '检查并连接'}
+                </Text>
+              )}
+            </Pressable>
+            {serviceMode.localBaseUrl ? (
+              <Text style={styles.localServiceCurrentAddress}>
+                当前地址：{serviceMode.localBaseUrl}
+              </Text>
+            ) : null}
           </View>
           {error ? (
             <Text style={styles.cloudAccountError}>{error}</Text>
@@ -4838,6 +4916,24 @@ function serviceModeErrorMessage(
   return mode === 'cloud'
     ? '云端暂时不可用，仍保持原来的使用方式。'
     : '暂时无法连接本地服务，仍保持原来的使用方式。';
+}
+
+function localServiceAddressErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.name === 'AbortError') {
+      return '连接超时，请确认手机与 Mac 在同一网络，并检查本地服务是否已启动。';
+    }
+    if (error.message === 'local_service_address_required') {
+      return '请填写 Mac 上显示的本地服务地址。';
+    }
+    if (error.message === 'local_service_address_invalid') {
+      return '地址格式不正确，请填写类似 192.168.1.8:8787 的地址。';
+    }
+    if (error.message === 'local_service_unavailable') {
+      return '没有找到 ReMind 本地服务，请确认 Mac 服务已启动且两台设备在同一网络。';
+    }
+  }
+  return '暂时无法连接本地服务，原来的连接与手机笔记都没有改动。';
 }
 
 function startOfTodayIso(): string {
@@ -7330,6 +7426,65 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 11,
     lineHeight: 17,
+  },
+  localServiceSetup: {
+    marginTop: 14,
+    padding: 16,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 17,
+    backgroundColor: colors.surface,
+  },
+  localServiceSetupHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 11,
+  },
+  localServiceSetupCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  localServiceSetupTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  localServiceSetupBody: {
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  localServiceAddressInput: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    backgroundColor: colors.paper,
+    color: colors.ink,
+    fontSize: 14,
+  },
+  localServiceConnectButton: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: colors.accent,
+  },
+  localServiceConnectButtonText: {
+    color: colors.white,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  localServiceConnectButtonDisabled: {
+    opacity: 0.45,
+  },
+  localServiceCurrentAddress: {
+    color: colors.sageText,
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: 'center',
   },
   cloudAccountTitle: {
     marginTop: 22,

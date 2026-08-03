@@ -27,7 +27,7 @@ const pathValue = [
   '/sbin',
 ].join(':');
 
-const services = [
+const allServices = [
   {
     label: 'app.remind.worker',
     workingDirectory: join(projectDirectory, 'server'),
@@ -49,6 +49,11 @@ const services = [
     logName: 'gateway',
   },
 ];
+const gatewayConfigPath = join(homedir(), '.remind-weixin', 'config.json');
+const services = allServices.filter(
+  (service) =>
+    service.logName === 'worker' || existsSync(gatewayConfigPath),
+);
 
 if (command === 'install') {
   install();
@@ -115,7 +120,7 @@ function restart() {
 }
 
 async function status() {
-  for (const service of services) {
+  for (const service of allServices) {
     const result = spawnSync(
       '/bin/launchctl',
       ['print', `${domain}/${service.label}`],
@@ -141,7 +146,7 @@ async function status() {
 }
 
 function printLogs() {
-  for (const service of services) {
+  for (const service of allServices) {
     const logPath = join(logsDirectory, `${service.logName}.log`);
     const errorPath = join(logsDirectory, `${service.logName}.error.log`);
     console.log(`\n== ${service.logName} ==`);
@@ -157,9 +162,12 @@ function validateRuntime() {
   const requiredPaths = [
     join(projectDirectory, 'server', 'scripts', 'dev-local.mjs'),
     join(projectDirectory, 'server', 'node_modules', '.bin', 'wrangler'),
-    join(projectDirectory, 'gateway', 'node_modules', 'tsx', 'dist', 'cli.mjs'),
-    join(homedir(), '.remind-weixin', 'config.json'),
   ];
+  if (existsSync(gatewayConfigPath)) {
+    requiredPaths.push(
+      join(projectDirectory, 'gateway', 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+    );
+  }
   const missing = requiredPaths.filter((path) => !existsSync(path));
   if (missing.length > 0) {
     fail(`后台服务缺少运行文件：\n${missing.join('\n')}`);

@@ -8,6 +8,7 @@ import {
   getReMindServiceConfig,
   getReMindServiceConfigForMode,
   setActiveReMindAppMode,
+  setRuntimeLocalServiceBaseUrl,
 } from './service-contract';
 
 const ENV_KEYS = [
@@ -21,6 +22,7 @@ const ENV_KEYS = [
 afterEach(() => {
   for (const key of ENV_KEYS) delete process.env[key];
   setActiveReMindAppMode(null);
+  setRuntimeLocalServiceBaseUrl(null);
 });
 
 describe('ReMind service contract', () => {
@@ -88,6 +90,16 @@ describe('ReMind service contract', () => {
       local: true,
       cloud: true,
     });
+  });
+
+  it('prefers the user-configured local address over a build-time default', () => {
+    process.env.EXPO_PUBLIC_REMIND_LOCAL_API_URL =
+      'http://192.168.1.8:8787';
+    setRuntimeLocalServiceBaseUrl('http://macbook.local:8787/');
+
+    expect(getReMindServiceConfigForMode('local')?.baseUrl).toBe(
+      'http://macbook.local:8787',
+    );
   });
 
   it('switches only the active route and safely falls back if it disappears', () => {

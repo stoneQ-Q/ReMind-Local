@@ -12,6 +12,7 @@ const secretNames = [
   'DEEPSEEK_API_KEY',
   'ZHIPU_API_KEY',
 ];
+const requiredSecretNames = ['WECHAT_TOKEN', 'DEEPSEEK_API_KEY'];
 const keychainServices = Object.fromEntries(
   secretNames.map((name) => [
     name,
@@ -53,6 +54,21 @@ function readDevVars() {
   }
 }
 
+function readUserSecrets() {
+  try {
+    const text = readFileSync(join(homedir(), '.remind', 'secrets.env'), 'utf8');
+    return Object.fromEntries(
+      text
+        .split(/\r?\n/)
+        .map((line) => line.match(/^([A-Z0-9_]+)=(.*)$/))
+        .filter(Boolean)
+        .map((match) => [match[1], match[2].trim()]),
+    );
+  } catch {
+    return {};
+  }
+}
+
 function isUsableSecret(value) {
   return (
     typeof value === 'string' &&
@@ -62,13 +78,16 @@ function isUsableSecret(value) {
 }
 
 const devVars = readDevVars();
+const userSecrets = readUserSecrets();
 const secrets = Object.fromEntries(
   secretNames.map((name) => [
     name,
-    readKeychainSecret(name) || devVars[name] || '',
+    readKeychainSecret(name) || userSecrets[name] || devVars[name] || '',
   ]),
 );
-const missing = secretNames.filter((name) => !isUsableSecret(secrets[name]));
+const missing = requiredSecretNames.filter(
+  (name) => !isUsableSecret(secrets[name]),
+);
 if (missing.length > 0) {
   console.error(`本地服务缺少有效配置：${missing.join('、')}`);
   console.error('请先把密钥保存到 macOS 钥匙串，再重新启动。');
@@ -114,7 +133,9 @@ console.log(`启动检查 · 微信配置：可用`);
 console.log(
   `启动检查 · DeepSeek：${deepSeekAvailable ? '可用' : '认证失败或网络不可用'}`,
 );
-console.log(`启动检查 · 智谱兜底：已配置`);
+console.log(
+  `启动检查 · 智谱兜底：${isUsableSecret(secrets.ZHIPU_API_KEY) ? '已配置' : '未配置（可选）'}`,
+);
 console.log(
   `启动检查 · 本地 Whisper：${localWhisperAvailable ? '可用' : '不可用，将使用云端兜底'}`,
 );

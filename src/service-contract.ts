@@ -39,6 +39,7 @@ export type ReMindServiceCapabilities = {
 
 const LEGACY_API_PREFIX = '/api';
 let activeModeOverride: ReMindAppMode | null = null;
+let runtimeLocalBaseUrl: string | null = null;
 
 export function getReMindServiceConfig(): ReMindServiceConfig | null {
   return getReMindServiceConfigForMode(getActiveReMindAppMode());
@@ -54,7 +55,9 @@ export function getReMindServiceConfigForMode(
     process.env.EXPO_PUBLIC_REMIND_SERVICE_MODE === 'hosted';
   const explicitBaseUrl = normalizeBaseUrl(
     mode === 'local'
-      ? process.env.EXPO_PUBLIC_REMIND_LOCAL_API_URL ?? ''
+      ? runtimeLocalBaseUrl ??
+          process.env.EXPO_PUBLIC_REMIND_LOCAL_API_URL ??
+          ''
       : process.env.EXPO_PUBLIC_REMIND_CLOUD_API_URL ?? '',
   );
   const baseUrl =
@@ -94,6 +97,16 @@ export function setActiveReMindAppMode(
   mode: ReMindAppMode | null,
 ): void {
   activeModeOverride = mode;
+}
+
+export function setRuntimeLocalServiceBaseUrl(
+  baseUrl: string | null,
+): void {
+  runtimeLocalBaseUrl = baseUrl ? normalizeBaseUrl(baseUrl) : null;
+}
+
+export function getRuntimeLocalServiceBaseUrl(): string | null {
+  return runtimeLocalBaseUrl;
 }
 
 export function getAvailableReMindAppModes(): Record<

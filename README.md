@@ -23,6 +23,10 @@ ReMind 不把 AI 摘要当作最终产品。它更关心三件事：
 - 微信登录、设备重新配对、Worker、网关和本地 API 当前均可用
 - 当前仍是个人原型：手机依赖同一局域网内保持登录且未休眠的 Mac
 
+面向其他用户的本地自托管预览版说明见
+[`docs/PUBLIC_LOCAL_RELEASE.md`](docs/PUBLIC_LOCAL_RELEASE.md)。公共版本要求每位用户配置
+自己的 DeepSeek Key；智谱 Key 可选。任何模型或微信凭据都不会写入 APK。
+
 ## 已经跑通的完整闭环
 
 ```text
@@ -311,4 +315,3 @@ npm test
 - [阶段产品亮点与自媒体文案](./docs/PRODUCT_HIGHLIGHTS.md)
 - [最新项目交接说明](./docs/PROJECT_HANDOFF_2026-07-28.md)
 - [上一阶段详细开发记录](./docs/PROJECT_HANDOFF_2026-07-27.md)
-
