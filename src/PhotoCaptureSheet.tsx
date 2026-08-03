@@ -59,13 +59,11 @@ export function PhotoCaptureSheet({
   };
 
   const setPreviewStatus = (uri: string, failed: boolean) => {
-    setFailedPreviewUris((current) =>
-      failed
-        ? current.includes(uri)
-          ? current
-          : [...current, uri]
-        : current.filter((item) => item !== uri),
-    );
+    setFailedPreviewUris((current) => {
+      const alreadyFailed = current.includes(uri);
+      if (failed) return alreadyFailed ? current : [...current, uri];
+      return alreadyFailed ? current.filter((item) => item !== uri) : current;
+    });
   };
 
   const pick = async () => {
@@ -142,7 +140,7 @@ export function PhotoCaptureSheet({
                   contentFit="cover"
                   onDisplay={() => setPreviewStatus(asset.uri, false)}
                   onError={() => setPreviewStatus(asset.uri, true)}
-                  source={{ uri: asset.uri }}
+                  source={asset.uri}
                   style={assets.length === 1 ? styles.hero : styles.tile}
                 />
               ))}
@@ -177,7 +175,7 @@ export function PhotoCaptureSheet({
               accessibilityLabel="图片感想"
               multiline
               onChangeText={setCaption}
-              placeholder="写下当时的感受，而不是描述画面……"
+              placeholder="写下当时的感受"
               placeholderTextColor={colors.faint}
               style={styles.captionInput}
               textAlignVertical="top"
