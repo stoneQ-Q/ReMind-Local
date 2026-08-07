@@ -88,6 +88,7 @@ const managedMediaPriceCatalog =
     ? managedMediaPriceCatalogFromEnvironment()
     : null;
 const MAX_JSON_BODY_BYTES = 96 * 1024;
+const MAX_ORGANIZATION_JSON_BODY_BYTES = 384 * 1024;
 const MAX_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 const requestRateLimiter = new RequestRateLimiter();
 const allowedPlatforms = new Set<DevicePlatform>([
@@ -911,7 +912,10 @@ const server = createServer(async (request, response) => {
         sendJson(response, 401, { error: 'unauthorized' });
         return;
       }
-      const body = await readJsonBody(request);
+      const body = await readJsonBody(
+        request,
+        MAX_ORGANIZATION_JSON_BODY_BYTES,
+      );
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 60_000);
       try {
@@ -1161,6 +1165,7 @@ function sendJson(
 
 async function readJsonBody(
   request: import('node:http').IncomingMessage,
+  maximumBytes = MAX_JSON_BODY_BYTES,
 ): Promise<unknown> {
   if (!request.headers['content-type']?.startsWith('application/json')) {
     throw new RequestBodyError(415, 'content_type_required');
@@ -1170,7 +1175,7 @@ async function readJsonBody(
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.byteLength;
-    if (size > MAX_JSON_BODY_BYTES) {
+    if (size > maximumBytes) {
       throw new RequestBodyError(413, 'body_too_large');
     }
     chunks.push(buffer);
