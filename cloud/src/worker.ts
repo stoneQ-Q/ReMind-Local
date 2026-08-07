@@ -24,8 +24,8 @@ import {
 import {
   createLinkParseHandler,
   ensureNextLinkParseJob,
-  ensureNextLinkVideoMediaRequest,
-  reconcileNextLinkVideoMediaRequest,
+  ensureNextLinkMediaRequest,
+  reconcileNextLinkMediaRequest,
 } from './link-processing.js';
 import {
   createMediaProcessingHandlers,
@@ -110,7 +110,7 @@ async function run(): Promise<void> {
       if (await ensureNextLinkParseJob(database)) continue;
       if (
         mediaHandlers.size > 0 &&
-        (await ensureNextLinkVideoMediaRequest(database))
+        (await ensureNextLinkMediaRequest(database, Boolean(whisperUrl)))
       ) {
         continue;
       }
@@ -122,7 +122,7 @@ async function run(): Promise<void> {
       }
       if (
         mediaHandlers.size > 0 &&
-        (await reconcileNextLinkVideoMediaRequest(database))
+        (await reconcileNextLinkMediaRequest(database))
       ) {
         continue;
       }

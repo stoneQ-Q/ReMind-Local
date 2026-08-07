@@ -11,13 +11,14 @@ describe('Whisper media client', () => {
       const form = init?.body as FormData;
       expect(form.get('response_format')).toBe('json');
       expect(form.get('file')).toBeInstanceOf(Blob);
+      expect((form.get('file') as File).name).toBe('audio.m4a');
       return new Response(JSON.stringify({ text: '  本地转写成功。  ' }), {
         headers: { 'content-type': 'application/json' },
       });
     });
     await expect(
       new WhisperMediaClient('http://whisper:8080', fetcher).transcribeAudio(
-        { content: Buffer.from('audio'), contentType: 'audio/mpeg' },
+        { content: Buffer.from('audio'), contentType: 'audio/mp4' },
         signal,
       ),
     ).resolves.toEqual({

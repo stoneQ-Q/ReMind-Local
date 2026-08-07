@@ -6,6 +6,13 @@ const migration = readFileSync(
   new URL('./migrations/0007_link_processing.sql', import.meta.url),
   'utf8',
 );
+const xiaoyuzhouMigration = readFileSync(
+  new URL(
+    './migrations/0015_xiaoyuzhou_audio_processing.sql',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
 describe('link processing migration', () => {
   it('stores bounded link results on the user-owned note', () => {
@@ -23,5 +30,15 @@ describe('link processing migration', () => {
     expect(migration).toContain('FOREIGN KEY (user_id, link_job_id)');
     expect(migration).toContain('ON DELETE SET NULL (link_job_id)');
     expect(migration).toContain('notes_link_processing_idx');
+  });
+
+  it('adds Xiaoyuzhou audio without weakening the existing link boundary', () => {
+    expect(xiaoyuzhouMigration).toContain(
+      "link_platform IN ('web', 'xiaohongshu', 'xiaoyuzhou')",
+    );
+    expect(xiaoyuzhouMigration).toContain(
+      "link_media_type IN ('web', 'image', 'video', 'audio')",
+    );
+    expect(xiaoyuzhouMigration).toContain('notes_link_media_processing_idx');
   });
 });

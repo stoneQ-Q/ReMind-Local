@@ -76,6 +76,9 @@ function whisperAudioName(contentType: string): string {
   if (contentType.includes('wav')) return 'audio.wav';
   if (contentType.includes('ogg')) return 'audio.ogg';
   if (contentType.includes('flac')) return 'audio.flac';
+  if (contentType.includes('mp4') || contentType.includes('m4a')) {
+    return 'audio.m4a';
+  }
   return 'audio.mp3';
 }
 

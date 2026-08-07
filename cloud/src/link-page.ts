@@ -18,6 +18,8 @@ const MAX_XHS_IMAGES = 12;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_XHS_VIDEO_BYTES = 200_000_000;
 const XHS_VIDEO_TIMEOUT_MS = 120_000;
+const MAX_XIAOYUZHOU_AUDIO_BYTES = 100_000_000;
+const XIAOYUZHOU_AUDIO_TIMEOUT_MS = 120_000;
 
 export type LinkSnapshot = {
   url: string;
@@ -26,10 +28,11 @@ export type LinkSnapshot = {
   site: string;
   text: string;
   images: string[];
-  platform: 'web' | 'xiaohongshu';
-  mediaType: 'web' | 'image' | 'video';
+  platform: 'web' | 'xiaohongshu' | 'xiaoyuzhou';
+  mediaType: 'web' | 'image' | 'video' | 'audio';
   durationSeconds: number | null;
   transientVideoUrl?: string;
+  transientAudioUrl?: string;
 };
 
 export interface LinkPageFetcher {
@@ -43,6 +46,15 @@ export type LinkVideoDownload = {
 
 export interface LinkVideoFetcher {
   fetch(url: string, signal: AbortSignal): Promise<LinkVideoDownload>;
+}
+
+export type LinkAudioDownload = {
+  content: Buffer;
+  contentType: 'audio/mpeg' | 'audio/mp4';
+};
+
+export interface LinkAudioFetcher {
+  fetch(url: string, signal: AbortSignal): Promise<LinkAudioDownload>;
 }
 
 export class SecureXiaohongshuVideoFetcher implements LinkVideoFetcher {
@@ -72,6 +84,33 @@ export class SecureXiaohongshuVideoFetcher implements LinkVideoFetcher {
       return { content: response.body, contentType: 'video/mp4' };
     }
     throw new Error('link_video_redirect_invalid');
+  }
+}
+
+export class SecureXiaoyuzhouAudioFetcher implements LinkAudioFetcher {
+  async fetch(inputUrl: string, signal: AbortSignal): Promise<LinkAudioDownload> {
+    let current = validateXiaoyuzhouAudioUrl(inputUrl);
+    for (let redirects = 0; redirects <= 2; redirects += 1) {
+      const response = await requestXiaoyuzhouAudio(current, signal);
+      if (response.status >= 300 && response.status < 400) {
+        if (!response.location || redirects === 2) {
+          throw new Error('link_audio_redirect_invalid');
+        }
+        current = validateXiaoyuzhouAudioUrl(
+          new URL(response.location, current).toString(),
+        );
+        continue;
+      }
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`link_audio_http_${response.status}`);
+      }
+      const contentType = normalizeXiaoyuzhouAudioContentType(
+        response.contentType,
+        current,
+      );
+      return { content: response.body, contentType };
+    }
+    throw new Error('link_audio_redirect_invalid');
   }
 }
 
@@ -130,6 +169,9 @@ export function extractLinkSnapshot(
   const finalUrl = new URL(validatePublicLinkUrl(finalUrlValue));
   if (isXiaohongshuHost(finalUrl.hostname)) {
     return extractXiaohongshuSnapshot(finalUrl, html);
+  }
+  if (isXiaoyuzhouHost(finalUrl.hostname)) {
+    return extractXiaoyuzhouSnapshot(finalUrl, html);
   }
   if (
     finalUrl.hostname === 'open.weixin.qq.com' ||
@@ -290,6 +332,23 @@ function validateXiaohongshuVideoUrl(value: string): string {
   return url.toString();
 }
 
+function validateXiaoyuzhouAudioUrl(value: string): string {
+  if (value.length > 2_048) throw new Error('link_audio_url_too_long');
+  const url = new URL(value);
+  const hostname = normalizedHostname(url.hostname);
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    (url.port && url.port !== '443') ||
+    (hostname !== 'xyzcdn.net' && !hostname.endsWith('.xyzcdn.net'))
+  ) {
+    throw new Error('link_audio_url_invalid');
+  }
+  url.hash = '';
+  return url.toString();
+}
+
 async function requestXiaohongshuVideo(
   urlValue: string,
   signal: AbortSignal,
@@ -378,6 +437,119 @@ async function requestXiaohongshuVideo(
   });
 }
 
+async function requestXiaoyuzhouAudio(
+  urlValue: string,
+  signal: AbortSignal,
+): Promise<{
+  status: number;
+  location: string | null;
+  contentType: string;
+  body: Buffer;
+}> {
+  const url = new URL(validateXiaoyuzhouAudioUrl(urlValue));
+  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((item) => isBlockedAddress(item.address))) {
+    throw new Error('link_private_network');
+  }
+  const address = addresses[0];
+  if (!address) throw new Error('link_dns_failed');
+
+  return new Promise((resolve, reject) => {
+    const request = requestHttps(
+      {
+        protocol: 'https:',
+        hostname: address.address,
+        family: address.family,
+        port: 443,
+        path: `${url.pathname}${url.search}`,
+        method: 'GET',
+        servername: url.hostname,
+        headers: {
+          Accept: 'audio/mp4,audio/mpeg,application/octet-stream;q=0.8',
+          Host: url.host,
+          Referer: 'https://www.xiaoyuzhoufm.com/',
+          'User-Agent':
+            'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 ' +
+            'Chrome/138.0.0.0 Mobile Safari/537.36',
+        },
+      },
+      (response) => {
+        const status = response.statusCode ?? 0;
+        const location =
+          typeof response.headers.location === 'string'
+            ? response.headers.location
+            : null;
+        const contentType = String(response.headers['content-type'] ?? '')
+          .toLowerCase();
+        if (status >= 300 && status < 400) {
+          response.resume();
+          resolve({ status, location, contentType, body: Buffer.alloc(0) });
+          return;
+        }
+        const declaredLength = Number(response.headers['content-length'] ?? 0);
+        if (
+          Number.isFinite(declaredLength) &&
+          declaredLength > MAX_XIAOYUZHOU_AUDIO_BYTES
+        ) {
+          response.destroy(new Error('link_audio_too_large'));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        response.on('data', (chunk: Buffer) => {
+          bytes += chunk.byteLength;
+          if (bytes > MAX_XIAOYUZHOU_AUDIO_BYTES) {
+            response.destroy(new Error('link_audio_too_large'));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.once('error', reject);
+        response.once('end', () => {
+          if (!bytes) {
+            reject(new Error('link_audio_empty'));
+            return;
+          }
+          resolve({ status, location, contentType, body: Buffer.concat(chunks) });
+        });
+      },
+    );
+    const abort = () => request.destroy(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    request.setTimeout(XIAOYUZHOU_AUDIO_TIMEOUT_MS, () => {
+      request.destroy(new Error('link_audio_request_timeout'));
+    });
+    request.once('error', reject);
+    request.once('close', () => signal.removeEventListener('abort', abort));
+    request.end();
+  });
+}
+
+function normalizeXiaoyuzhouAudioContentType(
+  value: string,
+  urlValue: string,
+): 'audio/mpeg' | 'audio/mp4' {
+  const contentType = value.split(';', 1)[0]?.trim() ?? '';
+  if (contentType === 'audio/mpeg' || contentType === 'audio/mp3') {
+    return 'audio/mpeg';
+  }
+  if (
+    contentType === 'audio/mp4' ||
+    contentType === 'audio/x-m4a' ||
+    contentType === 'application/mp4'
+  ) {
+    return 'audio/mp4';
+  }
+  if (contentType === 'application/octet-stream' || !contentType) {
+    const pathname = new URL(urlValue).pathname.toLowerCase();
+    if (pathname.endsWith('.mp3')) return 'audio/mpeg';
+    if (pathname.endsWith('.m4a') || pathname.endsWith('.mp4')) {
+      return 'audio/mp4';
+    }
+  }
+  throw new Error('link_audio_content_type_invalid');
+}
+
 function decodeResponseBody(buffer: Buffer, encoding: string): string {
   const normalized = encoding.trim().toLowerCase();
   let decoded: Buffer;
@@ -446,6 +618,106 @@ function extractXiaohongshuSnapshot(finalUrl: URL, html: string): LinkSnapshot {
       : null,
     transientVideoUrl: transientVideoUrl ?? undefined,
   };
+}
+
+function extractXiaoyuzhouSnapshot(finalUrl: URL, html: string): LinkSnapshot {
+  if (!/^\/episodes?\/[0-9a-f]{24}\/?$/i.test(finalUrl.pathname)) {
+    throw new Error('link_xiaoyuzhou_episode_required');
+  }
+  const nextData = matchFirst(
+    html,
+    /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
+  );
+  if (!nextData) throw new Error('link_xiaoyuzhou_data_missing');
+
+  let episode: Record<string, unknown>;
+  try {
+    const payload = JSON.parse(nextData) as unknown;
+    episode = objectValue(
+      objectValue(objectValue(payload, 'props'), 'pageProps'),
+      'episode',
+    );
+  } catch {
+    throw new Error('link_xiaoyuzhou_data_invalid');
+  }
+
+  const title = stringValue(episode, 'title').trim().slice(0, 300);
+  const description = stringValue(episode, 'description').trim();
+  const podcast = objectValue(episode, 'podcast');
+  const podcastTitle = stringValue(podcast, 'title').trim();
+  const author = stringValue(podcast, 'author').trim();
+  const payType = stringValue(episode, 'payType').trim().toUpperCase();
+  if ((payType && payType !== 'FREE') || episode.isPrivateMedia === true) {
+    throw new Error('link_xiaoyuzhou_restricted');
+  }
+  const transientAudioUrl = normalizeXiaoyuzhouAudioUrl(
+    stringValue(objectValue(episode, 'enclosure'), 'url'),
+  );
+  const duration = numberValue(episode, 'duration');
+  const durationSeconds =
+    duration !== null && duration >= 1 && duration <= 6 * 60 * 60
+      ? Math.round(duration)
+      : null;
+  if (!title || !transientAudioUrl || durationSeconds === null) {
+    throw new Error('link_xiaoyuzhou_audio_unavailable');
+  }
+  const text = [
+    podcastTitle ? `播客：${podcastTitle}` : '',
+    author ? `主播：${author}` : '',
+    `时长：${formatDuration(durationSeconds)}`,
+    description ? `单集介绍：\n${description}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, MAX_EXTRACTED_TEXT);
+  if (text.length < 20) throw new Error('link_no_readable_content');
+
+  return {
+    url: finalUrl.toString(),
+    title,
+    description: description.slice(0, 600),
+    site: 'xiaoyuzhoufm.com',
+    text,
+    images: [],
+    platform: 'xiaoyuzhou',
+    mediaType: 'audio',
+    durationSeconds,
+    transientAudioUrl,
+  };
+}
+
+function normalizeXiaoyuzhouAudioUrl(value: string): string | null {
+  try {
+    return validateXiaoyuzhouAudioUrl(value);
+  } catch {
+    return null;
+  }
+}
+
+function objectValue(value: unknown, key: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const child = (value as Record<string, unknown>)[key];
+  return typeof child === 'object' && child !== null && !Array.isArray(child)
+    ? (child as Record<string, unknown>)
+    : {};
+}
+
+function stringValue(value: Record<string, unknown>, key: string): string {
+  const child = value[key];
+  return typeof child === 'string' ? child : '';
+}
+
+function numberValue(value: Record<string, unknown>, key: string): number | null {
+  const child = value[key];
+  return typeof child === 'number' && Number.isFinite(child) ? child : null;
+}
+
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.ceil((seconds % 3_600) / 60);
+  return hours > 0 ? `${hours} 小时 ${minutes} 分钟` : `${minutes} 分钟`;
 }
 
 function extractXiaohongshuVideoUrl(html: string): string | null {
@@ -533,6 +805,14 @@ function isXiaohongshuHost(hostname: string): boolean {
     normalized.endsWith('.xiaohongshu.com') ||
     normalized === 'xhslink.cn' ||
     normalized.endsWith('.xhslink.cn')
+  );
+}
+
+function isXiaoyuzhouHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === 'xiaoyuzhoufm.com' ||
+    normalized.endsWith('.xiaoyuzhoufm.com')
   );
 }
 

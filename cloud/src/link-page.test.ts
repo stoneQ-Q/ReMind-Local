@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseLinkInput } from './link-input.js';
 import {
   extractLinkSnapshot,
+  SecureXiaoyuzhouAudioFetcher,
   SecureXiaohongshuVideoFetcher,
   validatePublicLinkUrl,
 } from './link-page.js';
@@ -55,6 +56,74 @@ describe('link processing boundary', () => {
       mediaType: 'web',
     });
     expect(snapshot.text).not.toContain('不应进入正文');
+  });
+
+  it('extracts a public Xiaoyuzhou episode while keeping its CDN URL transient', () => {
+    const nextData = JSON.stringify({
+      props: {
+        pageProps: {
+          episode: {
+            title: '如何把播客变成可回看的个人知识',
+            description: '本期讨论记录、转写和回顾之间的关系。',
+            duration: 3_661,
+            payType: 'FREE',
+            isPrivateMedia: false,
+            enclosure: {
+              url: 'https://media.xyzcdn.net/podcast/episode.m4a?token=public#ignored',
+            },
+            podcast: { title: '回声实验室', author: '小宇宙主播' },
+          },
+        },
+      },
+    });
+    const snapshot = extractLinkSnapshot(
+      'https://www.xiaoyuzhoufm.com/episode/69ac329bc8cdeb38c25497d4',
+      `<script id="__NEXT_DATA__" type="application/json">${nextData}</script>`,
+    );
+
+    expect(snapshot).toMatchObject({
+      title: '如何把播客变成可回看的个人知识',
+      site: 'xiaoyuzhoufm.com',
+      platform: 'xiaoyuzhou',
+      mediaType: 'audio',
+      durationSeconds: 3_661,
+      transientAudioUrl:
+        'https://media.xyzcdn.net/podcast/episode.m4a?token=public',
+    });
+    expect(snapshot.text).toContain('播客：回声实验室');
+    expect(snapshot.text).toContain('主播：小宇宙主播');
+  });
+
+  it('rejects paid Xiaoyuzhou episodes and untrusted audio hosts', () => {
+    const page = (episode: Record<string, unknown>) =>
+      `<script id="__NEXT_DATA__">${JSON.stringify({
+        props: { pageProps: { episode } },
+      })}</script>`;
+    const url =
+      'https://www.xiaoyuzhoufm.com/episode/69ac329bc8cdeb38c25497d4';
+    expect(() =>
+      extractLinkSnapshot(
+        url,
+        page({
+          title: '付费单集',
+          duration: 600,
+          payType: 'PAID',
+          enclosure: { url: 'https://media.xyzcdn.net/private.m4a' },
+        }),
+      ),
+    ).toThrow('link_xiaoyuzhou_restricted');
+    expect(() =>
+      extractLinkSnapshot(
+        url,
+        page({
+          title: '伪造单集',
+          description: '这段介绍足够长，但媒体地址不属于可信的小宇宙 CDN。',
+          duration: 600,
+          payType: 'FREE',
+          enclosure: { url: 'https://attacker.example/audio.m4a' },
+        }),
+      ),
+    ).toThrow('link_xiaoyuzhou_audio_unavailable');
   });
 
   it('extracts XHS images only from its HTTPS CDN', () => {
@@ -136,5 +205,17 @@ describe('link processing boundary', () => {
     await expect(
       fetcher.fetch('https://127.0.0.1/video.mp4', signal),
     ).rejects.toThrow('link_video_url_invalid');
+  });
+
+  it('keeps audio downloads inside the HTTPS Xiaoyuzhou CDN boundary', async () => {
+    const fetcher = new SecureXiaoyuzhouAudioFetcher();
+    const signal = new AbortController().signal;
+
+    await expect(
+      fetcher.fetch('https://attacker.example/audio.m4a', signal),
+    ).rejects.toThrow('link_audio_url_invalid');
+    await expect(
+      fetcher.fetch('http://media.xyzcdn.net/audio.m4a', signal),
+    ).rejects.toThrow('link_audio_url_invalid');
   });
 });

@@ -3,12 +3,17 @@ import type { Pool, PoolClient } from 'pg';
 import type { JobHandler } from './jobs.js';
 import {
   SecureLinkPageFetcher,
+  SecureXiaoyuzhouAudioFetcher,
   SecureXiaohongshuVideoFetcher,
+  type LinkAudioFetcher,
   type LinkPageFetcher,
   type LinkVideoFetcher,
   validatePublicLinkUrl,
 } from './link-page.js';
-import { createByokMediaProcessingRequest } from './media-processing.js';
+import {
+  createByokMediaProcessingRequest,
+  createTemporaryLinkAudioProcessingRequest,
+} from './media-processing.js';
 import { saveObjectFile } from './object-files.js';
 import type { ObjectStore } from './object-store.js';
 
@@ -126,6 +131,7 @@ export function createLinkParseHandler(
   store: ObjectStore,
   fetcher: LinkPageFetcher = new SecureLinkPageFetcher(),
   videoFetcher: LinkVideoFetcher = new SecureXiaohongshuVideoFetcher(),
+  audioFetcher: LinkAudioFetcher = new SecureXiaoyuzhouAudioFetcher(),
 ): JobHandler {
   return async (job, signal) => {
     const { noteId, generation } = parseLinkJobInput(job.input);
@@ -149,6 +155,12 @@ export function createLinkParseHandler(
         snapshot.transientVideoUrl
           ? await videoFetcher.fetch(snapshot.transientVideoUrl, signal)
           : null;
+      const audio =
+        snapshot.platform === 'xiaoyuzhou' &&
+        snapshot.mediaType === 'audio' &&
+        snapshot.transientAudioUrl
+          ? await audioFetcher.fetch(snapshot.transientAudioUrl, signal)
+          : null;
       const sourceFile = video
         ? await saveObjectFile(pool, store, {
             userId: job.userId,
@@ -157,6 +169,17 @@ export function createLinkParseHandler(
             purpose: 'source',
             originalName: `xiaohongshu-${noteId}.mp4`,
           })
+        : audio
+          ? await saveObjectFile(pool, store, {
+              userId: job.userId,
+              contentType: audio.contentType,
+              content: audio.content,
+              purpose: 'temporary',
+              originalName: `xiaoyuzhou-${noteId}.${
+                audio.contentType === 'audio/mpeg' ? 'mp3' : 'm4a'
+              }`,
+              temporaryTtlSeconds: 4 * 60 * 60,
+            })
         : null;
       const updated = await pool.query(
         `UPDATE notes
@@ -230,41 +253,71 @@ export function createLinkParseHandler(
   };
 }
 
-export async function ensureNextLinkVideoMediaRequest(
+export async function ensureNextLinkMediaRequest(
   pool: Pool,
+  serverWhisperAvailable = false,
 ): Promise<string | null> {
   const candidate = await pool.query<{
     id: string;
     user_id: string;
     link_source_file_id: string;
     link_generation: string;
+    link_media_type: 'video' | 'audio';
+    link_duration_seconds: number | null;
   }>(
     `SELECT note.id, note.user_id, note.link_source_file_id,
-            note.link_generation
+            note.link_generation, note.link_media_type,
+            note.link_duration_seconds
      FROM notes AS note
      JOIN users AS owner ON owner.id = note.user_id
      WHERE note.deleted_at IS NULL
-       AND note.link_media_type = 'video'
+       AND note.link_media_type IN ('video', 'audio')
        AND note.link_source_file_id IS NOT NULL
        AND note.link_media_request_id IS NULL
        AND note.link_media_status IN ('awaiting_key', 'pending')
        AND owner.status = 'active'
        AND owner.ai_mode = 'bring_your_own_key'
-       AND EXISTS (
-         SELECT 1 FROM api_credentials
-         WHERE user_id = note.user_id AND provider = 'deepseek'
-           AND revoked_at IS NULL
+       AND (
+         (
+           note.link_media_type = 'video'
+           AND EXISTS (
+             SELECT 1 FROM api_credentials
+             WHERE user_id = note.user_id AND provider = 'deepseek'
+               AND revoked_at IS NULL
+           )
+         )
+         OR (
+           note.link_media_type = 'audio'
+           AND (
+             $1::boolean
+             OR EXISTS (
+               SELECT 1 FROM api_credentials
+               WHERE user_id = note.user_id AND provider = 'zhipu'
+                 AND revoked_at IS NULL
+             )
+           )
+         )
        )
      ORDER BY note.created_at, note.id
      LIMIT 1`,
+    [serverWhisperAvailable],
   );
   const row = candidate.rows[0];
   if (!row) return null;
-  const request = await createByokMediaProcessingRequest(pool, {
-    userId: row.user_id,
-    sourceFileId: row.link_source_file_id,
-    idempotencyKey: `link-video:${row.id}:${row.link_generation}`,
-  });
+  const request =
+    row.link_media_type === 'audio'
+      ? await createTemporaryLinkAudioProcessingRequest(pool, {
+          userId: row.user_id,
+          sourceFileId: row.link_source_file_id,
+          idempotencyKey: `link-audio:${row.id}:${row.link_generation}`,
+          durationSeconds: row.link_duration_seconds ?? 1,
+          serverWhisperAvailable,
+        })
+      : await createByokMediaProcessingRequest(pool, {
+          userId: row.user_id,
+          sourceFileId: row.link_source_file_id,
+          idempotencyKey: `link-video:${row.id}:${row.link_generation}`,
+        });
   await pool.query(
     `UPDATE notes
      SET link_media_request_id = $1,
@@ -280,19 +333,22 @@ export async function ensureNextLinkVideoMediaRequest(
   return `created:${row.id}:${request.id}`;
 }
 
-export async function reconcileNextLinkVideoMediaRequest(
+export async function reconcileNextLinkMediaRequest(
   pool: Pool,
 ): Promise<string | null> {
   const result = await pool.query<{
     id: string;
     user_id: string;
-    source_page_description: string | null;
+    source_page_text: string | null;
+    link_media_type: 'video' | 'audio';
+    link_source_file_id: string;
     request_status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'cancelled';
     transcript: string | null;
     result_json: unknown;
     error_code: string | null;
   }>(
-    `SELECT note.id, note.user_id, note.source_page_description,
+    `SELECT note.id, note.user_id, note.source_page_text,
+            note.link_media_type, note.link_source_file_id,
             request.status AS request_status, request.transcript,
             request.result_json, request.error_code
      FROM notes AS note
@@ -324,8 +380,9 @@ export async function reconcileNextLinkVideoMediaRequest(
     return `processing:${row.id}`;
   }
   if (row.request_status === 'succeeded') {
-    const text = buildVideoEvidenceText(
-      row.source_page_description,
+    const text = buildMediaEvidenceText(
+      row.link_media_type,
+      row.source_page_text,
       row.transcript,
       row.result_json,
     );
@@ -334,6 +391,10 @@ export async function reconcileNextLinkVideoMediaRequest(
        SET source_page_text = $1,
            link_media_status = 'succeeded',
            link_media_error_code = NULL,
+           link_source_file_id = CASE
+             WHEN link_media_type = 'audio' THEN NULL
+             ELSE link_source_file_id
+           END,
            sync_version = sync_version + 1,
            updated_at = now()
        WHERE user_id = $2 AND id = $3
@@ -345,6 +406,10 @@ export async function reconcileNextLinkVideoMediaRequest(
       `UPDATE notes
        SET link_media_status = 'failed',
            link_media_error_code = $1,
+           link_source_file_id = CASE
+             WHEN link_media_type = 'audio' THEN NULL
+             ELSE link_source_file_id
+           END,
            sync_version = sync_version + 1,
            updated_at = now()
        WHERE user_id = $2 AND id = $3
@@ -352,11 +417,13 @@ export async function reconcileNextLinkVideoMediaRequest(
       [row.error_code ?? row.request_status, row.user_id, row.id],
     );
   }
+  await expireTemporaryLinkSource(pool, row.user_id, row.link_source_file_id);
   return `reconciled:${row.id}:${row.request_status}`;
 }
 
-function buildVideoEvidenceText(
-  description: string | null,
+function buildMediaEvidenceText(
+  mediaType: 'video' | 'audio',
+  existingText: string | null,
   transcript: string | null,
   result: unknown,
 ): string {
@@ -369,15 +436,31 @@ function buildVideoEvidenceText(
     ? data.highlights.filter((item): item is string => typeof item === 'string')
     : [];
   const sections = [
-    description?.trim() ?? '',
-    summary
+    existingText?.trim() ?? '',
+    mediaType === 'video' && summary
       ? `视频内容摘要\n${summary}${
           highlights.length ? `\n${highlights.map((item) => `- ${item}`).join('\n')}` : ''
-        }`
+      }`
       : '',
-    transcript?.trim() ? `视频语音转写\n${transcript.trim()}` : '',
+    transcript?.trim()
+      ? `${mediaType === 'audio' ? '音频转写' : '视频语音转写'}\n${transcript.trim()}`
+      : '',
   ].filter(Boolean);
   return sections.join('\n\n').slice(0, 24_000);
+}
+
+async function expireTemporaryLinkSource(
+  pool: Pool,
+  userId: string,
+  fileId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE files
+     SET expires_at = LEAST(expires_at, now()), updated_at = now()
+     WHERE user_id = $1 AND id = $2
+       AND purpose = 'temporary' AND status = 'ready'`,
+    [userId, fileId],
+  );
 }
 
 async function loadLinkNote(
@@ -434,7 +517,7 @@ function normalizeErrorCode(error: unknown): string {
 }
 
 function sanitizeSnapshotImages(
-  platform: 'web' | 'xiaohongshu',
+  platform: 'web' | 'xiaohongshu' | 'xiaoyuzhou',
   values: readonly string[],
 ): string[] {
   if (platform !== 'xiaohongshu') return [];
