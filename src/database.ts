@@ -1069,19 +1069,36 @@ export async function updateNoteStatus(
 export async function saveOrganizationResponse(
   db: SQLiteDatabase,
   response: OrganizationResponse,
+  options: { regenerateSourceIds?: string[] } = {},
 ): Promise<OrganizeDraft[]> {
   const now = new Date().toISOString();
+  const regenerateSourceIds = new Set(options.regenerateSourceIds ?? []);
   await db.withExclusiveTransactionAsync(async (transaction) => {
     for (const payload of response.drafts) {
       const sourceIds = [...new Set(payload.sourceIds)];
       if (sourceIds.length === 0) continue;
       const placeholders = sourceIds.map(() => '?').join(', ');
+      const regenerating = sourceIds.some((id) => regenerateSourceIds.has(id));
+      if (regenerating) {
+        await transaction.runAsync(
+          `UPDATE organize_drafts
+           SET status = 'dismissed', updated_at = ?
+           WHERE status = 'pending'
+             AND EXISTS (
+               SELECT 1 FROM organize_draft_sources source
+               WHERE source.draft_id = organize_drafts.id
+                 AND source.note_id IN (${placeholders})
+             )`,
+          now,
+          ...sourceIds,
+        );
+      }
       const existing = await transaction.getFirstAsync<{ id: string }>(
         `SELECT od.id
          FROM organize_drafts od
          INNER JOIN organize_draft_sources ods ON ods.draft_id = od.id
          WHERE ods.note_id IN (${placeholders})
-           AND od.status IN ('pending', 'accepted')
+           AND od.status IN (${regenerating ? "'pending'" : "'pending', 'accepted'"})
          LIMIT 1`,
         ...sourceIds,
       );
@@ -1267,8 +1284,32 @@ export async function acceptOrganizationDraft(
       linkSource?.source_page_title ?? null,
       citations.map((citation) => citation.quote),
     );
+    const previous = await transaction.getFirstAsync<{
+      id: string;
+      created_at: string;
+    }>(
+      `SELECT generated.id, generated.created_at
+       FROM organize_draft_sources current_source
+       INNER JOIN organize_draft_sources previous_source
+         ON previous_source.note_id = current_source.note_id
+        AND previous_source.draft_id != current_source.draft_id
+       INNER JOIN organize_drafts previous_draft
+         ON previous_draft.id = previous_source.draft_id
+        AND previous_draft.status = 'accepted'
+       INNER JOIN source_citations previous_citation
+         ON previous_citation.draft_id = previous_draft.id
+        AND previous_citation.note_id IS NOT NULL
+       INNER JOIN notes generated
+         ON generated.id = previous_citation.note_id
+        AND generated.deleted_at IS NULL
+        AND generated.record_type = 'source'
+       WHERE current_source.draft_id = ?
+       ORDER BY previous_draft.updated_at DESC
+       LIMIT 1`,
+      draftId,
+    );
     created = {
-      id: createLocalId(),
+      id: previous?.id ?? createLocalId(),
       title: title.trim() || deriveTitle(content),
       content: finalContent,
       summary: draft.summary,
@@ -1282,29 +1323,57 @@ export async function acceptOrganizationDraft(
       sourcePageSite: linkSource?.source_page_site ?? null,
       sourcePageText: null,
       tags: parseStringArray(draft.tags_json),
-      createdAt: now,
+      createdAt: previous?.created_at ?? now,
       updatedAt: now,
     };
-    await transaction.runAsync(
-      `INSERT INTO notes
-        (id, title, content, summary, status, source, record_type, content_kind,
-         source_url, user_context, source_page_title, source_page_site,
-         source_page_text, tags_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'ready', 'ai', ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
-      created.id,
-      created.title,
-      created.content,
-      created.summary,
-      created.recordType,
-      created.contentKind,
-      created.sourceUrl,
-      created.userContext,
-      created.sourcePageTitle,
-      created.sourcePageSite,
-      draft.tags_json,
-      now,
-      now,
-    );
+    if (previous) {
+      await transaction.runAsync(
+        `UPDATE notes
+         SET title = ?, content = ?, summary = ?, status = 'ready',
+             source = 'ai', record_type = ?, content_kind = ?,
+             source_url = ?, user_context = ?, source_page_title = ?,
+             source_page_site = ?, source_page_text = NULL, tags_json = ?,
+             updated_at = ?
+         WHERE id = ?`,
+        created.title,
+        created.content,
+        created.summary,
+        created.recordType,
+        created.contentKind,
+        created.sourceUrl,
+        created.userContext,
+        created.sourcePageTitle,
+        created.sourcePageSite,
+        draft.tags_json,
+        now,
+        created.id,
+      );
+      await transaction.runAsync(
+        'UPDATE source_citations SET note_id = NULL WHERE note_id = ?',
+        created.id,
+      );
+    } else {
+      await transaction.runAsync(
+        `INSERT INTO notes
+          (id, title, content, summary, status, source, record_type, content_kind,
+           source_url, user_context, source_page_title, source_page_site,
+           source_page_text, tags_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'ready', 'ai', ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+        created.id,
+        created.title,
+        created.content,
+        created.summary,
+        created.recordType,
+        created.contentKind,
+        created.sourceUrl,
+        created.userContext,
+        created.sourcePageTitle,
+        created.sourcePageSite,
+        draft.tags_json,
+        now,
+        now,
+      );
+    }
     await transaction.runAsync(
       `UPDATE organize_drafts
        SET status = 'accepted', title = ?, content = ?, updated_at = ?

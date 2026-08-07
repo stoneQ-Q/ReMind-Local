@@ -1546,7 +1546,9 @@ export function ReMindApp() {
               { ...note, title, content, userContext },
               userContext,
             );
-            const drafts = await saveOrganizationResponse(db, response);
+            const drafts = await saveOrganizationResponse(db, response, {
+              regenerateSourceIds: [note.id],
+            });
             await updateNoteStatus(db, note.id, 'ready');
             setOrganizeDrafts(drafts);
             setSelectedNote(null);
