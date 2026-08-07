@@ -1,0 +1,27 @@
+{
+  "name": "remind-cloud-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "migrate": "node dist/migrate.js",
+    "rotate:credentials": "node dist/rotate-credentials.js",
+    "smoke:cos": "node dist/cos-smoke.js",
+    "smoke:backup-restore": "node dist/backup-restore-smoke.js",
+    "smoke:billing": "node scripts/billing-smoke-runner.mjs",
+    "smoke:worker": "node scripts/worker-smoke.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "cos-nodejs-sdk-v5": "^3.0.0",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
+    "typescript": "~5.9.2",
+    "vitest": "^4.1.10"
+  }
+}

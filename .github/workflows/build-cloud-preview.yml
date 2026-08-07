@@ -1,0 +1,66 @@
+name: Build ReMind Cloud APK
+
+on:
+  push:
+    branches:
+      - cloud-build-32
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 21.7.0
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install and verify
+        run: |
+          npm ci
+          npm ci --prefix cloud
+          npm install --prefix gateway --no-package-lock
+          npm run typecheck
+          npm test
+
+      - name: Build signed cloud APK
+        run: |
+          mkdir -p artifacts
+          eas build --platform android --profile preview-local --local --non-interactive --output artifacts/ReMind-1.0.2-build32-xiaoyuzhou-transcript.apk
+
+      - name: Verify APK and checksum
+        run: |
+          unzip -t artifacts/ReMind-1.0.2-build32-xiaoyuzhou-transcript.apk
+          cd artifacts
+          sha256sum ReMind-1.0.2-build32-xiaoyuzhou-transcript.apk > SHA256SUMS.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReMind-1.0.2-build32-xiaoyuzhou-transcript
+          path: |
+            artifacts/ReMind-1.0.2-build32-xiaoyuzhou-transcript.apk
+            artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

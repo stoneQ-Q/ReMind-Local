@@ -1,0 +1,38 @@
+{
+  "cli": {
+    "version": ">= 16.28.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "autoIncrement": true,
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_REMIND_LOCAL_API_URL": "http://192.168.31.122:8787",
+        "EXPO_PUBLIC_REMIND_CLOUD_API_URL": "https://remind.43-129-237-189.sslip.io"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "preview-local": {
+      "extends": "preview",
+      "autoIncrement": false
+    },
+    "public-local": {
+      "distribution": "internal",
+      "autoIncrement": true,
+      "environment": "development",
+      "env": {
+        "REMIND_APP_VARIANT": "public-local"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "autoIncrement": true
+    }
+  }
+}

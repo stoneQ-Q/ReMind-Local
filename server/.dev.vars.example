@@ -1,0 +1,3 @@
+WECHAT_TOKEN=replace-with-wechat-token
+DEEPSEEK_API_KEY=replace-with-deepseek-api-key
+ZHIPU_API_KEY=optional-replace-with-zhipu-api-key

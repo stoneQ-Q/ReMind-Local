@@ -1,0 +1,72 @@
+name: Build ReMind Local APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 21.4.0
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release boundary
+        run: |
+          npm run release:check
+          npm run typecheck
+          npm test -- --run
+          npm --prefix server ci
+          npm --prefix server run typecheck
+          npm --prefix server test -- --run
+          npm --prefix gateway ci
+          npm --prefix gateway run typecheck
+          npm --prefix gateway test -- --run
+
+      - name: Build public APK locally on the runner
+        run: |
+          mkdir -p artifacts
+          eas build --platform android --profile public-local --local --non-interactive --output artifacts/ReMind-Local-1.0.3-preview.1.apk
+
+      - name: Scan and checksum APK
+        run: |
+          node scripts/check-public-apk.mjs artifacts/ReMind-Local-1.0.3-preview.1.apk
+          cd artifacts
+          sha256sum ReMind-Local-1.0.3-preview.1.apk > SHA256SUMS.txt
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReMind-Local-1.0.3-preview.1
+          path: |
+            artifacts/ReMind-Local-1.0.3-preview.1.apk
+            artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

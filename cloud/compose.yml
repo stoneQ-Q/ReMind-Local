@@ -1,0 +1,235 @@
+name: remind-cloud
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${REMIND_POSTGRES_DB:-remind}
+      POSTGRES_USER: ${REMIND_POSTGRES_USER:-remind}
+      POSTGRES_PASSWORD: ${REMIND_POSTGRES_PASSWORD:?set REMIND_POSTGRES_PASSWORD in cloud/.env}
+    ports:
+      - "127.0.0.1:${REMIND_DB_PORT:-5432}:5432"
+    volumes:
+      - remind-postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  migrate:
+    build:
+      context: .
+      target: runtime
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgresql://${REMIND_POSTGRES_USER:-remind}:${REMIND_POSTGRES_PASSWORD}@postgres:5432/${REMIND_POSTGRES_DB:-remind}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  api:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    command: ["node", "dist/api.js"]
+    environment:
+      DATABASE_URL: postgresql://${REMIND_POSTGRES_USER:-remind}:${REMIND_POSTGRES_PASSWORD}@postgres:5432/${REMIND_POSTGRES_DB:-remind}
+      PORT: 8790
+      REMIND_CREDENTIAL_KEY_VERSION: ${REMIND_CREDENTIAL_KEY_VERSION}
+      REMIND_CREDENTIAL_KEY_BASE64: ${REMIND_CREDENTIAL_KEY_BASE64}
+      REMIND_CREDENTIAL_KEY_RING_JSON: ${REMIND_CREDENTIAL_KEY_RING_JSON:-}
+      REMIND_MEDIA_PROVIDER: ${REMIND_MEDIA_PROVIDER:-disabled}
+      REMIND_PRICE_ZHIPU_VISION_PER_IMAGE_MICROS: ${REMIND_PRICE_ZHIPU_VISION_PER_IMAGE_MICROS:-}
+      REMIND_PRICE_ZHIPU_ASR_PER_MINUTE_MICROS: ${REMIND_PRICE_ZHIPU_ASR_PER_MINUTE_MICROS:-}
+      REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS: ${REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS:-}
+      REMIND_PRICE_DEEPSEEK_OUTPUT_PER_MILLION_TOKENS_MICROS: ${REMIND_PRICE_DEEPSEEK_OUTPUT_PER_MILLION_TOKENS_MICROS:-}
+      REMIND_OBJECT_STORE_PROVIDER: ${REMIND_OBJECT_STORE_PROVIDER:-local}
+      REMIND_OBJECT_STORE_ROOT: /var/lib/remind/objects
+      REMIND_COS_BUCKET: ${REMIND_COS_BUCKET:-}
+      REMIND_COS_REGION: ${REMIND_COS_REGION:-}
+      REMIND_COS_SECRET_ID: ${REMIND_COS_SECRET_ID:-}
+      REMIND_COS_SECRET_KEY: ${REMIND_COS_SECRET_KEY:-}
+      REMIND_COS_SECURITY_TOKEN: ${REMIND_COS_SECURITY_TOKEN:-}
+    volumes:
+      - remind-object-data:/var/lib/remind/objects
+    ports:
+      - "127.0.0.1:8790:8790"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+      - frontend
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:8790/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  worker:
+    build:
+      context: .
+      target: worker
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    environment:
+      DATABASE_URL: postgresql://${REMIND_POSTGRES_USER:-remind}:${REMIND_POSTGRES_PASSWORD}@postgres:5432/${REMIND_POSTGRES_DB:-remind}
+      REMIND_WORKER_POLL_MS: 1000
+      REMIND_CREDENTIAL_KEY_VERSION: ${REMIND_CREDENTIAL_KEY_VERSION}
+      REMIND_CREDENTIAL_KEY_BASE64: ${REMIND_CREDENTIAL_KEY_BASE64}
+      REMIND_CREDENTIAL_KEY_RING_JSON: ${REMIND_CREDENTIAL_KEY_RING_JSON:-}
+      REMIND_OBJECT_STORE_PROVIDER: ${REMIND_OBJECT_STORE_PROVIDER:-local}
+      REMIND_OBJECT_STORE_ROOT: /var/lib/remind/objects
+      REMIND_COS_BUCKET: ${REMIND_COS_BUCKET:-}
+      REMIND_COS_REGION: ${REMIND_COS_REGION:-}
+      REMIND_COS_SECRET_ID: ${REMIND_COS_SECRET_ID:-}
+      REMIND_COS_SECRET_KEY: ${REMIND_COS_SECRET_KEY:-}
+      REMIND_COS_SECURITY_TOKEN: ${REMIND_COS_SECURITY_TOKEN:-}
+      REMIND_MEDIA_PROVIDER: ${REMIND_MEDIA_PROVIDER:-disabled}
+      REMIND_WHISPER_URL: ${REMIND_WHISPER_URL:-}
+      REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED: ${REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED:-false}
+      REMIND_DASHSCOPE_API_KEY: ${REMIND_DASHSCOPE_API_KEY:-}
+      REMIND_DASHSCOPE_API_HOST: ${REMIND_DASHSCOPE_API_HOST:-}
+      REMIND_MANAGED_ZHIPU_API_KEY: ${REMIND_MANAGED_ZHIPU_API_KEY:-}
+      REMIND_MANAGED_DEEPSEEK_API_KEY: ${REMIND_MANAGED_DEEPSEEK_API_KEY:-}
+      REMIND_PRICE_ZHIPU_VISION_PER_IMAGE_MICROS: ${REMIND_PRICE_ZHIPU_VISION_PER_IMAGE_MICROS:-}
+      REMIND_PRICE_ZHIPU_ASR_PER_MINUTE_MICROS: ${REMIND_PRICE_ZHIPU_ASR_PER_MINUTE_MICROS:-}
+      REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS: ${REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS:-}
+      REMIND_PRICE_DEEPSEEK_OUTPUT_PER_MILLION_TOKENS_MICROS: ${REMIND_PRICE_DEEPSEEK_OUTPUT_PER_MILLION_TOKENS_MICROS:-}
+    volumes:
+      - remind-object-data:/var/lib/remind/objects
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  whisper-model:
+    image: ghcr.io/ggml-org/whisper.cpp@sha256:73cae3632eaac55bb37dd6c6d5450ec27cc15f0559f7f988e62a5c93f7cf166b
+    command:
+      - >-
+        test -s /models/ggml-small-q5_1.bin ||
+        ./models/download-ggml-model.sh small-q5_1 /models
+    volumes:
+      - remind-whisper-models:/models
+    networks:
+      - backend
+
+  whisper:
+    image: ghcr.io/ggml-org/whisper.cpp@sha256:73cae3632eaac55bb37dd6c6d5450ec27cc15f0559f7f988e62a5c93f7cf166b
+    restart: unless-stopped
+    command:
+      - >-
+        /app/build/bin/whisper-server
+        -m /models/ggml-small-q5_1.bin
+        --host 0.0.0.0 --port 8080
+        -l auto -t 2 -bs 5 -bo 5
+    volumes:
+      - remind-whisper-models:/models:ro
+    depends_on:
+      whisper-model:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/ >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+  backup:
+    build:
+      context: .
+      target: backup
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${REMIND_POSTGRES_DB:-remind}
+      PGUSER: ${REMIND_POSTGRES_USER:-remind}
+      PGPASSWORD: ${REMIND_POSTGRES_PASSWORD}
+      REMIND_BACKUP_INTERVAL_SECONDS: ${REMIND_BACKUP_INTERVAL_SECONDS:-86400}
+      REMIND_BACKUP_RETENTION_DAYS: ${REMIND_BACKUP_RETENTION_DAYS:-7}
+      REMIND_BACKUP_COS_ENABLED: ${REMIND_BACKUP_COS_ENABLED:-false}
+      REMIND_BACKUP_COS_BUCKET: ${REMIND_BACKUP_COS_BUCKET:-}
+      REMIND_BACKUP_COS_REGION: ${REMIND_BACKUP_COS_REGION:-}
+      REMIND_BACKUP_COS_SECRET_ID: ${REMIND_BACKUP_COS_SECRET_ID:-}
+      REMIND_BACKUP_COS_SECRET_KEY: ${REMIND_BACKUP_COS_SECRET_KEY:-}
+      REMIND_BACKUP_COS_SECURITY_TOKEN: ${REMIND_BACKUP_COS_SECURITY_TOKEN:-}
+      REMIND_BACKUP_ENCRYPTION_KEY_BASE64: ${REMIND_BACKUP_ENCRYPTION_KEY_BASE64:-}
+    volumes:
+      - ${REMIND_BACKUP_HOST_DIR:-./backups}:/backups
+      - ./scripts/backup-loop.sh:/usr/local/bin/backup-loop.sh:ro
+    command: ["/bin/sh", "/usr/local/bin/backup-loop.sh"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    profiles:
+      - public
+    environment:
+      REMIND_PUBLIC_HOST: ${REMIND_PUBLIC_HOST:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - remind-caddy-data:/data
+      - remind-caddy-config:/config
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - frontend
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --spider
+        - http://127.0.0.1:2019/config/
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  remind-postgres-data:
+  remind-object-data:
+  remind-caddy-data:
+  remind-caddy-config:
+  remind-whisper-models:
+
+networks:
+  backend:
+  frontend:
