@@ -39,6 +39,8 @@ jobs:
       - name: Install and verify
         run: |
           npm ci
+          npm ci --prefix cloud
+          npm ci --prefix gateway
           npm run typecheck
           npm test
 
