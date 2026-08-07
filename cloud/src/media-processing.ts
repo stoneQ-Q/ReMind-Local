@@ -1648,7 +1648,10 @@ function jobTypeForStage(
 
 function timeoutForStage(stage: MediaStage): number {
   if (stage === 'video_prepare') return 600;
-  if (stage === 'video_transcribe') return 3_600;
+  // A six-hour link can produce up to 800 trusted 28-second segments. The
+  // server Whisper path is intentionally CPU-limited, so keep the job lease
+  // long enough to finish without discarding a nearly complete transcript.
+  if (stage === 'video_transcribe') return 14_400;
   if (stage === 'audio_transcribe') return 900;
   return 120;
 }
