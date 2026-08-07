@@ -2660,6 +2660,7 @@ function NoteEditor({
   const [linkOrganizing, setLinkOrganizing] = useState(false);
   const [editingMarkdown, setEditingMarkdown] = useState(false);
   const [originalCaptureExpanded, setOriginalCaptureExpanded] = useState(false);
+  const [sourceContentExpanded, setSourceContentExpanded] = useState(false);
 
   useEffect(() => {
     if (!note) return;
@@ -2668,6 +2669,7 @@ function NoteEditor({
     setUserContext(note.userContext ?? '');
     setEditingMarkdown(note.recordType === 'capture');
     setOriginalCaptureExpanded(false);
+    setSourceContentExpanded(false);
   }, [note]);
 
   const save = async () => {
@@ -2766,6 +2768,48 @@ function NoteEditor({
               </View>
             </View>
           )}
+          {note?.recordType === 'capture' &&
+          note.sourceUrl?.includes('xiaoyuzhoufm.com') &&
+          note.sourcePageText?.trim() ? (
+            <View style={styles.audioTranscriptCard}>
+              <View style={styles.audioTranscriptHeader}>
+                <View style={styles.audioTranscriptMark}>
+                  <Text style={styles.audioTranscriptMarkText}>声</Text>
+                </View>
+                <View style={styles.audioTranscriptHeaderCopy}>
+                  <Text style={styles.audioTranscriptTitle}>
+                    小宇宙音频解析
+                  </Text>
+                  <Text style={styles.audioTranscriptMeta}>
+                    转写已完成 · 仅保留原始链接，未保存音频
+                  </Text>
+                </View>
+              </View>
+              <Text
+                numberOfLines={sourceContentExpanded ? undefined : 12}
+                selectable
+                style={styles.audioTranscriptBody}
+              >
+                {note.sourcePageText.trim()}
+              </Text>
+              <Pressable
+                accessibilityLabel={
+                  sourceContentExpanded ? '收起音频转写' : '展开音频转写全文'
+                }
+                onPress={() =>
+                  setSourceContentExpanded((current) => !current)
+                }
+                style={({ pressed }) => [
+                  styles.audioTranscriptToggle,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.audioTranscriptToggleText}>
+                  {sourceContentExpanded ? '收起全文 ↑' : '展开全文 ↓'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
           {note?.recordType === 'capture' && note.sourceUrl ? (
             <View style={styles.linkIntentCard}>
               <View style={styles.linkIntentHeading}>
@@ -6122,6 +6166,66 @@ const styles = StyleSheet.create({
   },
   editorMarkdownBody: {
     marginTop: 22,
+  },
+  audioTranscriptCard: {
+    marginTop: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#D8CDAF',
+    borderRadius: 18,
+    backgroundColor: '#FBF7EB',
+  },
+  audioTranscriptHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  audioTranscriptMark: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+    backgroundColor: '#E8DFC7',
+  },
+  audioTranscriptMarkText: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  audioTranscriptHeaderCopy: {
+    flex: 1,
+  },
+  audioTranscriptTitle: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  audioTranscriptMeta: {
+    marginTop: 3,
+    color: colors.muted,
+    fontSize: 11,
+    lineHeight: 17,
+  },
+  audioTranscriptBody: {
+    marginTop: 14,
+    color: colors.ink,
+    fontSize: 14,
+    lineHeight: 23,
+  },
+  audioTranscriptToggle: {
+    minHeight: 40,
+    marginTop: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#D8CDAF',
+  },
+  audioTranscriptToggleText: {
+    paddingTop: 10,
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '800',
   },
   originalCaptureArchive: {
     marginTop: 14,
