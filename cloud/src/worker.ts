@@ -6,6 +6,7 @@ import {
   WhisperFirstByokMediaProcessingProvider,
 } from './byok-media-provider.js';
 import {
+  dashscopeConfig,
   mediaProviderMode,
   whisperServiceUrl,
   workerPollMs,
@@ -38,6 +39,7 @@ import {
 } from './media-provider-routing.js';
 import { cleanupNextExpiredObject } from './object-files.js';
 import { objectStoreFromEnvironment } from './object-store.js';
+import { ParaformerClient } from './paraformer-client.js';
 import {
   createWechatPollHandler,
   ensureNextWechatPollJob,
@@ -50,8 +52,12 @@ const credentialCipher = credentialCipherFromEnvironment();
 const objectStore = objectStoreFromEnvironment();
 const mediaMode = mediaProviderMode();
 const whisperUrl = whisperServiceUrl();
+const dashscope = dashscopeConfig();
+const paraformer = dashscope
+  ? new ParaformerClient(dashscope.apiKey, dashscope.apiHost)
+  : null;
 const xiaoyuzhouAudioEnabled =
-  xiaoyuzhouTranscriptionEnabled() && Boolean(whisperUrl);
+  xiaoyuzhouTranscriptionEnabled() && Boolean(paraformer);
 const mediaHandlers: JobHandlers =
   mediaMode === 'mock'
     ? createMediaProcessingHandlers(database, objectStore)
@@ -99,8 +105,7 @@ const handlers: JobHandlers = new Map([
       objectStore,
       undefined,
       undefined,
-      undefined,
-      xiaoyuzhouAudioEnabled,
+      xiaoyuzhouAudioEnabled ? paraformer : null,
     ),
   ],
   ...mediaHandlers,
@@ -111,7 +116,7 @@ console.log(`ReMind cloud Worker started as ${workerId}`);
 console.log(`Media processing provider: ${mediaMode}`);
 console.log(`Server Whisper: ${whisperUrl ? 'enabled' : 'disabled'}`);
 console.log(
-  `Xiaoyuzhou transcription: ${xiaoyuzhouAudioEnabled ? 'enabled' : 'paused'}`,
+  `Xiaoyuzhou Paraformer: ${xiaoyuzhouAudioEnabled ? 'enabled' : 'paused'}`,
 );
 void run().finally(async () => {
   await closeDatabase();

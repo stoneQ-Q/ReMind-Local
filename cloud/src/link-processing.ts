@@ -3,9 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { JobHandler } from './jobs.js';
 import {
   SecureLinkPageFetcher,
-  SecureXiaoyuzhouAudioFetcher,
   SecureXiaohongshuVideoFetcher,
-  type LinkAudioFetcher,
   type LinkPageFetcher,
   type LinkVideoFetcher,
   validatePublicLinkUrl,
@@ -13,10 +11,15 @@ import {
 import {
   createByokMediaProcessingRequest,
   createTemporaryLinkAudioProcessingRequest,
-  createTemporarySegmentedLinkAudioProcessingRequest,
 } from './media-processing.js';
 import { saveObjectFile } from './object-files.js';
 import type { ObjectStore } from './object-store.js';
+import {
+  ParaformerError,
+  type ParaformerClient,
+  type ParaformerSegment,
+  type ParaformerTranscript,
+} from './paraformer-client.js';
 
 const LINK_JOB_TYPE = 'link.parse';
 
@@ -93,7 +96,7 @@ export async function ensureNextLinkParseJob(
       `INSERT INTO jobs (
          user_id, type, idempotency_key, input_json,
          max_attempts, timeout_seconds
-       ) VALUES ($1, $2, $3, $4::jsonb, 3, 300)
+       ) VALUES ($1, $2, $3, $4::jsonb, 3, 1200)
        RETURNING id`,
       [
         row.user_id,
@@ -132,8 +135,7 @@ export function createLinkParseHandler(
   store: ObjectStore,
   fetcher: LinkPageFetcher = new SecureLinkPageFetcher(),
   videoFetcher: LinkVideoFetcher = new SecureXiaohongshuVideoFetcher(),
-  audioFetcher: LinkAudioFetcher = new SecureXiaoyuzhouAudioFetcher(),
-  xiaoyuzhouTranscriptionEnabled = false,
+  paraformer: ParaformerClient | null = null,
 ): JobHandler {
   return async (job, signal) => {
     const { noteId, generation } = parseLinkJobInput(job.input);
@@ -157,12 +159,18 @@ export function createLinkParseHandler(
         snapshot.transientVideoUrl
           ? await videoFetcher.fetch(snapshot.transientVideoUrl, signal)
           : null;
-      const audio =
-        xiaoyuzhouTranscriptionEnabled &&
+      const audioTranscription =
+        paraformer &&
         snapshot.platform === 'xiaoyuzhou' &&
         snapshot.mediaType === 'audio' &&
         snapshot.transientAudioUrl
-          ? await audioFetcher.fetch(snapshot.transientAudioUrl, signal)
+          ? await transcribeXiaoyuzhouEpisode(pool, paraformer, {
+              userId: job.userId,
+              noteId,
+              generation,
+              audioUrl: snapshot.transientAudioUrl,
+              signal,
+            })
           : null;
       const videoSourceFile = video
         ? await saveObjectFile(pool, store, {
@@ -173,30 +181,10 @@ export function createLinkParseHandler(
             originalName: `xiaohongshu-${noteId}.mp4`,
           })
         : null;
-      const audioSegmentFiles = [];
-      for (const segment of audio?.segments ?? []) {
-        audioSegmentFiles.push(
-          await saveObjectFile(pool, store, {
-            userId: job.userId,
-            contentType: 'audio/mpeg',
-            content: segment.content,
-            purpose: 'temporary',
-            originalName: `xiaoyuzhou-${noteId}-${segment.sequenceNumber}.mp3`,
-            temporaryTtlSeconds: 4 * 60 * 60,
-          }),
-        );
-      }
-      const audioRequest = audioSegmentFiles.length
-        ? await createTemporarySegmentedLinkAudioProcessingRequest(pool, {
-            userId: job.userId,
-            segmentFileIds: audioSegmentFiles.map((file) => file.id),
-            idempotencyKey: `link-audio:${noteId}:${generation}`,
-            durationSeconds: snapshot.durationSeconds ?? 1,
-            serverWhisperAvailable: xiaoyuzhouTranscriptionEnabled,
-          })
-        : null;
-      const sourceFileId =
-        videoSourceFile?.id ?? audioSegmentFiles[0]?.id ?? null;
+      const sourceFileId = videoSourceFile?.id ?? null;
+      const sourceText = audioTranscription
+        ? buildXiaoyuzhouEvidenceText(snapshot.text, audioTranscription)
+        : snapshot.text;
       const updated = await pool.query(
         `UPDATE notes
          SET source_url = $1,
@@ -225,15 +213,15 @@ export function createLinkParseHandler(
           snapshot.title.slice(0, 300),
           snapshot.description.slice(0, 600),
           snapshot.site.slice(0, 255),
-          snapshot.text.slice(0, 24_000),
+          sourceText.slice(0, 24_000),
           snapshot.platform,
           snapshot.mediaType,
           JSON.stringify(images),
           snapshot.durationSeconds,
           sourceFileId,
-          audioRequest?.id ?? null,
-          audioRequest
-            ? 'pending'
+          null,
+          audioTranscription
+            ? 'succeeded'
             : videoSourceFile
               ? 'awaiting_key'
               : null,
@@ -249,6 +237,7 @@ export function createLinkParseHandler(
         mediaType: snapshot.mediaType,
         imageCount: images.length,
         durationSeconds: snapshot.durationSeconds,
+        transcription: audioTranscription ? 'succeeded' : 'skipped',
       };
     } catch (error) {
       await pool.query(
@@ -440,6 +429,157 @@ export async function reconcileNextLinkMediaRequest(
   }
   await expireTemporaryLinkSource(pool, row.user_id, row.link_source_file_id);
   return `reconciled:${row.id}:${row.request_status}`;
+}
+
+type XiaoyuzhouTranscriptionRow = {
+  provider_task_id: string;
+  status: 'submitted' | 'succeeded' | 'failed';
+  transcript: string | null;
+  segments_json: unknown;
+  error_code: string | null;
+};
+
+async function transcribeXiaoyuzhouEpisode(
+  pool: Pool,
+  paraformer: ParaformerClient,
+  input: {
+    userId: string;
+    noteId: string;
+    generation: string;
+    audioUrl: string;
+    signal: AbortSignal;
+  },
+): Promise<ParaformerTranscript> {
+  let row = await loadXiaoyuzhouTranscription(pool, input);
+  if (!row) {
+    const taskId = await paraformer.submit(input.audioUrl, input.signal);
+    await pool.query(
+      `INSERT INTO xiaoyuzhou_transcriptions (
+         user_id, note_id, link_generation, provider_task_id
+       ) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, note_id, link_generation) DO NOTHING`,
+      [input.userId, input.noteId, input.generation, taskId],
+    );
+    row = await loadXiaoyuzhouTranscription(pool, input);
+    if (!row) throw new Error('paraformer_task_not_saved');
+  }
+  if (row.status === 'failed') {
+    throw new Error(row.error_code ?? 'paraformer_task_failed');
+  }
+  if (row.status === 'succeeded') {
+    const transcript = row.transcript?.trim() ?? '';
+    if (!transcript) throw new Error('paraformer_transcript_missing');
+    return {
+      transcript,
+      segments: parseStoredSegments(row.segments_json),
+    };
+  }
+  try {
+    const result = await paraformer.waitForTranscript(
+      row.provider_task_id,
+      input.signal,
+    );
+    const updated = await pool.query(
+      `UPDATE xiaoyuzhou_transcriptions
+       SET status = 'succeeded', transcript = $1,
+           segments_json = $2::jsonb, error_code = NULL,
+           finished_at = now(), updated_at = now()
+       WHERE user_id = $3 AND note_id = $4 AND link_generation = $5
+         AND provider_task_id = $6 AND status = 'submitted'`,
+      [
+        result.transcript,
+        JSON.stringify(result.segments),
+        input.userId,
+        input.noteId,
+        input.generation,
+        row.provider_task_id,
+      ],
+    );
+    if (updated.rowCount !== 1) throw new Error('paraformer_task_superseded');
+    return result;
+  } catch (error) {
+    if (error instanceof ParaformerError && error.terminal) {
+      await pool.query(
+        `UPDATE xiaoyuzhou_transcriptions
+         SET status = 'failed', error_code = $1,
+             finished_at = now(), updated_at = now()
+         WHERE user_id = $2 AND note_id = $3 AND link_generation = $4
+           AND provider_task_id = $5 AND status = 'submitted'`,
+        [
+          normalizeErrorCode(error),
+          input.userId,
+          input.noteId,
+          input.generation,
+          row.provider_task_id,
+        ],
+      );
+    }
+    throw error;
+  }
+}
+
+async function loadXiaoyuzhouTranscription(
+  pool: Pool,
+  input: { userId: string; noteId: string; generation: string },
+): Promise<XiaoyuzhouTranscriptionRow | null> {
+  const result = await pool.query<XiaoyuzhouTranscriptionRow>(
+    `SELECT provider_task_id, status, transcript, segments_json, error_code
+     FROM xiaoyuzhou_transcriptions
+     WHERE user_id = $1 AND note_id = $2 AND link_generation = $3`,
+    [input.userId, input.noteId, input.generation],
+  );
+  return result.rows[0] ?? null;
+}
+
+function parseStoredSegments(value: unknown): ParaformerSegment[] {
+  if (!Array.isArray(value)) return [];
+  const segments: ParaformerSegment[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      continue;
+    }
+    const data = item as Record<string, unknown>;
+    if (
+      typeof data.startSeconds !== 'number' ||
+      typeof data.endSeconds !== 'number' ||
+      typeof data.text !== 'string'
+    ) {
+      continue;
+    }
+    segments.push({
+      startSeconds: data.startSeconds,
+      endSeconds: data.endSeconds,
+      text: data.text,
+      speakerId:
+        typeof data.speakerId === 'number' ? data.speakerId : null,
+    });
+  }
+  return segments.slice(0, 20_000);
+}
+
+function buildXiaoyuzhouEvidenceText(
+  existingText: string,
+  transcription: ParaformerTranscript,
+): string {
+  const timestamped = transcription.segments.length
+    ? transcription.segments
+        .map(
+          (segment) =>
+            `[${formatTimestamp(segment.startSeconds)}] ${segment.text}`,
+        )
+        .join('\n')
+    : transcription.transcript;
+  return `${existingText.trim()}\n\n音频转写\n${timestamped}`.slice(0, 24_000);
+}
+
+function formatTimestamp(seconds: number): string {
+  const bounded = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(bounded / 3_600);
+  const minutes = Math.floor((bounded % 3_600) / 60);
+  const remainder = bounded % 60;
+  return [hours, minutes, remainder]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':');
 }
 
 function buildMediaEvidenceText(

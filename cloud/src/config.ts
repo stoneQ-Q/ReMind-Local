@@ -56,3 +56,18 @@ export function xiaoyuzhouTranscriptionEnabled(): boolean {
   }
   return value === 'true';
 }
+
+export function dashscopeConfig(): {
+  apiKey: string;
+  apiHost: string;
+} | null {
+  const apiKey = process.env.REMIND_DASHSCOPE_API_KEY?.trim() || '';
+  const apiHost = process.env.REMIND_DASHSCOPE_API_HOST?.trim() || '';
+  if (!apiKey && !apiHost) return null;
+  if (!apiKey || !apiHost) {
+    throw new Error(
+      'REMIND_DASHSCOPE_API_KEY and REMIND_DASHSCOPE_API_HOST must be configured together',
+    );
+  }
+  return { apiKey, apiHost };
+}
