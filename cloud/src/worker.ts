@@ -89,7 +89,17 @@ const handlers: JobHandlers = new Map([
     },
   ],
   ['wechat.poll', createWechatPollHandler(database, credentialCipher)],
-  ['link.parse', createLinkParseHandler(database, objectStore)],
+  [
+    'link.parse',
+    createLinkParseHandler(
+      database,
+      objectStore,
+      undefined,
+      undefined,
+      undefined,
+      Boolean(whisperUrl),
+    ),
+  ],
   ...mediaHandlers,
 ]);
 let stopping = false;

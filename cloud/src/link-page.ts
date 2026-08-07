@@ -1,12 +1,20 @@
 import { lookup } from 'node:dns/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { request as requestHttp } from 'node:http';
 import { request as requestHttps } from 'node:https';
 import { BlockList, isIP } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   brotliDecompressSync,
   gunzipSync,
   inflateSync,
 } from 'node:zlib';
+
+import {
+  extractVideoAudioSegments,
+  type ExtractedAudioSegment,
+} from './video-audio-segments.js';
 
 // WeChat articles and XHS SSR pages routinely exceed 2 MB because they embed
 // scripts and hydration data. Keep a hard download/decompression ceiling while
@@ -18,7 +26,7 @@ const MAX_XHS_IMAGES = 12;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_XHS_VIDEO_BYTES = 200_000_000;
 const XHS_VIDEO_TIMEOUT_MS = 120_000;
-const MAX_XIAOYUZHOU_AUDIO_BYTES = 100_000_000;
+const MAX_XIAOYUZHOU_AUDIO_BYTES = 250_000_000;
 const XIAOYUZHOU_AUDIO_TIMEOUT_MS = 120_000;
 
 export type LinkSnapshot = {
@@ -49,8 +57,7 @@ export interface LinkVideoFetcher {
 }
 
 export type LinkAudioDownload = {
-  content: Buffer;
-  contentType: 'audio/mpeg' | 'audio/mp4';
+  segments: ExtractedAudioSegment[];
 };
 
 export interface LinkAudioFetcher {
@@ -108,7 +115,19 @@ export class SecureXiaoyuzhouAudioFetcher implements LinkAudioFetcher {
         response.contentType,
         current,
       );
-      return { content: response.body, contentType };
+      const directory = await mkdtemp(join(tmpdir(), 'remind-link-audio-'));
+      try {
+        const sourcePath = join(
+          directory,
+          contentType === 'audio/mpeg' ? 'source.mp3' : 'source.m4a',
+        );
+        await writeFile(sourcePath, response.body, { mode: 0o600 });
+        return {
+          segments: await extractVideoAudioSegments(sourcePath, signal),
+        };
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
     }
     throw new Error('link_audio_redirect_invalid');
   }

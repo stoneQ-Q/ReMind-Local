@@ -426,6 +426,102 @@ export async function createTemporaryLinkAudioProcessingRequest(
   return mediaSnapshot(row);
 }
 
+export async function createTemporarySegmentedLinkAudioProcessingRequest(
+  pool: Pool,
+  input: {
+    userId: string;
+    segmentFileIds: string[];
+    idempotencyKey: string;
+    durationSeconds: number;
+    serverWhisperAvailable: boolean;
+  },
+): Promise<MediaRequestSnapshot> {
+  requireUuid(input.userId);
+  if (input.segmentFileIds.length < 1 || input.segmentFileIds.length > 800) {
+    throw new MediaRequestError('media_source_not_found');
+  }
+  for (const fileId of input.segmentFileIds) requireUuid(fileId);
+  const idempotencyKey = requireIdempotencyKey(input.idempotencyKey);
+  const durationSeconds = requireDurationSeconds(input.durationSeconds);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const source = await client.query<{ file_count: string }>(
+      `SELECT count(DISTINCT file.id)::text AS file_count
+       FROM users AS owner
+       JOIN files AS file ON file.user_id = owner.id
+       WHERE owner.id = $1
+         AND owner.status = 'active'
+         AND owner.ai_mode = 'bring_your_own_key'
+         AND file.id = ANY($2::uuid[])
+         AND file.purpose = 'temporary'
+         AND file.media_kind = 'audio'
+         AND file.status = 'ready'
+         AND file.deleted_at IS NULL
+         AND file.expires_at > now()`,
+      [input.userId, input.segmentFileIds],
+    );
+    if (Number(source.rows[0]?.file_count ?? 0) !== input.segmentFileIds.length) {
+      throw new MediaRequestError('media_source_not_found');
+    }
+    if (!input.serverWhisperAvailable) {
+      const credential = await client.query(
+        `SELECT 1
+         FROM api_credentials
+         WHERE user_id = $1 AND provider = 'zhipu' AND revoked_at IS NULL
+         LIMIT 1`,
+        [input.userId],
+      );
+      if (!credential.rowCount) {
+        throw new MediaRequestError('media_provider_credential_required');
+      }
+    }
+    await client.query(
+      `INSERT INTO media_processing_requests (
+         user_id, idempotency_key, source_file_id, media_kind, stage,
+         duration_seconds
+       ) VALUES ($1, $2, $3, 'audio', 'video_transcribe', $4)
+       ON CONFLICT (user_id, idempotency_key) DO NOTHING`,
+      [
+        input.userId,
+        idempotencyKey,
+        input.segmentFileIds[0],
+        durationSeconds,
+      ],
+    );
+    const existing = await client.query<MediaRequestRow>(
+      `SELECT *
+       FROM media_processing_requests
+       WHERE user_id = $1 AND idempotency_key = $2
+       FOR UPDATE`,
+      [input.userId, idempotencyKey],
+    );
+    const row = requiredRow(existing.rows[0]);
+    if (
+      row.source_file_id !== input.segmentFileIds[0] ||
+      row.media_kind !== 'audio'
+    ) {
+      throw new MediaRequestError('media_idempotency_conflict');
+    }
+    for (let index = 0; index < input.segmentFileIds.length; index += 1) {
+      await client.query(
+        `INSERT INTO media_processing_segments (
+           user_id, request_id, sequence_number, start_seconds, file_id
+         ) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id, request_id, sequence_number) DO NOTHING`,
+        [input.userId, row.id, index, index * 28, input.segmentFileIds[index]],
+      );
+    }
+    await client.query('COMMIT');
+    return mediaSnapshot(row);
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function createManagedMediaProcessingRequest(
   pool: Pool,
   input: {
@@ -1211,6 +1307,15 @@ async function applySuccessfulStage(
   ) {
     const transcript = sanitizeText(objectString(result, 'transcript'), 100_000);
     if (request.stage === 'audio_transcribe') {
+      await succeedMediaRequest(
+        client,
+        request,
+        transcript,
+        { transcript },
+        stageCostMicros,
+      );
+    } else if (request.media_kind === 'audio') {
+      await expireIntermediateFile(client, request);
       await succeedMediaRequest(
         client,
         request,

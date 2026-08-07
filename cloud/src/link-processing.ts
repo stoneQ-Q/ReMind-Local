@@ -13,6 +13,7 @@ import {
 import {
   createByokMediaProcessingRequest,
   createTemporaryLinkAudioProcessingRequest,
+  createTemporarySegmentedLinkAudioProcessingRequest,
 } from './media-processing.js';
 import { saveObjectFile } from './object-files.js';
 import type { ObjectStore } from './object-store.js';
@@ -132,6 +133,7 @@ export function createLinkParseHandler(
   fetcher: LinkPageFetcher = new SecureLinkPageFetcher(),
   videoFetcher: LinkVideoFetcher = new SecureXiaohongshuVideoFetcher(),
   audioFetcher: LinkAudioFetcher = new SecureXiaoyuzhouAudioFetcher(),
+  serverWhisperAvailable = false,
 ): JobHandler {
   return async (job, signal) => {
     const { noteId, generation } = parseLinkJobInput(job.input);
@@ -161,7 +163,7 @@ export function createLinkParseHandler(
         snapshot.transientAudioUrl
           ? await audioFetcher.fetch(snapshot.transientAudioUrl, signal)
           : null;
-      const sourceFile = video
+      const videoSourceFile = video
         ? await saveObjectFile(pool, store, {
             userId: job.userId,
             contentType: video.contentType,
@@ -169,18 +171,31 @@ export function createLinkParseHandler(
             purpose: 'source',
             originalName: `xiaohongshu-${noteId}.mp4`,
           })
-        : audio
-          ? await saveObjectFile(pool, store, {
-              userId: job.userId,
-              contentType: audio.contentType,
-              content: audio.content,
-              purpose: 'temporary',
-              originalName: `xiaoyuzhou-${noteId}.${
-                audio.contentType === 'audio/mpeg' ? 'mp3' : 'm4a'
-              }`,
-              temporaryTtlSeconds: 4 * 60 * 60,
-            })
         : null;
+      const audioSegmentFiles = [];
+      for (const segment of audio?.segments ?? []) {
+        audioSegmentFiles.push(
+          await saveObjectFile(pool, store, {
+            userId: job.userId,
+            contentType: 'audio/mpeg',
+            content: segment.content,
+            purpose: 'temporary',
+            originalName: `xiaoyuzhou-${noteId}-${segment.sequenceNumber}.mp3`,
+            temporaryTtlSeconds: 4 * 60 * 60,
+          }),
+        );
+      }
+      const audioRequest = audioSegmentFiles.length
+        ? await createTemporarySegmentedLinkAudioProcessingRequest(pool, {
+            userId: job.userId,
+            segmentFileIds: audioSegmentFiles.map((file) => file.id),
+            idempotencyKey: `link-audio:${noteId}:${generation}`,
+            durationSeconds: snapshot.durationSeconds ?? 1,
+            serverWhisperAvailable,
+          })
+        : null;
+      const sourceFileId =
+        videoSourceFile?.id ?? audioSegmentFiles[0]?.id ?? null;
       const updated = await pool.query(
         `UPDATE notes
          SET source_url = $1,
@@ -193,17 +208,17 @@ export function createLinkParseHandler(
              link_images_json = $8::jsonb,
              link_duration_seconds = $9,
              link_source_file_id = $10,
-             link_media_request_id = NULL,
-             link_media_status = $11,
+             link_media_request_id = $11,
+             link_media_status = $12,
              link_media_error_code = NULL,
              link_status = 'ready',
              link_error_code = NULL,
              sync_version = sync_version + 1,
              updated_at = now()
-         WHERE user_id = $12 AND id = $13
+         WHERE user_id = $13 AND id = $14
            AND deleted_at IS NULL
            AND link_status = 'processing'
-           AND link_generation = $14 AND link_job_id = $15`,
+           AND link_generation = $15 AND link_job_id = $16`,
         [
           finalUrl,
           snapshot.title.slice(0, 300),
@@ -214,8 +229,13 @@ export function createLinkParseHandler(
           snapshot.mediaType,
           JSON.stringify(images),
           snapshot.durationSeconds,
-          sourceFile?.id ?? null,
-          sourceFile ? 'awaiting_key' : null,
+          sourceFileId,
+          audioRequest?.id ?? null,
+          audioRequest
+            ? 'pending'
+            : videoSourceFile
+              ? 'awaiting_key'
+              : null,
           job.userId,
           noteId,
           generation,
