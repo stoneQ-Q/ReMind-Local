@@ -16,6 +16,10 @@
         "buildType": "apk"
       }
     },
+    "preview-local": {
+      "extends": "preview",
+      "autoIncrement": false
+    },
     "public-local": {
       "distribution": "internal",
       "autoIncrement": true,
