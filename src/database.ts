@@ -593,9 +593,11 @@ export async function createNote(
     sourcePageTitle?: string | null;
     sourcePageSite?: string | null;
     sourcePageText?: string | null;
+    createdAt?: string | null;
   } = {},
 ): Promise<Note> {
   const now = new Date().toISOString();
+  const createdAt = normalizeImportedTimestamp(metadata.createdAt) ?? now;
   const inferred = inferLinkMetadata(content);
   const note: Note = {
     id: createLocalId(),
@@ -612,8 +614,8 @@ export async function createNote(
     sourcePageSite: metadata.sourcePageSite ?? null,
     sourcePageText: metadata.sourcePageText ?? null,
     tags: [],
-    createdAt: now,
-    updatedAt: now,
+    createdAt,
+    updatedAt: createdAt,
   };
 
   await db.runAsync(
@@ -840,6 +842,7 @@ export async function createImportedNote(
     sourcePageTitle?: string | null;
     sourcePageSite?: string | null;
     sourcePageText?: string | null;
+    createdAt?: string | null;
   } = {},
 ): Promise<Note | null> {
   let createdNote: Note | null = null;
@@ -871,7 +874,8 @@ export async function createImportedNote(
                source_page_title = COALESCE($sourcePageTitle, source_page_title),
                source_page_site = COALESCE($sourcePageSite, source_page_site),
                source_page_text = COALESCE($sourcePageText, source_page_text),
-               updated_at = $updatedAt
+               created_at = COALESCE($createdAt, created_at),
+               updated_at = COALESCE($createdAt, updated_at)
            WHERE id = $noteId`,
           {
             $sourceUrl: metadata.sourceUrl ?? null,
@@ -879,7 +883,7 @@ export async function createImportedNote(
             $sourcePageTitle: metadata.sourcePageTitle ?? null,
             $sourcePageSite: metadata.sourcePageSite ?? null,
             $sourcePageText: metadata.sourcePageText ?? null,
-            $updatedAt: new Date().toISOString(),
+            $createdAt: normalizeImportedTimestamp(metadata.createdAt),
             $noteId: existing.note_id,
           },
         );
@@ -916,6 +920,12 @@ export async function createImportedNote(
   });
 
   return createdNote;
+}
+
+function normalizeImportedTimestamp(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
 export async function updateNote(

@@ -213,7 +213,7 @@ export function createLinkParseHandler(
           snapshot.title.slice(0, 300),
           snapshot.description.slice(0, 600),
           snapshot.site.slice(0, 255),
-          sourceText.slice(0, 24_000),
+          sourceText.slice(0, 80_000),
           snapshot.platform,
           snapshot.mediaType,
           JSON.stringify(images),
@@ -569,7 +569,7 @@ function buildXiaoyuzhouEvidenceText(
         )
         .join('\n')
     : transcription.transcript;
-  return `${existingText.trim()}\n\n音频转写\n${timestamped}`.slice(0, 24_000);
+  return `${existingText.trim()}\n\n音频转写\n${timestamped}`.slice(0, 80_000);
 }
 
 function formatTimestamp(seconds: number): string {
@@ -607,7 +607,7 @@ function buildMediaEvidenceText(
       ? `${mediaType === 'audio' ? '音频转写' : '视频语音转写'}\n${transcript.trim()}`
       : '',
   ].filter(Boolean);
-  return sections.join('\n\n').slice(0, 24_000);
+  return sections.join('\n\n').slice(0, 80_000);
 }
 
 async function expireTemporaryLinkSource(

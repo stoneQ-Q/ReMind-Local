@@ -13,6 +13,7 @@ import {
   wechatDeviceSecretStorageKey,
 } from './persistence-contract';
 import { requestCloud, requestCloudJson } from './cloud-api';
+import { organizationContextForXiaoyuzhou } from './xiaoyuzhou';
 
 export type WechatReplyMode = 'first' | 'always' | 'silent';
 
@@ -237,10 +238,15 @@ export async function syncWechatInbox(
         `cloud-wechat:${message.id}`,
         {
           sourceUrl: message.sourceUrl,
-          userContext: message.userContext,
+          userContext: organizationContextForXiaoyuzhou({
+            sourceUrl: message.sourceUrl,
+            sourcePageText: message.pageText,
+            userContext: message.userContext,
+          }),
           sourcePageTitle: message.pageTitle,
           sourcePageSite: message.pageSite,
           sourcePageText: message.pageText,
+          createdAt: message.createdAt,
         },
       );
       if (created) importedCount += 1;
@@ -269,10 +275,15 @@ export async function syncWechatInbox(
       `wechat:${message.msgId}`,
       {
         sourceUrl: message.linkUrl,
-        userContext: message.userContext,
+        userContext: organizationContextForXiaoyuzhou({
+          sourceUrl: message.linkUrl,
+          sourcePageText: message.pageText,
+          userContext: message.userContext,
+        }),
         sourcePageTitle: message.pageTitle,
         sourcePageSite: message.pageSite,
         sourcePageText: message.pageText,
+        createdAt: message.createdAt,
       },
     );
     acknowledgedIds.push(message.msgId);

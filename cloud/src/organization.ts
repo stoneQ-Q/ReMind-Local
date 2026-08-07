@@ -112,7 +112,7 @@ export async function organizeLink(
       throw new OrganizationError('link_unavailable', 422);
     }
   }
-  const evidence = buildEvidence(page.text);
+  const evidence = buildEvidence(page.text, 120);
   if (!evidence.length) throw new OrganizationError('link_unavailable', 422);
   const sources: Source[] = [
     {
@@ -137,6 +137,7 @@ export async function organizeLink(
         attempt === 0 ? LINK_PROMPT : LINK_RETRY_PROMPT,
         request,
         signal,
+        5_000,
       );
       const validated = validateDrafts(
         raw,
@@ -345,6 +346,7 @@ async function generateJson(
   system: string,
   user: string,
   signal: AbortSignal,
+  maxTokens = 3_000,
 ): Promise<unknown> {
   const response = await fetch(DEEPSEEK_URL, {
     method: 'POST',
@@ -354,7 +356,7 @@ async function generateJson(
       model: MODEL,
       thinking: { type: 'disabled' },
       temperature: 0.2,
-      max_tokens: 3_000,
+      max_tokens: maxTokens,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
@@ -444,10 +446,10 @@ function validateCitations(
   return citations;
 }
 
-function buildEvidence(text: string): Array<{ id: string; quote: string; startOffset: number; endOffset: number }> {
+function buildEvidence(text: string, maximum = 60): Array<{ id: string; quote: string; startOffset: number; endOffset: number }> {
   const result = [];
   let start = 0;
-  while (start < text.length && result.length < 60) {
+  while (start < text.length && result.length < maximum) {
     while (/\s/.test(text[start] ?? '')) start += 1;
     if (start >= text.length) break;
     let end = Math.min(start + 420, text.length);
@@ -482,7 +484,7 @@ function parsePage(value: unknown): { title: string; site: string; text: string 
   const item = record(value);
   const title = shortText(item?.title, 300);
   const site = shortText(item?.site, 255);
-  const text = shortText(item?.text, 24_000);
+  const text = shortText(item?.text, 80_000);
   return title && site && text ? { title, site, text } : null;
 }
 
@@ -529,7 +531,7 @@ function record(value: unknown): Record<string, unknown> | null {
 
 const DAILY_PROMPT = `你是 ReMind 的每日综合整理助手。你的任务不是逐条改写记录，而是比较同一天的多条记录，找出共同主题、相互支持、补充、冲突或时间上的联系。只依据输入 sources 和 evidenceCandidates：有两条以上值得联系的记录时，只生成 1 篇跨记录中文 Markdown 综合稿；纯测试词、无上下文短句和无法形成理解的碎片放入 ignoredSourceIds。content 使用“今日脉络、已记录的事实、基于记录的联系、仍待回答的问题”四类小节；事实必须能回到来源，推断必须明确写成基于记录的推断，开放问题不得写成既定结论，不得为了显得有探索而扩写。sourceIds 列出实际使用的全部来源；citations 从对应 sourceId 的真实 evidenceId 中选择，不得改写证据。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[""],"citations":[{"sourceId":"","evidenceId":"E1"}]}],"ignoredSourceIds":[]}。没有足够内容时 drafts 可为空。不要额外解释。`;
 const DAILY_RETRY_PROMPT = `${DAILY_PROMPT}\n上一次输出未通过结构校验。请严格只输出零篇或一篇 draft；sourceIds 和 citation.sourceId 必须逐字复制输入 ID；citation.evidenceId 只能从该来源的 evidenceCandidates 中选择；不要把每条来源分别写成独立文档。`;
-const LINK_PROMPT = `你是 ReMind 的链接整理助手。只依据 userContext、页面信息和 evidenceCandidates，围绕用户保存意图生成且只生成 1 篇中文 Markdown 笔记，包含内容概括、值得留下的内容、与我的关注点、原始来源。sourceIds 只能含 sourceId；citations 必须选择真实 evidenceId，1 到 6 条，不得改写证据。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[""],"citations":[{"sourceId":"","evidenceId":"E1"}]}],"ignoredSourceIds":[]}。不要额外解释。`;
+const LINK_PROMPT = `你是 ReMind 的链接整理助手。只依据 userContext、页面信息和 evidenceCandidates，围绕用户保存意图生成且只生成 1 篇详细、可复用的中文 Markdown 笔记，不能只给简短摘要。对于播客、访谈或包含案例的内容，正文应尽量包括：一句话总结、内容地图、核心观点、案例与具体做法、值得关注的启发、原始来源。每个重要案例要在证据允许的范围内说明背景与目标、当事人的具体动作、先后步骤、方法或工具、数字与限制条件、结果，以及为什么值得注意；不要把案例压缩成一句抽象结论。核心观点要解释论据、因果关系和适用边界。原文没有提供的操作细节必须明确写“原文未说明”，不得用常识补全。关键观点和案例优先引用带时间戳的证据。sourceIds 只能含 sourceId；citations 必须选择真实 evidenceId，1 到 6 条，不得改写证据。输出 JSON：{"drafts":[{"title":"","summary":"","content":"","tags":[],"sourceIds":[""],"citations":[{"sourceId":"","evidenceId":"E1"}]}],"ignoredSourceIds":[]}。不要额外解释。`;
 const LINK_RETRY_PROMPT = `${LINK_PROMPT}\n上一次输出未通过结构校验。请严格逐字段遵循示例：只输出一个 drafts 元素；sourceIds 和每条 citation.sourceId 必须逐字复制输入 sourceId；citation.evidenceId 只能从输入 evidenceCandidates 的 id 中选择；title、content 均不得为空。`;
 const THEME_PROMPT = `你是 ReMind 的主题笔记编辑助手。只依据输入，判断来源应加入哪个已有主题，或 themeId 为 null 新建长期主题。patch 只写增量，overview 写合并后的理解，冲突单列。输出 JSON：{"themeId":null,"themeTitle":"","rationale":"","patch":"","overview":"","conflicts":[]}。不要额外解释。`;
 const MEMORY_QUESTION_PROMPT = `你是 ReMind 的个人记忆问答助手。只能使用输入的 evidenceCandidates 回答 question，不能用常识补全用户没记过的事实，也不能把推测写成用户的经历。找到依据时给出简洁中文回答，citations 至少选择 1 条真实 evidenceId；材料不足时 insufficient=true，明确说没有找到足够记录，citations 可以为空。suggestedQuestions 最多 3 条。输出 JSON：{"answer":"","insufficient":false,"citations":[{"sourceId":"","evidenceId":"E1"}],"suggestedQuestions":[]}。不要额外解释。`;

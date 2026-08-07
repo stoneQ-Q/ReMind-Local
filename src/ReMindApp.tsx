@@ -155,6 +155,11 @@ import {
   getActiveReMindAppMode,
   type ReMindAppMode,
 } from './service-contract';
+import {
+  isXiaoyuzhouEpisodeUrl,
+  organizationContextForXiaoyuzhou,
+  XIAOYUZHOU_INSIGHT_PROMPT,
+} from './xiaoyuzhou';
 
 type Screen = 'inbox' | 'library' | 'search';
 type CloudOverlay = 'ai' | 'billing' | 'tasks' | null;
@@ -335,19 +340,27 @@ export function ReMindApp() {
     requestedMode?: LinkAutomationMode,
   ) => {
     const mode = requestedMode ?? linkAutomationMode;
-    if (getActiveReMindAppMode() === 'cloud' && mode === 'review') return;
     if (linkAutoProcessing.current) return;
     linkAutoProcessing.current = true;
     let reviewGenerated = false;
     try {
       const links = await listLinksReadyForOrganization(db);
       for (const note of links) {
-        if (!note.userContext) continue;
+        const organizationContext =
+          organizationContextForXiaoyuzhou(note) ?? note.userContext;
+        if (!organizationContext) continue;
+        if (
+          getActiveReMindAppMode() === 'cloud' &&
+          mode === 'review' &&
+          !isXiaoyuzhouEpisodeUrl(note.sourceUrl)
+        ) {
+          continue;
+        }
         await updateNoteStatus(db, note.id, 'processing');
         try {
           const response = await requestLinkOrganization(
             note,
-            note.userContext,
+            organizationContext,
           );
           const drafts = await saveOrganizationResponse(db, response);
           await updateNoteStatus(db, note.id, 'ready');
@@ -1762,11 +1775,20 @@ export function ReMindApp() {
                 getWechatProcessingLinks(),
               ]);
               setWechatProcessingLinks(processingLinks);
+              await loadNotes('');
               if (imported > 0) {
-                await loadNotes('');
                 void syncObsidian();
                 void processReadyLinks();
               }
+              await Haptics.notificationAsync(
+                Haptics.NotificationFeedbackType.Success,
+              );
+              Alert.alert(
+                '同步完成',
+                imported > 0
+                  ? `已读取并刷新 ${imported} 条云端微信记录。请到“笔记 → 原始记录”查看。`
+                  : '当前云端账号下没有可同步的微信记录。请确认 Expo Go 恢复的是原来的云端账号。',
+              );
             }
           } catch {
             setWechatError('暂时无法连接微信服务');
@@ -2661,6 +2683,17 @@ function NoteEditor({
   const [editingMarkdown, setEditingMarkdown] = useState(false);
   const [originalCaptureExpanded, setOriginalCaptureExpanded] = useState(false);
   const [sourceContentExpanded, setSourceContentExpanded] = useState(false);
+  const isXiaoyuzhouAudio = Boolean(
+    note?.recordType === 'capture' &&
+      isXiaoyuzhouEpisodeUrl(note.sourceUrl) &&
+      note.sourcePageText?.trim(),
+  );
+  const organizationContext =
+    organizationContextForXiaoyuzhou({
+      sourceUrl: note?.sourceUrl,
+      sourcePageText: note?.sourcePageText,
+      userContext,
+    }) ?? userContext.trim();
 
   useEffect(() => {
     if (!note) return;
@@ -2768,9 +2801,7 @@ function NoteEditor({
               </View>
             </View>
           )}
-          {note?.recordType === 'capture' &&
-          note.sourceUrl?.includes('xiaoyuzhoufm.com') &&
-          note.sourcePageText?.trim() ? (
+          {isXiaoyuzhouAudio && note?.sourcePageText?.trim() ? (
             <View style={styles.audioTranscriptCard}>
               <View style={styles.audioTranscriptHeader}>
                 <View style={styles.audioTranscriptMark}>
@@ -2778,20 +2809,18 @@ function NoteEditor({
                 </View>
                 <View style={styles.audioTranscriptHeaderCopy}>
                   <Text style={styles.audioTranscriptTitle}>
-                    小宇宙音频解析
+                    原始逐字稿
                   </Text>
                   <Text style={styles.audioTranscriptMeta}>
-                    转写已完成 · 仅保留原始链接，未保存音频
+                    供 AI 整理时引用 · 默认收起 · 未保存音频
                   </Text>
                 </View>
               </View>
-              <Text
-                numberOfLines={sourceContentExpanded ? undefined : 12}
-                selectable
-                style={styles.audioTranscriptBody}
-              >
-                {note.sourcePageText.trim()}
-              </Text>
+              {sourceContentExpanded ? (
+                <Text selectable style={styles.audioTranscriptBody}>
+                  {note.sourcePageText.trim()}
+                </Text>
+              ) : null}
               <Pressable
                 accessibilityLabel={
                   sourceContentExpanded ? '收起音频转写' : '展开音频转写全文'
@@ -2805,7 +2834,7 @@ function NoteEditor({
                 ]}
               >
                 <Text style={styles.audioTranscriptToggleText}>
-                  {sourceContentExpanded ? '收起全文 ↑' : '展开全文 ↓'}
+                  {sourceContentExpanded ? '收起逐字稿 ↑' : '查看原始逐字稿 ↓'}
                 </Text>
               </Pressable>
             </View>
@@ -2815,9 +2844,13 @@ function NoteEditor({
               <View style={styles.linkIntentHeading}>
                 <Text style={styles.linkIntentMark}>↗</Text>
                 <View style={styles.linkIntentHeadingCopy}>
-                  <Text style={styles.linkIntentTitle}>为什么保存？</Text>
+                  <Text style={styles.linkIntentTitle}>
+                    {isXiaoyuzhouAudio ? 'AI 洞察笔记' : '为什么保存？'}
+                  </Text>
                   <Text style={styles.linkIntentDescription}>
-                    说说它与你有什么关系，或希望 ReMind 重点整理什么。
+                    {isXiaoyuzhouAudio
+                      ? 'AI 会默认提炼核心观点、整体洞察和值得关注；也可以补充你特别想看的方向。'
+                      : '说说它与你有什么关系，或希望 ReMind 重点整理什么。'}
                   </Text>
                 </View>
               </View>
@@ -2825,7 +2858,11 @@ function NoteEditor({
                 accessibilityLabel="链接保存意图"
                 multiline
                 onChangeText={setUserContext}
-                placeholder="例如：重点看它如何帮助回忆，想留作产品设计参考。"
+                placeholder={
+                  isXiaoyuzhouAudio
+                    ? '可选：补充你特别想关注的问题。'
+                    : '例如：重点看它如何帮助回忆，想留作产品设计参考。'
+                }
                 placeholderTextColor={colors.faint}
                 style={styles.linkIntentInput}
                 textAlignVertical="top"
@@ -2843,7 +2880,7 @@ function NoteEditor({
               ) : null}
               <Pressable
                 disabled={
-                  userContext.replace(/\s+/g, '').length < 4 ||
+                  organizationContext.replace(/\s+/g, '').length < 4 ||
                   linkOrganizing
                 }
                 onPress={async () => {
@@ -2854,7 +2891,7 @@ function NoteEditor({
                       note,
                       title,
                       content,
-                      userContext.trim(),
+                      organizationContext,
                     );
                   } catch (error) {
                     Alert.alert(
@@ -2869,7 +2906,7 @@ function NoteEditor({
                 }}
                 style={({ pressed }) => [
                   styles.linkOrganizeButton,
-                  (userContext.replace(/\s+/g, '').length < 4 ||
+                  (organizationContext.replace(/\s+/g, '').length < 4 ||
                     linkOrganizing) &&
                     styles.linkOrganizeButtonDisabled,
                   pressed && styles.pressed,
@@ -2879,7 +2916,11 @@ function NoteEditor({
                   <ActivityIndicator color={colors.white} size="small" />
                 ) : (
                   <Text style={styles.linkOrganizeButtonText}>
-                    {note.status === 'failed'
+                    {isXiaoyuzhouAudio
+                      ? note.status === 'ready'
+                        ? '重新生成更详细的 AI 洞察'
+                        : '生成详细 AI 洞察笔记'
+                      : note.status === 'failed'
                       ? '重新生成可审核笔记'
                       : '生成可审核笔记'}
                   </Text>
