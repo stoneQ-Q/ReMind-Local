@@ -45,3 +45,14 @@ export function whisperServiceUrl(): string | null {
   const value = process.env.REMIND_WHISPER_URL?.trim();
   return value || null;
 }
+
+export function xiaoyuzhouTranscriptionEnabled(): boolean {
+  const value =
+    process.env.REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED?.trim() || 'false';
+  if (value !== 'true' && value !== 'false') {
+    throw new Error(
+      'REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED must be true or false',
+    );
+  }
+  return value === 'true';
+}

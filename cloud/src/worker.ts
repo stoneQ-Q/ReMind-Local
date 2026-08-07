@@ -9,6 +9,7 @@ import {
   mediaProviderMode,
   whisperServiceUrl,
   workerPollMs,
+  xiaoyuzhouTranscriptionEnabled,
 } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
@@ -49,6 +50,8 @@ const credentialCipher = credentialCipherFromEnvironment();
 const objectStore = objectStoreFromEnvironment();
 const mediaMode = mediaProviderMode();
 const whisperUrl = whisperServiceUrl();
+const xiaoyuzhouAudioEnabled =
+  xiaoyuzhouTranscriptionEnabled() && Boolean(whisperUrl);
 const mediaHandlers: JobHandlers =
   mediaMode === 'mock'
     ? createMediaProcessingHandlers(database, objectStore)
@@ -97,7 +100,7 @@ const handlers: JobHandlers = new Map([
       undefined,
       undefined,
       undefined,
-      Boolean(whisperUrl),
+      xiaoyuzhouAudioEnabled,
     ),
   ],
   ...mediaHandlers,
@@ -107,6 +110,9 @@ let stopping = false;
 console.log(`ReMind cloud Worker started as ${workerId}`);
 console.log(`Media processing provider: ${mediaMode}`);
 console.log(`Server Whisper: ${whisperUrl ? 'enabled' : 'disabled'}`);
+console.log(
+  `Xiaoyuzhou transcription: ${xiaoyuzhouAudioEnabled ? 'enabled' : 'paused'}`,
+);
 void run().finally(async () => {
   await closeDatabase();
 });

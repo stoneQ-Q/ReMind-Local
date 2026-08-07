@@ -133,7 +133,7 @@ export function createLinkParseHandler(
   fetcher: LinkPageFetcher = new SecureLinkPageFetcher(),
   videoFetcher: LinkVideoFetcher = new SecureXiaohongshuVideoFetcher(),
   audioFetcher: LinkAudioFetcher = new SecureXiaoyuzhouAudioFetcher(),
-  serverWhisperAvailable = false,
+  xiaoyuzhouTranscriptionEnabled = false,
 ): JobHandler {
   return async (job, signal) => {
     const { noteId, generation } = parseLinkJobInput(job.input);
@@ -158,6 +158,7 @@ export function createLinkParseHandler(
           ? await videoFetcher.fetch(snapshot.transientVideoUrl, signal)
           : null;
       const audio =
+        xiaoyuzhouTranscriptionEnabled &&
         snapshot.platform === 'xiaoyuzhou' &&
         snapshot.mediaType === 'audio' &&
         snapshot.transientAudioUrl
@@ -191,7 +192,7 @@ export function createLinkParseHandler(
             segmentFileIds: audioSegmentFiles.map((file) => file.id),
             idempotencyKey: `link-audio:${noteId}:${generation}`,
             durationSeconds: snapshot.durationSeconds ?? 1,
-            serverWhisperAvailable,
+            serverWhisperAvailable: xiaoyuzhouTranscriptionEnabled,
           })
         : null;
       const sourceFileId =
