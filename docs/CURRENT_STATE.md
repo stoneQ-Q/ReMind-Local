@@ -5,14 +5,18 @@
 
 ## Source authority
 
-- Authoritative checkout: `/Users/stone/.codex/worktrees/a91a/remind`
-- Authoritative branch: `codex/stage7-cloud-health-baseline`
-- Verified baseline before this checkpoint: `8826ef9`
-- The checkout was clean at `8826ef9` and was 59 commits ahead of `main`.
-- `/Users/stone/Documents/remind` on `main` is not authoritative. Its committed
-  baseline is `1e9cb31` from 2026-07-31 and it currently contains a separate set
-  of uncommitted changes. Preserve those changes and do not develop, deploy, or
-  install services from that checkout until they have been reconciled explicitly.
+- Authoritative checkout: `/Users/stone/Documents/remind`
+- Authoritative branch: `main`
+- Current continuity checkpoint: `3341dc4`
+- The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
+  were fast-forwarded into `main` on 2026-08-11. The current main worktree was
+  clean immediately after that operation.
+- The formerly uncommitted main-worktree changes were preserved without loss on
+  branch `codex/preserve-main-20260811` at commit `6d71fbc`. They are not part of
+  the authoritative baseline and must be audited before selected changes are
+  merged back.
+- `/Users/stone/.codex/worktrees/a91a/remind` is an inactive secondary worktree.
+  Do not develop, deploy, or install services from it while `main` is authoritative.
 
 Always verify the live HEAD because it can advance after this file is updated.
 
@@ -79,8 +83,8 @@ Before changing anything:
 
 ## Next engineering safeguards
 
-- Reconcile the 59-commit authoritative branch with `main` without overwriting the
-  uncommitted main-worktree changes.
+- Audit `codex/preserve-main-20260811` against `main` and selectively recover only
+  changes that are still needed and pass current tests.
 - Add a safe cloud version endpoint that reports a non-secret release identifier.
 - Add an in-app diagnostics view showing app build, active mode, cloud release,
   WeChat connection state, and last successful synchronization time.
