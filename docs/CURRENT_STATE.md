@@ -7,7 +7,7 @@
 
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
-- Current continuity checkpoint: `94e1fa0`
+- Current continuity checkpoint before this documentation update: `e3e3e30`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -171,12 +171,14 @@ personal test app, and 1 development environment.**
 - The durable background-insight close/reopen phone scenario was intentionally
   deferred by the user. Automated coverage and cloud deployment are complete,
   but do not record that specific interaction as phone-verified yet.
-- The next personal cloud test APK is configured as ReMind `1.0.2`, Android
-  build 33, package `app.remind.notes`. GitHub Actions branch
-  `cloud-build-33` produces artifact
-  `ReMind-1.0.2-build33-diagnostics-background-insights`; this is a build target,
-  not an installed or verified delivery until the workflow succeeds and the APK
-  is installed on the Redmi.
+- Personal cloud test APK ReMind `1.0.2`, Android build 33, package
+  `app.remind.notes`, completed successfully in GitHub Actions on 2026-08-13.
+  Workflow run `31697617120` built remote commit `be96768` from branch
+  `cloud-build-33`, verified the APK archive, generated its SHA-256 file, and
+  uploaded artifact `ReMind-1.0.2-build33-diagnostics-background-insights`
+  (GitHub artifact ID `9180172967`, retained for 14 days). This is a completed
+  signed build but is not yet installed or phone-verified; build 31 remains the
+  delivery currently verified on the Redmi.
 
 ## Cloud mode
 
