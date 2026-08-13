@@ -249,7 +249,9 @@ async function syncWechatInboxOnce(
     const pending = captures
       .filter(
         (capture) =>
-          localVersions.get(`cloud-wechat:${capture.id}`) !== capture.updatedAt,
+          normalizedSyncTimestamp(
+            localVersions.get(`cloud-wechat:${capture.id}`) ?? null,
+          ) !== normalizedSyncTimestamp(capture.updatedAt),
       )
       .slice(0, 5);
     if (__DEV__) {
@@ -346,6 +348,12 @@ async function syncWechatInboxOnce(
   }
 
   return importedCount;
+}
+
+function normalizedSyncTimestamp(value: string | null): string | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : value;
 }
 
 export async function getWechatProcessingLinks(): Promise<
