@@ -125,6 +125,15 @@ personal test app, and 1 development environment.**
   mobile capture responses contain only a readiness marker, not the transcript.
   The legacy capture route remains available for build 31 but applies the same
   no-transcript mobile boundary.
+- Cloud release `103a470` was deployed on 2026-08-13 after a recoverable
+  PostgreSQL backup (`remind-pre-103a470-20260813T101628Z.dump`). Public
+  readiness, API health, Worker startup, Server Whisper, and Xiaoyuzhou
+  Paraformer were verified. Expo diagnostics then confirmed one new capture was
+  imported and subsequent cycles imported zero duplicates without errors.
+- The development source also self-repairs a partially applied local v19 schema
+  by checking for `note_imports.source_updated_at` instead of trusting only
+  `PRAGMA user_version`; this follow-up reached 273 passing app tests in 72 files
+  and remains development-source only until the next APK is built.
 
 ## Cloud mode
 

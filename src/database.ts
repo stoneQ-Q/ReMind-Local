@@ -110,7 +110,10 @@ export async function migrateDatabase(db: SQLiteDatabase) {
   );
   const currentVersion = version?.user_version ?? 0;
 
-  if (currentVersion >= DATABASE_VERSION) return;
+  if (currentVersion >= DATABASE_VERSION) {
+    await ensureImportedSourceVersionColumn(db);
+    return;
+  }
 
   if (currentVersion === 0) {
     await db.execAsync(`
@@ -525,13 +528,27 @@ export async function migrateDatabase(db: SQLiteDatabase) {
   }
 
   if (currentVersion < 19) {
+    await ensureImportedSourceVersionColumn(db);
+  }
+
+  await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
+}
+
+async function ensureImportedSourceVersionColumn(
+  db: SQLiteDatabase,
+): Promise<void> {
+  const importColumns = await db.getAllAsync<{ name: string }>(
+    'PRAGMA table_info(note_imports)',
+  );
+  if (
+    importColumns.length > 0 &&
+    !importColumns.some((column) => column.name === 'source_updated_at')
+  ) {
     await db.execAsync(`
       ALTER TABLE note_imports
       ADD COLUMN source_updated_at TEXT;
     `);
   }
-
-  await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }
 
 export async function listNotes(
@@ -974,6 +991,7 @@ export async function getImportedSourceVersions(
   db: SQLiteDatabase,
   sourceKeys: string[],
 ): Promise<Map<string, string | null>> {
+  await ensureImportedSourceVersionColumn(db);
   if (!sourceKeys.length) return new Map();
   const rows = await db.getAllAsync<{
     source_key: string;

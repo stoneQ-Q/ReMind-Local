@@ -130,6 +130,29 @@ describe('ReMind in-place upgrade preservation', () => {
     }
   });
 
+  it('repairs a v19 database whose imported-source column is missing', async () => {
+    const database = new DatabaseSync(':memory:');
+    database.exec(`
+      CREATE TABLE note_imports (
+        source_key TEXT PRIMARY KEY NOT NULL,
+        payload TEXT NOT NULL,
+        note_id TEXT,
+        created_at TEXT NOT NULL
+      );
+      PRAGMA user_version = 19;
+    `);
+
+    await migrateDatabase(sqliteAdapter(database));
+
+    expect(
+      database
+        .prepare('PRAGMA table_info(note_imports)')
+        .all()
+        .some((column) => column.name === 'source_updated_at'),
+    ).toBe(true);
+    database.close();
+  });
+
   it('stores link automation as an explicit device preference', async () => {
     const database = new DatabaseSync(':memory:');
     const adapter = sqliteAdapter(database);
