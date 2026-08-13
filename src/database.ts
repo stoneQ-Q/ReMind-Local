@@ -23,6 +23,8 @@ import type {
   ThemeMergeResponse,
 } from './ai-organize';
 import {
+  LAST_WECHAT_SYNC_AT_SETTING,
+  LAST_WECHAT_SYNC_ERROR_SETTING,
   LINK_AUTOMATION_MODE_SETTING,
   REMIND_DATABASE_SCHEMA_VERSION,
 } from './persistence-contract';
@@ -77,6 +79,70 @@ export type LinkAutomationMode =
   | 'auto_note'
   | 'auto_note_and_theme';
 
+export type PendingLinkOrganizationJob = {
+  sourceNoteId: string;
+  jobId: string;
+  automationMode: LinkAutomationMode;
+  submittedAt: string;
+};
+
+export type WechatSyncDiagnostic = {
+  lastSuccessAt: string | null;
+  lastError: string | null;
+};
+
+export async function getWechatSyncDiagnostic(
+  db: SQLiteDatabase,
+): Promise<WechatSyncDiagnostic> {
+  const rows = await db.getAllAsync<{ key: string; value: string }>(
+    `SELECT key, value FROM app_settings WHERE key IN (?, ?)`,
+    LAST_WECHAT_SYNC_AT_SETTING,
+    LAST_WECHAT_SYNC_ERROR_SETTING,
+  );
+  const values = new Map(rows.map((row) => [row.key, row.value]));
+  return {
+    lastSuccessAt: values.get(LAST_WECHAT_SYNC_AT_SETTING) ?? null,
+    lastError: values.get(LAST_WECHAT_SYNC_ERROR_SETTING) ?? null,
+  };
+}
+
+export async function recordWechatSyncSuccess(
+  db: SQLiteDatabase,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.withExclusiveTransactionAsync(async (transaction) => {
+    await setAppSetting(transaction, LAST_WECHAT_SYNC_AT_SETTING, now);
+    await transaction.runAsync(
+      'DELETE FROM app_settings WHERE key = ?',
+      LAST_WECHAT_SYNC_ERROR_SETTING,
+    );
+  });
+}
+
+export async function recordWechatSyncFailure(
+  db: SQLiteDatabase,
+  message: string,
+): Promise<void> {
+  await setAppSetting(db, LAST_WECHAT_SYNC_ERROR_SETTING, message.slice(0, 300));
+}
+
+async function setAppSetting(
+  db: Pick<SQLiteDatabase, 'runAsync'>,
+  key: string,
+  value: string,
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       value = excluded.value,
+       updated_at = excluded.updated_at`,
+    key,
+    value,
+    new Date().toISOString(),
+  );
+}
+
 export async function getLinkAutomationMode(
   db: SQLiteDatabase,
 ): Promise<LinkAutomationMode> {
@@ -116,6 +182,7 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
   if (currentVersion >= DATABASE_VERSION) {
     await ensureImportedSourceVersionColumn(db);
+    await ensureLinkOrganizationJobsTable(db);
     return;
   }
 
@@ -535,7 +602,86 @@ export async function migrateDatabase(db: SQLiteDatabase) {
     await ensureImportedSourceVersionColumn(db);
   }
 
+  // A prior interrupted v19 migration may have advanced user_version before
+  // the additive column reached disk. Keep this repair independent of the
+  // monotonic version gate.
+  await ensureImportedSourceVersionColumn(db);
+
+  if (currentVersion < 20) {
+    await ensureLinkOrganizationJobsTable(db);
+  }
+
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
+}
+
+async function ensureLinkOrganizationJobsTable(
+  db: Pick<SQLiteDatabase, 'execAsync'>,
+): Promise<void> {
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS link_organization_jobs (
+      source_note_id TEXT PRIMARY KEY NOT NULL,
+      job_id TEXT NOT NULL UNIQUE,
+      automation_mode TEXT NOT NULL DEFAULT 'review',
+      submitted_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE
+    );
+  `);
+}
+
+export async function savePendingLinkOrganizationJob(
+  db: SQLiteDatabase,
+  sourceNoteId: string,
+  jobId: string,
+  automationMode: LinkAutomationMode,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `INSERT INTO link_organization_jobs
+       (source_note_id, job_id, automation_mode, submitted_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(source_note_id) DO UPDATE SET
+       job_id = excluded.job_id,
+       automation_mode = excluded.automation_mode,
+       submitted_at = excluded.submitted_at,
+       updated_at = excluded.updated_at`,
+    sourceNoteId,
+    jobId,
+    automationMode,
+    now,
+    now,
+  );
+}
+
+export async function listPendingLinkOrganizationJobs(
+  db: SQLiteDatabase,
+): Promise<PendingLinkOrganizationJob[]> {
+  const rows = await db.getAllAsync<{
+    source_note_id: string;
+    job_id: string;
+    automation_mode: string;
+    submitted_at: string;
+  }>(
+    `SELECT source_note_id, job_id, automation_mode, submitted_at
+     FROM link_organization_jobs ORDER BY submitted_at`,
+  );
+  return rows.map((row) => ({
+    sourceNoteId: row.source_note_id,
+    jobId: row.job_id,
+    automationMode:
+      row.automation_mode === 'auto_note' ||
+      row.automation_mode === 'auto_note_and_theme'
+        ? row.automation_mode
+        : 'review',
+    submittedAt: row.submitted_at,
+  }));
+}
+
+export async function deletePendingLinkOrganizationJob(
+  db: SQLiteDatabase,
+  jobId: string,
+): Promise<void> {
+  await db.runAsync('DELETE FROM link_organization_jobs WHERE job_id = ?', jobId);
 }
 
 async function ensureImportedSourceVersionColumn(
@@ -1996,7 +2142,7 @@ function shortRecallTitle(title: string): string {
   return normalized.length > 18 ? `${normalized.slice(0, 18)}…` : normalized;
 }
 
-async function getNoteById(
+export async function getNoteById(
   db: SQLiteDatabase,
   noteId: string,
 ): Promise<Note | null> {

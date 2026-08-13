@@ -18,6 +18,11 @@ export function apiPort(): number {
   return value;
 }
 
+export function releaseIdentifier(): string {
+  const value = process.env.REMIND_RELEASE?.trim() || 'development';
+  return /^[A-Za-z0-9._-]{1,64}$/.test(value) ? value : 'unknown';
+}
+
 export function workerPollMs(): number {
   const value = Number(process.env.REMIND_WORKER_POLL_MS ?? '1000');
   if (!Number.isInteger(value) || value < 100 || value > 60_000) {

@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   dashscopeConfig,
+  releaseIdentifier,
   xiaoyuzhouTranscriptionEnabled,
 } from './config.js';
 
 const originalValue = process.env.REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED;
 const originalDashscopeKey = process.env.REMIND_DASHSCOPE_API_KEY;
 const originalDashscopeHost = process.env.REMIND_DASHSCOPE_API_HOST;
+const originalRelease = process.env.REMIND_RELEASE;
 
 afterEach(() => {
   if (originalValue === undefined) {
@@ -17,6 +19,16 @@ afterEach(() => {
   }
   restoreEnvironment('REMIND_DASHSCOPE_API_KEY', originalDashscopeKey);
   restoreEnvironment('REMIND_DASHSCOPE_API_HOST', originalDashscopeHost);
+  restoreEnvironment('REMIND_RELEASE', originalRelease);
+});
+
+describe('releaseIdentifier', () => {
+  it('returns only a safe public identifier', () => {
+    process.env.REMIND_RELEASE = 'e73180f';
+    expect(releaseIdentifier()).toBe('e73180f');
+    process.env.REMIND_RELEASE = 'unsafe value with spaces';
+    expect(releaseIdentifier()).toBe('unknown');
+  });
 });
 
 describe('dashscopeConfig', () => {

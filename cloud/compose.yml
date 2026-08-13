@@ -40,6 +40,8 @@ services:
     build:
       context: .
       target: runtime
+      args:
+        REMIND_RELEASE: ${REMIND_RELEASE:-development}
     restart: unless-stopped
     command: ["node", "dist/api.js"]
     environment:
@@ -85,6 +87,8 @@ services:
     build:
       context: .
       target: worker
+      args:
+        REMIND_RELEASE: ${REMIND_RELEASE:-development}
     restart: unless-stopped
     command: ["node", "dist/worker.js"]
     environment:

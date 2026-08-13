@@ -32,10 +32,13 @@ import {
   createNote,
   deleteNoteAttachments,
   deleteNote,
+  deletePendingLinkOrganizationJob,
   dismissOrganizationDraft,
   dismissThemeMergeDraft,
   getOriginalCaptureForNote,
   getLinkAutomationMode,
+  getNoteById,
+  getWechatSyncDiagnostic,
   getThemeOverview,
   getRecallSuggestion,
   getSourceThemeAssignment,
@@ -44,6 +47,7 @@ import {
   listNotesForOrganization,
   listPendingOrganizationDrafts,
   listNotes,
+  listPendingLinkOrganizationJobs,
   listNoteAttachments,
   listPendingThemeMergeDrafts,
   listRecentlyDeletedThemes,
@@ -56,6 +60,7 @@ import {
   recordRecallAction,
   restoreNote,
   saveOrganizationResponse,
+  savePendingLinkOrganizationJob,
   saveThemeMergeDraft,
   setLinkAutomationMode as persistLinkAutomationMode,
   setNoteContentKind,
@@ -68,6 +73,7 @@ import {
   type LinkAutomationMode,
   type ThemeSourceContribution,
   type ThemeSourceSummary,
+  type WechatSyncDiagnostic,
 } from './database';
 import { MemoryAskSheet, MemoryInsightsSheet } from './MemoryFeatures';
 import { PhotoCaptureSheet } from './PhotoCaptureSheet';
@@ -81,8 +87,11 @@ import {
 } from './photo-records';
 import {
   requestDailyOrganization,
+  getLinkOrganizationJob,
   requestLinkOrganization,
   requestThemeMerge,
+  submitLinkOrganizationJob,
+  supportsBackgroundLinkOrganization,
 } from './ai-organize';
 import { parseCaptureIntent } from './deep-links';
 import {
@@ -98,6 +107,8 @@ import {
   type MemoryTrail,
 } from './library-layout';
 import { formatNoteTime, notePreview } from './note-utils';
+import { informationSourceLabel } from './information-source';
+import { loadAppDiagnostics, type AppDiagnostics } from './diagnostics';
 import {
   chooseObsidianVault,
   cleanupRawObsidianExports,
@@ -265,6 +276,9 @@ export function ReMindApp() {
     useState<RecallSuggestion | null>(null);
   const [recallLoading, setRecallLoading] = useState(true);
   const [cloudAccountVisible, setCloudAccountVisible] = useState(false);
+  const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<AppDiagnostics | null>(null);
   const [cloudAccountLoading, setCloudAccountLoading] = useState(false);
   const [cloudAccountError, setCloudAccountError] = useState<string | null>(
     null,
@@ -283,6 +297,7 @@ export function ReMindApp() {
   const [linkAutomationMode, setLinkAutomationMode] =
     useState<LinkAutomationMode>('review');
   const [linkAutomationReady, setLinkAutomationReady] = useState(false);
+  const linkJobRefreshActive = useRef(false);
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -358,6 +373,19 @@ export function ReMindApp() {
         }
         await updateNoteStatus(db, note.id, 'processing');
         try {
+          if (supportsBackgroundLinkOrganization()) {
+            const job = await submitLinkOrganizationJob(
+              note,
+              organizationContext,
+            );
+            await savePendingLinkOrganizationJob(
+              db,
+              note.id,
+              job.id,
+              mode,
+            );
+            continue;
+          }
           const response = await requestLinkOrganization(
             note,
             organizationContext,
@@ -444,6 +472,101 @@ export function ReMindApp() {
     obsidianStatus.configured,
     syncObsidian,
   ]);
+
+  const refreshPendingLinkOrganizationJobs = useCallback(async () => {
+    if (
+      getActiveReMindAppMode() !== 'cloud' ||
+      linkJobRefreshActive.current
+    ) {
+      return;
+    }
+    linkJobRefreshActive.current = true;
+    let generated = false;
+    let changed = false;
+    try {
+      const pendingJobs = await listPendingLinkOrganizationJobs(db);
+      for (const pending of pendingJobs) {
+        try {
+          const job = await getLinkOrganizationJob(pending.jobId);
+          if (job.status === 'succeeded' && job.result) {
+            const drafts = await saveOrganizationResponse(db, job.result, {
+              regenerateSourceIds: [pending.sourceNoteId],
+            });
+            await updateNoteStatus(db, pending.sourceNoteId, 'ready');
+            await deletePendingLinkOrganizationJob(db, pending.jobId);
+            const draft = drafts.find((item) =>
+              item.sourceIds.includes(pending.sourceNoteId),
+            );
+            if (pending.automationMode === 'review') {
+              generated = Boolean(draft) || generated;
+            } else if (draft) {
+              const sourceNote = await acceptOrganizationDraft(
+                db,
+                draft.id,
+                draft.title,
+                draft.content,
+              );
+              if (obsidianStatus.configured) {
+                await requestObsidianExport(db, sourceNote.id);
+              }
+              if (pending.automationMode === 'auto_note_and_theme') {
+                try {
+                  const [themes, overviews] = await Promise.all([
+                    listThemeNotes(db),
+                    listThemeOverviewMap(db),
+                  ]);
+                  const suggestion = await requestThemeMerge(
+                    sourceNote,
+                    themes,
+                    overviews,
+                  );
+                  const themeDrafts = await saveThemeMergeDraft(
+                    db,
+                    sourceNote.id,
+                    suggestion,
+                  );
+                  const themeDraft = themeDrafts.find(
+                    (item) => item.sourceNoteId === sourceNote.id,
+                  );
+                  if (themeDraft) {
+                    await acceptThemeMergeDraft(
+                      db,
+                      themeDraft.id,
+                      themeDraft.patch,
+                      themeDraft.overview,
+                      themeDraft.themeNoteId,
+                      themeDraft.themeTitle,
+                    );
+                  }
+                } catch {
+                  setThemeMergeError(
+                    '来源笔记已自动保存，但主题自动归类暂时失败，可以稍后从来源笔记重试。',
+                  );
+                }
+              }
+            }
+            changed = true;
+          } else if (job.status === 'failed' || job.status === 'cancelled') {
+            await updateNoteStatus(db, pending.sourceNoteId, 'failed');
+            await deletePendingLinkOrganizationJob(db, pending.jobId);
+            changed = true;
+          }
+        } catch (error) {
+          if (__DEV__) console.error('[link-job-refresh] failed', error);
+        }
+      }
+      if (changed) await loadNotes(screen === 'search' ? query : '');
+      if (generated) {
+        setOrganizeDrafts(await listPendingOrganizationDrafts(db));
+        setOrganizeVisible(true);
+        await Haptics.notificationAsync(
+          Haptics.NotificationFeedbackType.Success,
+        );
+      }
+    } finally {
+      linkJobRefreshActive.current = false;
+    }
+  }, [db, loadNotes, obsidianStatus.configured, query, screen]);
 
   const startDailyOrganization = useCallback(async () => {
     if (organizing) return;
@@ -539,6 +662,22 @@ export function ReMindApp() {
       .then(setLinkAutomationMode)
       .finally(() => setLinkAutomationReady(true));
   }, [db]);
+
+  useEffect(() => {
+    if (!serviceModeReady || serviceMode.active !== 'cloud') return;
+    void refreshPendingLinkOrganizationJobs();
+    const timer = setInterval(
+      () => void refreshPendingLinkOrganizationJobs(),
+      10_000,
+    );
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshPendingLinkOrganizationJobs();
+    });
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [refreshPendingLinkOrganizationJobs, serviceMode.active, serviceModeReady]);
 
   useEffect(() => {
     if (screen !== 'inbox') return;
@@ -1546,6 +1685,25 @@ export function ReMindApp() {
           await updateNote(db, note.id, title, content, userContext);
           await updateNoteStatus(db, note.id, 'processing');
           try {
+            if (supportsBackgroundLinkOrganization()) {
+              const job = await submitLinkOrganizationJob(
+                { ...note, title, content, userContext },
+                userContext,
+              );
+              await savePendingLinkOrganizationJob(
+                db,
+                note.id,
+                job.id,
+                'review',
+              );
+              setSelectedNote(null);
+              await loadNotes(screen === 'search' ? query : '');
+              Alert.alert(
+                '已开始后台整理',
+                '可以离开这个页面或关闭 App。重新打开后会继续读取结果；已有文字稿会直接复用，不会重复语音识别。',
+              );
+              return;
+            }
             const response = await requestLinkOrganization(
               { ...note, title, content, userContext },
               userContext,
@@ -1994,6 +2152,13 @@ export function ReMindApp() {
         onOpenTasks={() => {
           setCloudOverlay('tasks');
         }}
+        onOpenDiagnostics={() => {
+          setDiagnosticsVisible(true);
+          setDiagnosticsLoading(true);
+          void loadAppDiagnostics(db, serviceMode, wechatConnection)
+            .then(setDiagnostics)
+            .finally(() => setDiagnosticsLoading(false));
+        }}
         onRegister={async () => {
           setCloudAccountLoading(true);
           setCloudAccountError(null);
@@ -2068,6 +2233,25 @@ export function ReMindApp() {
         serviceMode={serviceMode}
         tasksVisible={cloudOverlay === 'tasks'}
         visible={cloudAccountVisible}
+      />
+
+      <DiagnosticsSheet
+        diagnostics={diagnostics}
+        loading={diagnosticsLoading}
+        onClose={() => setDiagnosticsVisible(false)}
+        onRefresh={async () => {
+          setDiagnosticsLoading(true);
+          try {
+            const connection = isWechatApiConfigured()
+              ? await getWechatConnection(false).catch(() => wechatConnection)
+              : wechatConnection;
+            if (connection) setWechatConnection(connection);
+            setDiagnostics(await loadAppDiagnostics(db, serviceMode, connection));
+          } finally {
+            setDiagnosticsLoading(false);
+          }
+        }}
+        visible={diagnosticsVisible}
       />
 
       <CloudAiSettings
@@ -2471,7 +2655,8 @@ function CompactNoteCard({
       : note.status === 'failed'
         ? '处理失败'
         : null;
-  const tags = note.tags.slice(0, 2);
+  const tags = note.tags.slice(0, 1);
+  const sourceLabel = informationSourceLabel(note);
 
   return (
     <Pressable
@@ -2498,6 +2683,16 @@ function CompactNoteCard({
       </Text>
       <View style={styles.compactNoteMeta}>
         <View style={styles.compactNoteTags}>
+          <View style={[styles.compactNoteTag, styles.compactNoteSourceTag]}>
+            <Text
+              style={[
+                styles.compactNoteTagText,
+                styles.compactNoteSourceTagText,
+              ]}
+            >
+              {sourceLabel}
+            </Text>
+          </View>
           {tags.map((tag) => (
             <View key={tag} style={styles.compactNoteTag}>
               <Text style={styles.compactNoteTagText}>{tag}</Text>
@@ -2868,7 +3063,8 @@ function NoteEditor({
               <Pressable
                 disabled={
                   organizationContext.replace(/\s+/g, '').length < 4 ||
-                  linkOrganizing
+                  linkOrganizing ||
+                  note.status === 'processing'
                 }
                 onPress={async () => {
                   if (!note || linkOrganizing) return;
@@ -2897,12 +3093,13 @@ function NoteEditor({
                 style={({ pressed }) => [
                   styles.linkOrganizeButton,
                   (organizationContext.replace(/\s+/g, '').length < 4 ||
-                    linkOrganizing) &&
+                    linkOrganizing ||
+                    note.status === 'processing') &&
                     styles.linkOrganizeButtonDisabled,
                   pressed && styles.pressed,
                 ]}
               >
-                {linkOrganizing ? (
+                {linkOrganizing || note.status === 'processing' ? (
                   <ActivityIndicator color={colors.white} size="small" />
                 ) : (
                   <Text style={styles.linkOrganizeButtonText}>
@@ -4444,6 +4641,7 @@ function CloudAccountSettings({
   onConfigureLocal,
   onOpenAi,
   onOpenBilling,
+  onOpenDiagnostics,
   onOpenTasks,
   onRecover,
   onRegister,
@@ -4465,6 +4663,7 @@ function CloudAccountSettings({
   onConfigureLocal: (address: string) => Promise<void>;
   onOpenAi: () => void;
   onOpenBilling: () => void;
+  onOpenDiagnostics: () => void;
   onOpenTasks: () => void;
   onRecover: (recoveryCode: string) => Promise<void>;
   onRegister: () => Promise<void>;
@@ -4632,6 +4831,26 @@ function CloudAccountSettings({
           {error ? (
             <Text style={styles.cloudAccountError}>{error}</Text>
           ) : null}
+
+          <Pressable
+            disabled={loading}
+            onPress={onOpenDiagnostics}
+            style={({ pressed }) => [
+              styles.cloudAiSettingsButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <View style={[styles.cloudAiSettingsMark, styles.diagnosticsMark]}>
+              <Ionicons color={colors.sageText} name="pulse-outline" size={20} />
+            </View>
+            <View style={styles.cloudAiSettingsCopy}>
+              <Text style={styles.cloudAiSettingsTitle}>运行状态与诊断</Text>
+              <Text style={styles.cloudAiSettingsDescription}>
+                查看安装版本、运行模式、云端发布、微信连接和最近同步
+              </Text>
+            </View>
+            <Text style={styles.cloudAiSettingsChevron}>›</Text>
+          </Pressable>
 
           {recoveryCode ? (
             <>
@@ -4970,6 +5189,124 @@ function cloudAccountErrorMessage(error: unknown): string {
     }
   }
   return '暂时无法连接云端，请稍后重试。本地笔记不受影响。';
+}
+
+function DiagnosticsSheet({
+  diagnostics,
+  loading,
+  onClose,
+  onRefresh,
+  visible,
+}: {
+  diagnostics: AppDiagnostics | null;
+  loading: boolean;
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const rows = diagnostics
+    ? [
+        ['App', diagnostics.appName],
+        ['版本', `${diagnostics.appVersion} · build ${diagnostics.buildVersion}`],
+        ['运行环境', diagnostics.environment],
+        ['安装标识', diagnostics.applicationId],
+        ['使用方式', diagnostics.activeMode],
+        [
+          '云端服务',
+          diagnostics.cloudReady
+            ? `正常 · ${diagnostics.cloudRelease}`
+            : diagnostics.activeMode === '云端模式'
+              ? '暂时无法连接'
+              : '当前未使用',
+        ],
+        ['微信', diagnostics.wechatState],
+        ['最近同步', formatDiagnosticTime(diagnostics.lastWechatSyncAt)],
+        ['最近错误', diagnostics.lastWechatError ?? '无'],
+        ['检查时间', formatDiagnosticTime(diagnostics.checkedAt)],
+      ]
+    : [];
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onClose}
+      presentationStyle="pageSheet"
+      visible={visible}
+    >
+      <View style={styles.cloudAccountSheet}>
+        <View style={[styles.editorHeader, { paddingTop: insets.top + 8 }]}>
+          <Pressable hitSlop={10} onPress={onClose}>
+            <Text style={styles.editorCancel}>关闭</Text>
+          </Pressable>
+          <Text style={styles.editorHeading}>运行状态与诊断</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+        <ScrollView
+          contentContainerStyle={[
+            styles.diagnosticsBody,
+            { paddingBottom: insets.bottom + 28 },
+          ]}
+        >
+          <View style={styles.diagnosticsHero}>
+            <View style={styles.diagnosticsHeroMark}>
+              <Ionicons color={colors.sageText} name="pulse-outline" size={26} />
+            </View>
+            <View style={styles.diagnosticsHeroCopy}>
+              <Text style={styles.diagnosticsTitle}>一眼看清现在运行在哪</Text>
+              <Text style={styles.diagnosticsCopy}>
+                出现收不到微信或整理中断时，先刷新这里，不需要猜测是 App、网络还是云端服务。
+              </Text>
+            </View>
+          </View>
+          {loading && !diagnostics ? (
+            <View style={styles.wechatLoading}>
+              <ActivityIndicator color={colors.accent} />
+              <Text style={styles.wechatLoadingText}>正在检查…</Text>
+            </View>
+          ) : (
+            <View style={styles.diagnosticsCard}>
+              {rows.map(([label, value]) => (
+                <View key={label} style={styles.diagnosticsRow}>
+                  <Text style={styles.diagnosticsLabel}>{label}</Text>
+                  <Text selectable style={styles.diagnosticsValue}>
+                    {value}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+          <Pressable
+            disabled={loading}
+            onPress={() => void onRefresh()}
+            style={({ pressed }) => [
+              styles.wechatRefresh,
+              loading && styles.wechatRefreshDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            {loading ? (
+              <ActivityIndicator color={colors.white} size="small" />
+            ) : (
+              <Text style={styles.wechatRefreshText}>重新检查</Text>
+            )}
+          </Pressable>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function formatDiagnosticTime(value: string | null): string {
+  if (!value) return '尚无记录';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '时间未知';
+  return date.toLocaleString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 }
 
 function serviceModeErrorMessage(
@@ -8339,6 +8676,13 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
   },
+  compactNoteSourceTag: {
+    borderColor: '#C7D0C6',
+    backgroundColor: '#EFF2EC',
+  },
+  compactNoteSourceTagText: {
+    color: colors.ink,
+  },
   compactNoteSource: {
     color: colors.faint,
     fontSize: 10,
@@ -8347,6 +8691,71 @@ const styles = StyleSheet.create({
   compactNoteArrow: {
     color: colors.muted,
     fontSize: 20,
+  },
+  diagnosticsMark: {
+    backgroundColor: '#E9EFE7',
+  },
+  diagnosticsBody: {
+    paddingHorizontal: 20,
+    paddingTop: 18,
+  },
+  diagnosticsHero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+  },
+  diagnosticsHeroMark: {
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: '#E9EFE7',
+  },
+  diagnosticsHeroCopy: {
+    flex: 1,
+  },
+  diagnosticsTitle: {
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  diagnosticsCopy: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  diagnosticsCard: {
+    marginTop: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+  },
+  diagnosticsRow: {
+    minHeight: 52,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.line,
+  },
+  diagnosticsLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  diagnosticsValue: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'right',
   },
   memoryTrailCard: {
     marginTop: 14,

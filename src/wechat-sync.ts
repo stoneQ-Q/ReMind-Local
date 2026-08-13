@@ -1,7 +1,12 @@
 import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { createImportedNote, getImportedSourceVersions } from './database';
+import {
+  createImportedNote,
+  getImportedSourceVersions,
+  recordWechatSyncFailure,
+  recordWechatSyncSuccess,
+} from './database';
 import {
   buildReMindApiUrl,
   credentialScope,
@@ -217,7 +222,17 @@ export async function requestAuthenticatedDeviceApi(
 export async function syncWechatInbox(
   db: SQLiteDatabase,
 ): Promise<number> {
-  return runSingleWechatSync(db, () => syncWechatInboxOnce(db));
+  try {
+    const imported = await runSingleWechatSync(db, () => syncWechatInboxOnce(db));
+    await recordWechatSyncSuccess(db);
+    return imported;
+  } catch (error) {
+    await recordWechatSyncFailure(
+      db,
+      error instanceof Error ? error.message : 'wechat_sync_failed',
+    ).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function syncWechatInboxOnce(

@@ -6,6 +6,32 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+export async function requestCloudPublicStatus(): Promise<{
+  ok: boolean;
+  release: string | null;
+}> {
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) throw new CloudApiRequestError('cloud_not_configured');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${service.baseUrl}/ready`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: unknown;
+      release?: unknown;
+    } | null;
+    return {
+      ok: response.ok && payload?.ok === true,
+      release: typeof payload?.release === 'string' ? payload.release : null,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function requestCloudJson(
   path: string,
   init: RequestInit = {},

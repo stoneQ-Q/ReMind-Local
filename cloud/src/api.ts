@@ -25,7 +25,7 @@ import {
   getBillingAccount,
   listLedgerEntries,
 } from './billing.js';
-import { apiPort, mediaProviderMode } from './config.js';
+import { apiPort, mediaProviderMode, releaseIdentifier } from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 import {
@@ -71,6 +71,10 @@ import {
   suggestThemeMerge,
 } from './organization.js';
 import {
+  createLinkOrganizationJob,
+  getLinkOrganizationJob,
+} from './organization-jobs.js';
+import {
   claimWechatBindingCode,
   createWechatBindingCode,
   getCloudWechatStatus,
@@ -85,6 +89,7 @@ const port = apiPort();
 const credentialCipher = credentialCipherFromEnvironment();
 const objectStore = objectStoreFromEnvironment();
 const configuredMediaProvider = mediaProviderMode();
+const release = releaseIdentifier();
 const managedMediaPriceCatalog =
   configuredMediaProvider === 'remote'
     ? managedMediaPriceCatalogFromEnvironment()
@@ -116,6 +121,7 @@ const server = createServer(async (request, response) => {
           ok: true,
           database: 'ready',
           apiVersion: 'v1',
+          release,
         });
       } catch {
         sendJson(response, 503, { ok: false, database: 'unavailable' });
@@ -911,6 +917,66 @@ const server = createServer(async (request, response) => {
         return;
       }
       sendJson(response, 200, await getAiSettings(database, account.userId));
+      return;
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/organize/link-jobs'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const body = await readJsonBody(
+        request,
+        MAX_ORGANIZATION_JSON_BODY_BYTES,
+      );
+      const requestId =
+        isRecord(body) && typeof body.requestId === 'string'
+          ? body.requestId.trim()
+          : '';
+      const input = isRecord(body) ? body.input : null;
+      if (!/^[A-Za-z0-9._:-]{8,128}$/.test(requestId) || !isRecord(input)) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      sendJson(
+        response,
+        202,
+        await createLinkOrganizationJob(
+          database,
+          account.userId,
+          requestId,
+          input,
+        ),
+      );
+      return;
+    }
+
+    const linkOrganizationJobMatch = request.url?.match(
+      /^\/api\/v1\/organize\/link-jobs\/([0-9a-f-]+)$/i,
+    );
+    if (request.method === 'GET' && linkOrganizationJobMatch) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const jobId = linkOrganizationJobMatch[1] ?? '';
+      if (!isUuid(jobId)) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      const job = await getLinkOrganizationJob(database, account.userId, jobId);
+      sendJson(response, job ? 200 : 404, job ?? { error: 'not_found' });
       return;
     }
 

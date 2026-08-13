@@ -1,4 +1,6 @@
 import { requestAuthenticatedDeviceApi } from './wechat-sync';
+import { createLocalId } from './note-utils';
+import { getActiveReMindAppMode } from './service-contract';
 import type { Note, NoteContentKind } from './types';
 
 export type OrganizationSource = {
@@ -37,6 +39,17 @@ export type ThemeMergeResponse = {
   overview: string;
   conflicts: string[];
   model: string;
+};
+
+export type LinkOrganizationJob = {
+  id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  result: OrganizationResponse | null;
+  errorCode: string | null;
+  attemptCount: number;
+  maxAttempts: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 async function organizationErrorMessage(
@@ -144,6 +157,138 @@ export async function requestLinkOrganization(
       citations: draft.citations ?? [],
     })),
   };
+}
+
+export function supportsBackgroundLinkOrganization(): boolean {
+  return getActiveReMindAppMode() === 'cloud';
+}
+
+export async function submitLinkOrganizationJob(
+  note: Note,
+  userContext: string,
+): Promise<LinkOrganizationJob> {
+  if (!note.sourceUrl) throw new Error('链接地址缺失');
+  const response = await requestAuthenticatedDeviceApi(
+    'link-jobs',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId: `${note.id}:${createLocalId()}`,
+        input: linkOrganizationInput(note, userContext),
+      }),
+    },
+    15_000,
+  );
+  if (!response.ok) {
+    throw new Error(
+      await organizationErrorMessage(response, '后台整理任务暂时没有提交成功。'),
+    );
+  }
+  return parseLinkOrganizationJob(await response.json());
+}
+
+export async function getLinkOrganizationJob(
+  jobId: string,
+): Promise<LinkOrganizationJob> {
+  const response = await requestAuthenticatedDeviceApi(
+    `link-jobs/${encodeURIComponent(jobId)}`,
+    {},
+    15_000,
+  );
+  if (!response.ok) {
+    throw new Error(
+      await organizationErrorMessage(response, '暂时无法读取后台整理进度。'),
+    );
+  }
+  return parseLinkOrganizationJob(await response.json());
+}
+
+function linkOrganizationInput(note: Note, userContext: string) {
+  return {
+    sourceId: note.id,
+    url: note.sourceUrl,
+    userContext,
+    page:
+      note.sourcePageTitle && note.sourcePageSite && note.sourcePageText
+        ? {
+            title: note.sourcePageTitle,
+            site: note.sourcePageSite,
+            text: note.sourcePageText,
+          }
+        : undefined,
+  };
+}
+
+function parseLinkOrganizationJob(value: unknown): LinkOrganizationJob {
+  if (!isRecord(value) || typeof value.id !== 'string') {
+    throw new Error('后台整理任务返回异常。');
+  }
+  const status = value.status;
+  if (
+    status !== 'queued' &&
+    status !== 'running' &&
+    status !== 'succeeded' &&
+    status !== 'failed' &&
+    status !== 'cancelled'
+  ) {
+    throw new Error('后台整理任务状态异常。');
+  }
+  const result =
+    status === 'succeeded' && isRecord(value.result)
+      ? normalizeOrganizationResponse(value.result)
+      : null;
+  return {
+    id: value.id,
+    status,
+    result,
+    errorCode: typeof value.errorCode === 'string' ? value.errorCode : null,
+    attemptCount: typeof value.attemptCount === 'number' ? value.attemptCount : 0,
+    maxAttempts: typeof value.maxAttempts === 'number' ? value.maxAttempts : 0,
+    createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : '',
+  };
+}
+
+function normalizeOrganizationResponse(
+  value: Record<string, unknown>,
+): OrganizationResponse {
+  const drafts = Array.isArray(value.drafts) ? value.drafts : [];
+  return {
+    drafts: drafts
+      .filter(isRecord)
+      .map((draft) => ({
+        title: typeof draft.title === 'string' ? draft.title : '',
+        summary: typeof draft.summary === 'string' ? draft.summary : '',
+        content: typeof draft.content === 'string' ? draft.content : '',
+        contentKind: 'link' as const,
+        tags: stringArray(draft.tags),
+        sourceIds: stringArray(draft.sourceIds),
+        citations: Array.isArray(draft.citations)
+          ? draft.citations.filter(isRecord).map((citation) => ({
+              sourceId:
+                typeof citation.sourceId === 'string' ? citation.sourceId : '',
+              quote: typeof citation.quote === 'string' ? citation.quote : '',
+              startOffset:
+                typeof citation.startOffset === 'number' ? citation.startOffset : 0,
+              endOffset:
+                typeof citation.endOffset === 'number' ? citation.endOffset : 0,
+            }))
+          : [],
+      })),
+    ignoredSourceIds: stringArray(value.ignoredSourceIds),
+    model: typeof value.model === 'string' ? value.model : '',
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export async function requestThemeMerge(

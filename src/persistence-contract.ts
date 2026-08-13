@@ -5,12 +5,14 @@
  * new storage location and can make an in-place update appear to lose data.
  */
 export const REMIND_DATABASE_NAME = 'remind.db';
-export const REMIND_DATABASE_SCHEMA_VERSION = 19;
+export const REMIND_DATABASE_SCHEMA_VERSION = 20;
 export const REMIND_APPLICATION_ID = 'app.remind.notes';
 
 export const OBSIDIAN_DIRECTORY_URI_SETTING = 'obsidian.directory_uri';
 export const OBSIDIAN_DIRECTORY_NAME_SETTING = 'obsidian.directory_name';
 export const LINK_AUTOMATION_MODE_SETTING = 'links.automation_mode';
+export const LAST_WECHAT_SYNC_AT_SETTING = 'diagnostics.wechat.last_sync_at';
+export const LAST_WECHAT_SYNC_ERROR_SETTING = 'diagnostics.wechat.last_error';
 export const REMIND_SERVICE_MODE_STORAGE_KEY = 'remind.service.mode.v1';
 export const REMIND_LOCAL_API_URL_STORAGE_KEY = 'remind.service.local-api-url.v1';
 

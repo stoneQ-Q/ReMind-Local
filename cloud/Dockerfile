@@ -10,7 +10,9 @@ RUN npm run build
 
 FROM node:24-alpine AS runtime-base
 
+ARG REMIND_RELEASE=development
 ENV NODE_ENV=production
+ENV REMIND_RELEASE=${REMIND_RELEASE}
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev

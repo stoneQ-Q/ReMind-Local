@@ -41,6 +41,10 @@ import { cleanupNextExpiredObject } from './object-files.js';
 import { objectStoreFromEnvironment } from './object-store.js';
 import { ParaformerClient } from './paraformer-client.js';
 import {
+  createLinkOrganizationHandler,
+  LINK_ORGANIZATION_JOB_TYPE,
+} from './organization-jobs.js';
+import {
   createWechatPollHandler,
   ensureNextWechatPollJob,
 } from './wechat-connections.js';
@@ -98,6 +102,10 @@ const handlers: JobHandlers = new Map([
     },
   ],
   ['wechat.poll', createWechatPollHandler(database, credentialCipher)],
+  [
+    LINK_ORGANIZATION_JOB_TYPE,
+    createLinkOrganizationHandler(database, credentialCipher),
+  ],
   [
     'link.parse',
     createLinkParseHandler(
