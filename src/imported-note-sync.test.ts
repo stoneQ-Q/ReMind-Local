@@ -2,7 +2,12 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 import { describe, expect, it } from 'vitest';
 
-import { createImportedNote, listNotes, migrateDatabase } from './database';
+import {
+  createImportedNote,
+  getImportedSourceVersions,
+  listNotes,
+  migrateDatabase,
+} from './database';
 import { XIAOYUZHOU_INSIGHT_PROMPT } from './xiaoyuzhou';
 
 describe('imported note synchronization', () => {
@@ -18,6 +23,7 @@ describe('imported note synchronization', () => {
       sourcePageSite: 'xiaoyuzhoufm.com',
       sourcePageText: pageText,
       createdAt: '2026-08-13T09:51:59.000Z',
+      sourceUpdatedAt: '2026-08-13T09:52:59.000Z',
     };
 
     const created = await createImportedNote(
@@ -43,6 +49,13 @@ describe('imported note synchronization', () => {
     expect(
       database.prepare('SELECT updated_at FROM notes WHERE id = ?').get(noteId),
     ).toEqual(before);
+    await expect(
+      getImportedSourceVersions(db, ['cloud-wechat:episode-1']),
+    ).resolves.toEqual(
+      new Map([
+        ['cloud-wechat:episode-1', '2026-08-13T09:52:59.000Z'],
+      ]),
+    );
     database.close();
   });
 

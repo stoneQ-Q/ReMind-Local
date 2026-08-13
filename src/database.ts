@@ -1094,6 +1094,13 @@ export async function createImportedNote(
           nullableTextEqual(current.source_page_text, metadata.sourcePageText) &&
           (!importedCreatedAt || current.created_at === importedCreatedAt)
         ) {
+          await transaction.runAsync(
+            `UPDATE note_imports
+             SET source_updated_at = COALESCE(?, source_updated_at)
+             WHERE source_key = ?`,
+            normalizeImportedTimestamp(metadata.sourceUpdatedAt),
+            sourceKey,
+          );
           return;
         }
         await transaction.runAsync(
