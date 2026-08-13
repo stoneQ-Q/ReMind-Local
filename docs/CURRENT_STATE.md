@@ -7,7 +7,7 @@
 
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
-- Current continuity checkpoint: `3341dc4`
+- Current continuity checkpoint: `6004964`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -140,6 +140,26 @@ personal test app, and 1 development environment.**
   `E<number>` markers and displayed timestamps; structured citations remain
   stored separately for evidence verification. Verification reached 279 app
   tests in 73 files and 173 cloud tests in 44 files.
+- Development commit `6004964` adds one in-app diagnostics view for the app
+  version/build, Expo or installed environment, active cloud/local mode, public
+  cloud release identifier, WeChat connection, last successful phone pull, and
+  the latest stored synchronization error. The cloud `/ready` response now
+  exposes only the safe release identifier, never secrets or credentials.
+- The same development batch moves cloud link insight generation into a durable
+  server job. The phone persists the job identifier locally, may leave the page
+  or close the App, and resumes result collection after reopening. Existing
+  Xiaoyuzhou or video transcript evidence is reused by the organization job; the
+  organization retry path does not enqueue transcription again. Local mode keeps
+  the existing foreground organization route.
+- Note cards now reserve their first visible pill for the information source,
+  including Xiaoyuzhou, Xiaohongshu, WeChat Official Accounts, Bilibili,
+  YouTube, WeChat, system share, or self-authored records. At most one AI topic
+  tag follows it, so source and model-generated topic are not conflated.
+- Verification for commit `6004964`: App TypeScript passed, 287 tests in 76 test
+  files passed, cloud TypeScript and production build passed, 176 cloud tests in
+  45 files passed, and an Android Expo export completed successfully. The app
+  UI and database schema v20 remain development-source only and are not installed
+  as a signed APK; build 31 remains the phone-installed delivery.
 
 ## Cloud mode
 
@@ -151,6 +171,12 @@ personal test app, and 1 development environment.**
 - The readiness response does not currently expose a Git release SHA, so the exact
   deployed source commit must not be inferred from repository HEAD alone.
 - Last documented phone verification before later source work was build 31.
+- Cloud release `6004964` was deployed on 2026-08-13 after recoverable backup
+  `remind-pre-6004964-20260813T111902Z.dump`. PostgreSQL, migration, API, Worker,
+  Caddy, Whisper, and public readiness were healthy; `/ready` reported release
+  `6004964`, the Worker reported server Whisper and Xiaoyuzhou Paraformer enabled,
+  and existing user/note counts remained present. The local Mac gateway remained
+  unloaded during deployment.
 
 ## WeChat polling safety
 
@@ -193,9 +219,9 @@ Before changing anything:
 
 - Audit `codex/preserve-main-20260811` against `main` and selectively recover only
   changes that are still needed and pass current tests.
-- Add a safe cloud version endpoint that reports a non-secret release identifier.
-- Add an in-app diagnostics view showing app build, active mode, cloud release,
-  WeChat connection state, and last successful synchronization time.
+- Complete real-phone validation for the `6004964` development batch across
+  Wi-Fi/mobile-data switches, background/force-close recovery, link-source pills,
+  and durable Xiaoyuzhou insight completion before producing a new signed APK.
 - Keep dated handoff and migration documents as append-only history. Update this
   file whenever the current release, installed build, authoritative branch, or
   runtime topology changes.
