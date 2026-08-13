@@ -134,6 +134,12 @@ personal test app, and 1 development environment.**
   by checking for `note_imports.source_updated_at` instead of trusting only
   `PRAGMA user_version`; this follow-up reached 273 passing app tests in 72 files
   and remains development-source only until the next APK is built.
+- The pending development UI now filters known Xiaoyuzhou system prompts from
+  every saved-intent display and from historical generated-note sections while
+  preserving user-authored intent. Generated insight prose also removes internal
+  `E<number>` markers and displayed timestamps; structured citations remain
+  stored separately for evidence verification. Verification reached 279 app
+  tests in 73 files and 173 cloud tests in 44 files.
 
 ## Cloud mode
 

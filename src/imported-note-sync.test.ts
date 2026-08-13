@@ -2,7 +2,8 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 import { describe, expect, it } from 'vitest';
 
-import { createImportedNote, migrateDatabase } from './database';
+import { createImportedNote, listNotes, migrateDatabase } from './database';
+import { XIAOYUZHOU_INSIGHT_PROMPT } from './xiaoyuzhou';
 
 describe('imported note synchronization', () => {
   it('skips an unchanged large cloud capture', async () => {
@@ -42,6 +43,40 @@ describe('imported note synchronization', () => {
     expect(
       database.prepare('SELECT updated_at FROM notes WHERE id = ?').get(noteId),
     ).toEqual(before);
+    database.close();
+  });
+
+  it('clears only a known system prompt when cloud intent is empty', async () => {
+    const database = new DatabaseSync(':memory:');
+    const db = sqliteAdapter(database);
+    await migrateDatabase(db);
+    const metadata = {
+      sourceUrl: 'https://www.xiaoyuzhoufm.com/episode/example',
+      userContext: XIAOYUZHOU_INSIGHT_PROMPT,
+      sourcePageTitle: '示例单集',
+      sourcePageSite: 'xiaoyuzhoufm.com',
+      sourcePageText: '音频转写已安全保存在云端，可用于 AI 整理。',
+      createdAt: '2026-08-13T09:51:59.000Z',
+      sourceUpdatedAt: '2026-08-13T09:52:59.000Z',
+    };
+    await createImportedNote(
+      db,
+      '小宇宙链接',
+      'cloud-wechat:episode-2',
+      metadata,
+    );
+
+    await createImportedNote(db, '小宇宙链接', 'cloud-wechat:episode-2', {
+      ...metadata,
+      userContext: null,
+      sourceUpdatedAt: '2026-08-13T09:53:59.000Z',
+    });
+
+    const [note] = await listNotes(db);
+    expect(note?.userContext).toBeNull();
+    expect(
+      database.prepare('SELECT user_context FROM notes').get(),
+    ).toEqual({ user_context: null });
     database.close();
   });
 });

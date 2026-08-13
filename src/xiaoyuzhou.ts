@@ -17,6 +17,17 @@ export function xiaoyuzhouUserIntent(
   return normalized;
 }
 
+export function withoutSystemXiaoyuzhouIntent(content: string): string {
+  let sanitized = content;
+  for (const prompt of SYSTEM_XIAOYUZHOU_INSIGHT_PROMPTS) {
+    sanitized = sanitized.replace(
+      `## 我的保存意图\n\n${prompt}\n\n`,
+      '',
+    );
+  }
+  return sanitized;
+}
+
 export function isXiaoyuzhouEpisodeUrl(value: string | null | undefined): boolean {
   return Boolean(value?.includes('xiaoyuzhoufm.com'));
 }

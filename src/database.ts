@@ -27,6 +27,10 @@ import {
   REMIND_DATABASE_SCHEMA_VERSION,
 } from './persistence-contract';
 import { SYSTEM_XIAOYUZHOU_INSIGHT_PROMPTS } from './xiaoyuzhou';
+import {
+  isXiaoyuzhouEpisodeUrl,
+  xiaoyuzhouUserIntent,
+} from './xiaoyuzhou';
 
 // v16 is intentionally schema-neutral. It preserves migration monotonicity
 // after the discarded local-media prototype without storing media in SQLite.
@@ -922,11 +926,23 @@ export async function createImportedNote(
           existing.note_id,
         );
         const importedCreatedAt = normalizeImportedTimestamp(metadata.createdAt);
+        const incomingUserContext = isXiaoyuzhouEpisodeUrl(metadata.sourceUrl)
+          ? xiaoyuzhouUserIntent(metadata.userContext)
+          : metadata.userContext ?? null;
+        const shouldClearSystemContext = Boolean(
+          isXiaoyuzhouEpisodeUrl(metadata.sourceUrl) &&
+            !incomingUserContext &&
+            current?.user_context &&
+            SYSTEM_XIAOYUZHOU_INSIGHT_PROMPTS.has(current.user_context.trim()),
+        );
         if (
           current &&
           existing.payload === content &&
           nullableTextEqual(current.source_url, metadata.sourceUrl) &&
-          nullableTextEqual(current.user_context, metadata.userContext) &&
+          nullableTextEqual(
+            current.user_context,
+            shouldClearSystemContext ? null : incomingUserContext,
+          ) &&
           nullableTextEqual(current.source_page_title, metadata.sourcePageTitle) &&
           nullableTextEqual(current.source_page_site, metadata.sourcePageSite) &&
           nullableTextEqual(current.source_page_text, metadata.sourcePageText) &&
@@ -937,7 +953,10 @@ export async function createImportedNote(
         await transaction.runAsync(
           `UPDATE notes
            SET source_url = COALESCE($sourceUrl, source_url),
-               user_context = COALESCE($userContext, user_context),
+               user_context = CASE
+                 WHEN $clearUserContext = 1 THEN NULL
+                 ELSE COALESCE($userContext, user_context)
+               END,
                source_page_title = COALESCE($sourcePageTitle, source_page_title),
                source_page_site = COALESCE($sourcePageSite, source_page_site),
                source_page_text = COALESCE($sourcePageText, source_page_text),
@@ -946,7 +965,8 @@ export async function createImportedNote(
            WHERE id = $noteId`,
           {
             $sourceUrl: metadata.sourceUrl ?? null,
-            $userContext: metadata.userContext ?? null,
+            $userContext: incomingUserContext,
+            $clearUserContext: shouldClearSystemContext ? 1 : 0,
             $sourcePageTitle: metadata.sourcePageTitle ?? null,
             $sourcePageSite: metadata.sourcePageSite ?? null,
             $sourcePageText: metadata.sourcePageText ?? null,
@@ -1313,7 +1333,9 @@ export async function listPendingOrganizationDrafts(
         sourceUrl: row.source_url,
         sourceTitle: row.source_title,
         sourceSite: row.source_site,
-        userContext: row.user_context,
+        userContext: isXiaoyuzhouEpisodeUrl(row.source_url)
+          ? xiaoyuzhouUserIntent(row.user_context)
+          : row.user_context,
         createdAt: row.created_at,
       };
     }),
@@ -1369,7 +1391,9 @@ export async function acceptOrganizationDraft(
     const finalContent = buildAcceptedContent(
       content,
       draft.content_kind,
-      linkSource?.user_context ?? null,
+      isXiaoyuzhouEpisodeUrl(linkSource?.source_url)
+        ? xiaoyuzhouUserIntent(linkSource?.user_context)
+        : linkSource?.user_context ?? null,
       linkSource?.source_url ?? null,
       linkSource?.source_page_title ?? null,
       citations.map((citation) => citation.quote),
@@ -1408,7 +1432,9 @@ export async function acceptOrganizationDraft(
       recordType: draft.content_kind === 'link' ? 'source' : 'synthesis',
       contentKind: draft.content_kind,
       sourceUrl: linkSource?.source_url ?? null,
-      userContext: linkSource?.user_context ?? null,
+      userContext: isXiaoyuzhouEpisodeUrl(linkSource?.source_url)
+        ? xiaoyuzhouUserIntent(linkSource?.user_context)
+        : linkSource?.user_context ?? null,
       sourcePageTitle: linkSource?.source_page_title ?? null,
       sourcePageSite: linkSource?.source_page_site ?? null,
       sourcePageText: null,

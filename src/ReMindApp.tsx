@@ -2881,6 +2881,9 @@ function NoteEditor({
                       organizationContext,
                     );
                   } catch (error) {
+                    if (__DEV__) {
+                      console.error('[link-organize] failed', error);
+                    }
                     Alert.alert(
                       '链接整理失败',
                       error instanceof Error

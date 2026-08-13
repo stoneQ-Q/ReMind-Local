@@ -1,4 +1,10 @@
 import type { Note, NoteContentKind, NoteRow } from './types';
+import { withoutInternalEvidenceMarkers } from './insight-markdown';
+import {
+  isXiaoyuzhouEpisodeUrl,
+  withoutSystemXiaoyuzhouIntent,
+  xiaoyuzhouUserIntent,
+} from './xiaoyuzhou';
 
 export function createLocalId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -62,17 +68,29 @@ export function inferLinkMetadata(content: string): {
 }
 
 export function mapNoteRow(row: NoteRow): Note {
+  const userContext = isXiaoyuzhouEpisodeUrl(row.source_url)
+    ? xiaoyuzhouUserIntent(row.user_context)
+    : row.user_context;
   return {
     id: row.id,
     title: row.title,
-    content: row.content,
+    content:
+      row.source === 'ai'
+        ? withoutInternalEvidenceMarkers(
+            isXiaoyuzhouEpisodeUrl(row.source_url)
+              ? withoutSystemXiaoyuzhouIntent(row.content)
+              : row.content,
+          )
+        : isXiaoyuzhouEpisodeUrl(row.source_url)
+          ? withoutSystemXiaoyuzhouIntent(row.content)
+          : row.content,
     summary: row.summary,
     status: row.status,
     source: row.source,
     recordType: row.record_type,
     contentKind: row.content_kind,
     sourceUrl: row.source_url,
-    userContext: row.user_context,
+    userContext,
     sourcePageTitle: row.source_page_title,
     sourcePageSite: row.source_page_site,
     sourcePageText: row.source_page_text,
