@@ -157,6 +157,7 @@ export async function listCloudWechatCaptures(
   pageSite: string | null;
   pageText: string | null;
   createdAt: string;
+  updatedAt: string;
 }>> {
   const result = await pool.query<{
     id: string;
@@ -167,10 +168,11 @@ export async function listCloudWechatCaptures(
     source_page_site: string | null;
     source_page_text: string | null;
     created_at: Date;
+    updated_at: Date;
   }>(
     `SELECT note.id, note.content, note.source_url, note.user_context,
             note.source_page_title, note.source_page_site,
-            note.source_page_text, note.created_at
+            note.source_page_text, note.created_at, note.updated_at
      FROM notes AS note
      WHERE note.user_id = $1 AND note.source = 'wechat'
        AND note.deleted_at IS NULL
@@ -185,7 +187,74 @@ export async function listCloudWechatCaptures(
     userContext: row.user_context,
     pageTitle: row.source_page_title,
     pageSite: row.source_page_site,
-    pageText: row.source_page_text,
+    pageText: mobilePageText(row.source_page_site, row.source_page_text),
     createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
   }));
+}
+
+export async function listCloudWechatCaptureManifest(
+  pool: Pool,
+  userId: string,
+): Promise<Array<{ id: string; updatedAt: string }>> {
+  const result = await pool.query<{ id: string; updated_at: Date }>(
+    `SELECT id, updated_at
+     FROM notes
+     WHERE user_id = $1 AND source = 'wechat' AND deleted_at IS NULL
+     ORDER BY created_at DESC, id DESC
+     LIMIT 100`,
+    [userId],
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    updatedAt: row.updated_at.toISOString(),
+  }));
+}
+
+export async function getCloudWechatCapture(
+  pool: Pool,
+  userId: string,
+  captureId: string,
+): Promise<Awaited<ReturnType<typeof listCloudWechatCaptures>>[number] | null> {
+  const result = await pool.query<{
+    id: string;
+    content: string;
+    source_url: string | null;
+    user_context: string | null;
+    source_page_title: string | null;
+    source_page_site: string | null;
+    source_page_text: string | null;
+    created_at: Date;
+    updated_at: Date;
+  }>(
+    `SELECT id, content, source_url, user_context, source_page_title,
+            source_page_site, source_page_text, created_at, updated_at
+     FROM notes
+     WHERE id = $1 AND user_id = $2 AND source = 'wechat'
+       AND deleted_at IS NULL`,
+    [captureId, userId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    content: row.content,
+    sourceUrl: row.source_url,
+    userContext: row.user_context,
+    pageTitle: row.source_page_title,
+    pageSite: row.source_page_site,
+    pageText: mobilePageText(row.source_page_site, row.source_page_text),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mobilePageText(
+  site: string | null,
+  pageText: string | null,
+): string | null {
+  if (site === 'xiaoyuzhoufm.com' && pageText?.includes('音频转写')) {
+    return '音频转写已安全保存在云端，可用于 AI 整理。';
+  }
+  return pageText;
 }

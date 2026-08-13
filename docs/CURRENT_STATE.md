@@ -90,6 +90,42 @@ personal test app, and 1 development environment.**
   Do not describe post-build-31 source changes as phone-delivered without a new
   build and explicit installation verification.
 
+## Pending development changes
+
+- The authoritative `main` development source contains a pending-release fix for
+  cloud WeChat pullback: repeated cloud captures no longer count as newly
+  imported notes, and overlapping refresh/interval sync attempts share one
+  active database sync instead of starting competing SQLite transactions.
+- This fix is development-source only. It has not been deployed to the cloud or
+  included in a signed APK, so the installed personal test app remains build 31.
+- Verification on 2026-08-13: TypeScript passed, all 232 tests in 62 test files
+  passed, and an Android Expo export completed successfully.
+- Keep this fix with the next development feature batch and produce a new APK
+  only after that combined batch is tested.
+- The same pending development batch separates Xiaoyuzhou system organization
+  instructions from the user's saved intent. The intent field now asks for a
+  complete personal reason or future use, may remain empty, and no longer shows
+  the internal AI prompt as user-authored text. Schema v18 removes only known
+  historical system prompts from Xiaoyuzhou `user_context` values.
+- The cloud Xiaoyuzhou Paraformer pipeline was confirmed enabled on 2026-08-13;
+  public free episodes can be transcribed, subject to the existing provider and
+  page-access constraints. The intent separation passed TypeScript and all 234
+  tests in 62 test files; phone UI verification in Expo remains pending.
+- The pending development batch also clears the transient "微信同步暂时中断"
+  banner after the next successful cloud pull. This addresses stale UI state
+  seen when an Expo development session switches from Wi-Fi to mobile data; it
+  does not change or rebind the active cloud WeChat connection.
+- Cloud pullback now compares imported payload and metadata before rewriting an
+  existing local note, so unchanged large Xiaoyuzhou transcripts are skipped
+  instead of being rewritten every 15 seconds. The regression coverage includes
+  a large transcript fixture; verification reached 235 passing tests in 63 files.
+- The next cloud/app change makes cloud WeChat pullback manifest-based and
+  downloads at most five changed captures per cycle, newest first. Xiaoyuzhou
+  transcript bodies stay in PostgreSQL for evidence-grounded AI organization;
+  mobile capture responses contain only a readiness marker, not the transcript.
+  The legacy capture route remains available for build 31 but applies the same
+  no-transcript mobile boundary.
+
 ## Cloud mode
 
 - Cloud mode, cloud account recovery, cloud WeChat binding and polling, BYOK, link

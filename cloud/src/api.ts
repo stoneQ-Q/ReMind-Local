@@ -74,6 +74,8 @@ import {
   claimWechatBindingCode,
   createWechatBindingCode,
   getCloudWechatStatus,
+  getCloudWechatCapture,
+  listCloudWechatCaptureManifest,
   listCloudWechatCaptures,
   updateCloudWechatReplyMode,
 } from './wechat-bindings.js';
@@ -342,6 +344,49 @@ const server = createServer(async (request, response) => {
       sendJson(response, 200, {
         messages: await listCloudWechatCaptures(database, account.userId),
       });
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      request.url === '/api/v1/wechat/capture-manifest'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      sendJson(response, 200, {
+        captures: await listCloudWechatCaptureManifest(database, account.userId),
+      });
+      return;
+    }
+
+    const captureMatch = request.url?.match(
+      /^\/api\/v1\/wechat\/captures\/([0-9a-f-]{36})$/i,
+    );
+    if (request.method === 'GET' && captureMatch?.[1]) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const capture = await getCloudWechatCapture(
+        database,
+        account.userId,
+        captureMatch[1],
+      );
+      if (!capture) {
+        sendJson(response, 404, { error: 'capture_not_found' });
+        return;
+      }
+      sendJson(response, 200, { capture });
       return;
     }
 

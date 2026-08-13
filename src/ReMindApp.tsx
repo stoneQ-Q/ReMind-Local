@@ -158,7 +158,7 @@ import {
 import {
   isXiaoyuzhouEpisodeUrl,
   organizationContextForXiaoyuzhou,
-  XIAOYUZHOU_INSIGHT_PROMPT,
+  xiaoyuzhouUserIntent,
 } from './xiaoyuzhou';
 
 type Screen = 'inbox' | 'library' | 'search';
@@ -604,13 +604,17 @@ export function ReMindApp() {
           syncWechatInbox(db),
           getWechatProcessingLinks(),
         ]);
+        setWechatError((current) =>
+          current === '微信同步暂时中断' ? null : current,
+        );
         setWechatProcessingLinks(processingLinks);
         if (imported > 0 || linkAutomationMode !== 'review') {
           await loadNotes('');
           void syncObsidian();
           void processReadyLinks();
         }
-      } catch {
+      } catch (error) {
+        if (__DEV__) console.error('[wechat-sync] failed', error);
         setWechatError('微信同步暂时中断');
       }
     };
@@ -2684,7 +2688,6 @@ function NoteEditor({
   const [linkOrganizing, setLinkOrganizing] = useState(false);
   const [editingMarkdown, setEditingMarkdown] = useState(false);
   const [originalCaptureExpanded, setOriginalCaptureExpanded] = useState(false);
-  const [sourceContentExpanded, setSourceContentExpanded] = useState(false);
   const isXiaoyuzhouAudio = Boolean(
     note?.recordType === 'capture' &&
       isXiaoyuzhouEpisodeUrl(note.sourceUrl) &&
@@ -2701,10 +2704,13 @@ function NoteEditor({
     if (!note) return;
     setTitle(note.title);
     setContent(note.content);
-    setUserContext(note.userContext ?? '');
+    setUserContext(
+      isXiaoyuzhouEpisodeUrl(note.sourceUrl)
+        ? xiaoyuzhouUserIntent(note.userContext) ?? ''
+        : note.userContext ?? '',
+    );
     setEditingMarkdown(note.recordType === 'capture');
     setOriginalCaptureExpanded(false);
-    setSourceContentExpanded(false);
   }, [note]);
 
   const save = async () => {
@@ -2803,7 +2809,7 @@ function NoteEditor({
               </View>
             </View>
           )}
-          {isXiaoyuzhouAudio && note?.sourcePageText?.trim() ? (
+          {isXiaoyuzhouAudio ? (
             <View style={styles.audioTranscriptCard}>
               <View style={styles.audioTranscriptHeader}>
                 <View style={styles.audioTranscriptMark}>
@@ -2811,34 +2817,13 @@ function NoteEditor({
                 </View>
                 <View style={styles.audioTranscriptHeaderCopy}>
                   <Text style={styles.audioTranscriptTitle}>
-                    原始逐字稿
+                    云端逐字稿已就绪
                   </Text>
                   <Text style={styles.audioTranscriptMeta}>
-                    供 AI 整理时引用 · 默认收起 · 未保存音频
+                    供 AI 整理时引用 · 原文不下载到手机 · 未保存音频
                   </Text>
                 </View>
               </View>
-              {sourceContentExpanded ? (
-                <Text selectable style={styles.audioTranscriptBody}>
-                  {note.sourcePageText.trim()}
-                </Text>
-              ) : null}
-              <Pressable
-                accessibilityLabel={
-                  sourceContentExpanded ? '收起音频转写' : '展开音频转写全文'
-                }
-                onPress={() =>
-                  setSourceContentExpanded((current) => !current)
-                }
-                style={({ pressed }) => [
-                  styles.audioTranscriptToggle,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.audioTranscriptToggleText}>
-                  {sourceContentExpanded ? '收起逐字稿 ↑' : '查看原始逐字稿 ↓'}
-                </Text>
-              </Pressable>
             </View>
           ) : null}
           {note?.recordType === 'capture' && note.sourceUrl ? (
@@ -2847,12 +2832,12 @@ function NoteEditor({
                 <Text style={styles.linkIntentMark}>↗</Text>
                 <View style={styles.linkIntentHeadingCopy}>
                   <Text style={styles.linkIntentTitle}>
-                    {isXiaoyuzhouAudio ? 'AI 洞察笔记' : '为什么保存？'}
+                    我的保存意图
                   </Text>
                   <Text style={styles.linkIntentDescription}>
                     {isXiaoyuzhouAudio
-                      ? 'AI 会默认提炼核心观点、整体洞察和值得关注；也可以补充你特别想看的方向。'
-                      : '说说它与你有什么关系，或希望 ReMind 重点整理什么。'}
+                      ? '用一句完整的话写下你为什么保存、希望以后如何使用；不是填写关键词。留空时 AI 仍会按默认规则整理。'
+                      : '用一句完整的话说说它与你有什么关系，或希望 ReMind 重点整理什么；不是填写关键词。'}
                   </Text>
                 </View>
               </View>
@@ -2862,8 +2847,8 @@ function NoteEditor({
                 onChangeText={setUserContext}
                 placeholder={
                   isXiaoyuzhouAudio
-                    ? '可选：补充你特别想关注的问题。'
-                    : '例如：重点看它如何帮助回忆，想留作产品设计参考。'
+                    ? '例如：我想学习嘉宾拆解复杂问题的方法，以后做产品规划时参考。'
+                    : '例如：我想保留它对记忆方法的解释，以后设计产品时参考。'
                 }
                 placeholderTextColor={colors.faint}
                 style={styles.linkIntentInput}

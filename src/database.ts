@@ -26,6 +26,7 @@ import {
   LINK_AUTOMATION_MODE_SETTING,
   REMIND_DATABASE_SCHEMA_VERSION,
 } from './persistence-contract';
+import { SYSTEM_XIAOYUZHOU_INSIGHT_PROMPTS } from './xiaoyuzhou';
 
 // v16 is intentionally schema-neutral. It preserves migration monotonicity
 // after the discarded local-media prototype without storing media in SQLite.
@@ -511,6 +512,25 @@ export async function migrateDatabase(db: SQLiteDatabase) {
     `);
   }
 
+  if (currentVersion < 18) {
+    for (const prompt of SYSTEM_XIAOYUZHOU_INSIGHT_PROMPTS) {
+      await db.runAsync(
+        `UPDATE notes
+         SET user_context = NULL
+         WHERE source_url LIKE '%xiaoyuzhoufm.com%'
+           AND trim(COALESCE(user_context, '')) = ?`,
+        prompt,
+      );
+    }
+  }
+
+  if (currentVersion < 19) {
+    await db.execAsync(`
+      ALTER TABLE note_imports
+      ADD COLUMN source_updated_at TEXT;
+    `);
+  }
+
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }
 
@@ -843,30 +863,60 @@ export async function createImportedNote(
     sourcePageSite?: string | null;
     sourcePageText?: string | null;
     createdAt?: string | null;
+    sourceUpdatedAt?: string | null;
   } = {},
 ): Promise<Note | null> {
   let createdNote: Note | null = null;
 
   await db.withExclusiveTransactionAsync(async (transaction) => {
     const claimed = await transaction.runAsync(
-      `INSERT INTO note_imports (source_key, payload, created_at)
-       VALUES ($sourceKey, $payload, $createdAt)
+      `INSERT INTO note_imports (source_key, payload, created_at, source_updated_at)
+       VALUES ($sourceKey, $payload, $createdAt, $sourceUpdatedAt)
        ON CONFLICT(source_key) DO NOTHING`,
       {
         $sourceKey: sourceKey,
         $payload: content,
         $createdAt: new Date().toISOString(),
+        $sourceUpdatedAt: normalizeImportedTimestamp(metadata.sourceUpdatedAt),
       },
     );
 
     if (claimed.changes === 0) {
       const existing = await transaction.getFirstAsync<{
         note_id: string | null;
+        payload: string;
       }>(
-        `SELECT note_id FROM note_imports WHERE source_key = ?`,
+        `SELECT note_id, payload FROM note_imports WHERE source_key = ?`,
         sourceKey,
       );
       if (existing?.note_id) {
+        const current = await transaction.getFirstAsync<{
+          source_url: string | null;
+          user_context: string | null;
+          source_page_title: string | null;
+          source_page_site: string | null;
+          source_page_text: string | null;
+          created_at: string;
+        }>(
+          `SELECT source_url, user_context, source_page_title,
+                  source_page_site, source_page_text, created_at
+           FROM notes
+           WHERE id = ?`,
+          existing.note_id,
+        );
+        const importedCreatedAt = normalizeImportedTimestamp(metadata.createdAt);
+        if (
+          current &&
+          existing.payload === content &&
+          nullableTextEqual(current.source_url, metadata.sourceUrl) &&
+          nullableTextEqual(current.user_context, metadata.userContext) &&
+          nullableTextEqual(current.source_page_title, metadata.sourcePageTitle) &&
+          nullableTextEqual(current.source_page_site, metadata.sourcePageSite) &&
+          nullableTextEqual(current.source_page_text, metadata.sourcePageText) &&
+          (!importedCreatedAt || current.created_at === importedCreatedAt)
+        ) {
+          return;
+        }
         await transaction.runAsync(
           `UPDATE notes
            SET source_url = COALESCE($sourceUrl, source_url),
@@ -887,22 +937,20 @@ export async function createImportedNote(
             $noteId: existing.note_id,
           },
         );
-        if (
-          metadata.sourceUrl ||
-          metadata.userContext ||
-          metadata.sourcePageText
-        ) {
-          const refreshed = await transaction.getFirstAsync<NoteRow>(
-            `SELECT id, title, content, summary, status, source, record_type,
-                    content_kind, source_url, user_context, source_page_title,
-                    source_page_site, source_page_text, tags_json, created_at,
-                    updated_at
-             FROM notes
-             WHERE id = ?`,
-            existing.note_id,
+        if (existing.payload !== content) {
+          await transaction.runAsync(
+            `UPDATE note_imports SET payload = ? WHERE source_key = ?`,
+            content,
+            sourceKey,
           );
-          if (refreshed) createdNote = mapNoteRow(refreshed);
         }
+        await transaction.runAsync(
+          `UPDATE note_imports
+           SET source_updated_at = COALESCE(?, source_updated_at)
+           WHERE source_key = ?`,
+          normalizeImportedTimestamp(metadata.sourceUpdatedAt),
+          sourceKey,
+        );
       }
       return;
     }
@@ -922,10 +970,34 @@ export async function createImportedNote(
   return createdNote;
 }
 
+export async function getImportedSourceVersions(
+  db: SQLiteDatabase,
+  sourceKeys: string[],
+): Promise<Map<string, string | null>> {
+  if (!sourceKeys.length) return new Map();
+  const rows = await db.getAllAsync<{
+    source_key: string;
+    source_updated_at: string | null;
+  }>(
+    `SELECT source_key, source_updated_at
+     FROM note_imports
+     WHERE source_key IN (${sourceKeys.map(() => '?').join(', ')})`,
+    ...sourceKeys,
+  );
+  return new Map(rows.map((row) => [row.source_key, row.source_updated_at]));
+}
+
 function normalizeImportedTimestamp(value: string | null | undefined): string | null {
   if (!value) return null;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function nullableTextEqual(
+  stored: string | null,
+  incoming: string | null | undefined,
+): boolean {
+  return stored === (incoming ?? null);
 }
 
 export async function updateNote(

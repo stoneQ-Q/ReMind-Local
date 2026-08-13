@@ -100,6 +100,9 @@ export async function organizeLink(
   }
   const url = validatePublicLinkUrl(urlValue);
   let page = parsePage(value?.page);
+  if (new URL(url).hostname.endsWith('xiaoyuzhoufm.com')) {
+    page = await storedLinkPage(pool, userId, url);
+  }
   if (!page) {
     try {
       const snapshot = await new SecureLinkPageFetcher().fetch(url, signal);
@@ -163,6 +166,35 @@ export async function organizeLink(
     }
   }
   throw new OrganizationError('ai_invalid_response', 502);
+}
+
+async function storedLinkPage(
+  pool: Pool,
+  userId: string,
+  url: string,
+): Promise<{ title: string; site: string; text: string } | null> {
+  const result = await pool.query<{
+    source_page_title: string | null;
+    source_page_site: string | null;
+    source_page_text: string | null;
+  }>(
+    `SELECT source_page_title, source_page_site, source_page_text
+     FROM notes
+     WHERE user_id = $1 AND source_url = $2 AND deleted_at IS NULL
+       AND source_page_text LIKE '%音频转写%'
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [userId, url],
+  );
+  const row = result.rows[0];
+  if (!row?.source_page_title || !row.source_page_site || !row.source_page_text) {
+    return null;
+  }
+  return {
+    title: row.source_page_title,
+    site: row.source_page_site,
+    text: row.source_page_text,
+  };
 }
 
 export async function suggestThemeMerge(

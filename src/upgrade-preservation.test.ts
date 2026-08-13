@@ -80,7 +80,7 @@ describe('ReMind in-place upgrade preservation', () => {
     expect(appConfig.expo.plugins).toContain('expo-secure-store');
     expect(appConfig.expo.newArchEnabled).not.toBe(false);
     expect(REMIND_DATABASE_NAME).toBe('remind.db');
-    expect(REMIND_DATABASE_SCHEMA_VERSION).toBe(17);
+    expect(REMIND_DATABASE_SCHEMA_VERSION).toBe(19);
     expect(REMIND_SERVICE_MODE_STORAGE_KEY).toBe('remind.service.mode.v1');
     expect(REMIND_LOCAL_API_URL_STORAGE_KEY).toBe(
       'remind.service.local-api-url.v1',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   organizationContextForXiaoyuzhou,
+  xiaoyuzhouUserIntent,
   XIAOYUZHOU_INSIGHT_PROMPT,
 } from './xiaoyuzhou';
 
@@ -45,5 +46,17 @@ describe('organizationContextForXiaoyuzhou', () => {
         userContext: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe('xiaoyuzhouUserIntent', () => {
+  it('keeps a user-written intent', () => {
+    expect(xiaoyuzhouUserIntent('以后做产品规划时参考')).toBe(
+      '以后做产品规划时参考',
+    );
+  });
+
+  it('does not expose the system organization prompt as user intent', () => {
+    expect(xiaoyuzhouUserIntent(XIAOYUZHOU_INSIGHT_PROMPT)).toBeNull();
   });
 });

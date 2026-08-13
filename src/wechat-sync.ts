@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { createImportedNote } from './database';
+import { createImportedNote, getImportedSourceVersions } from './database';
 import {
   buildReMindApiUrl,
   credentialScope,
@@ -13,7 +13,8 @@ import {
   wechatDeviceSecretStorageKey,
 } from './persistence-contract';
 import { requestCloud, requestCloudJson } from './cloud-api';
-import { organizationContextForXiaoyuzhou } from './xiaoyuzhou';
+import { runSingleWechatSync } from './wechat-sync-guard';
+import { xiaoyuzhouUserIntent } from './xiaoyuzhou';
 
 export type WechatReplyMode = 'first' | 'always' | 'silent';
 
@@ -216,10 +217,37 @@ export async function requestAuthenticatedDeviceApi(
 export async function syncWechatInbox(
   db: SQLiteDatabase,
 ): Promise<number> {
+  return runSingleWechatSync(db, () => syncWechatInboxOnce(db));
+}
+
+async function syncWechatInboxOnce(
+  db: SQLiteDatabase,
+): Promise<number> {
   const service = getReMindServiceConfig();
   if (service?.mode === 'hosted') {
-    const payload = (await requestCloudJson('wechat/captures')) as {
-      messages?: Array<{
+    const manifest = (await requestCloudJson('wechat/capture-manifest')) as {
+      captures?: Array<{ id: string; updatedAt: string }>;
+    };
+    const captures = manifest.captures ?? [];
+    const sourceKeys = captures.map((capture) => `cloud-wechat:${capture.id}`);
+    const localVersions = await getImportedSourceVersions(db, sourceKeys);
+    const pending = captures
+      .filter(
+        (capture) =>
+          localVersions.get(`cloud-wechat:${capture.id}`) !== capture.updatedAt,
+      )
+      .slice(0, 5);
+    if (__DEV__) {
+      console.info('[wechat-sync] cloud captures pending', pending.length);
+    }
+    let importedCount = 0;
+    for (const item of pending) {
+      const payload = (await requestCloudJson(
+        `wechat/captures/${encodeURIComponent(item.id)}`,
+        {},
+        30_000,
+      )) as {
+        capture?: {
         id: string;
         content: string;
         sourceUrl: string | null;
@@ -228,28 +256,29 @@ export async function syncWechatInbox(
         pageSite: string | null;
         pageText: string | null;
         createdAt: string;
-      }>;
-    };
-    let importedCount = 0;
-    for (const message of payload.messages ?? []) {
+          updatedAt: string;
+        };
+      };
+      const message = payload.capture;
+      if (!message) continue;
       const created = await createImportedNote(
         db,
         message.content,
         `cloud-wechat:${message.id}`,
         {
           sourceUrl: message.sourceUrl,
-          userContext: organizationContextForXiaoyuzhou({
-            sourceUrl: message.sourceUrl,
-            sourcePageText: message.pageText,
-            userContext: message.userContext,
-          }),
+          userContext: xiaoyuzhouUserIntent(message.userContext),
           sourcePageTitle: message.pageTitle,
           sourcePageSite: message.pageSite,
           sourcePageText: message.pageText,
           createdAt: message.createdAt,
+          sourceUpdatedAt: message.updatedAt,
         },
       );
       if (created) importedCount += 1;
+    }
+    if (__DEV__) {
+      console.info('[wechat-sync] cloud captures imported', importedCount);
     }
     return importedCount;
   }
@@ -275,11 +304,7 @@ export async function syncWechatInbox(
       `wechat:${message.msgId}`,
       {
         sourceUrl: message.linkUrl,
-        userContext: organizationContextForXiaoyuzhou({
-          sourceUrl: message.linkUrl,
-          sourcePageText: message.pageText,
-          userContext: message.userContext,
-        }),
+        userContext: xiaoyuzhouUserIntent(message.userContext),
         sourcePageTitle: message.pageTitle,
         sourcePageSite: message.pageSite,
         sourcePageText: message.pageText,
