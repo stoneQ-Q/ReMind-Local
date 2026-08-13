@@ -7,7 +7,7 @@
 
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
-- Current continuity checkpoint: `6004964`
+- Current continuity checkpoint: `94e1fa0`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -160,6 +160,23 @@ personal test app, and 1 development environment.**
   45 files passed, and an Android Expo export completed successfully. The app
   UI and database schema v20 remain development-source only and are not installed
   as a signed APK; build 31 remains the phone-installed delivery.
+- Expo real-phone verification on 2026-08-13 confirmed the diagnostics page
+  reported cloud release `6004964`, the WeChat gateway online, and a concrete
+  last-sync time. Note-card source pills were also confirmed on the phone.
+  Diagnostics exposed one remaining manifest-loop issue: semantically identical
+  timestamps such as `...Z` and `...000Z` compared unequal, and an unchanged
+  capture could return before persisting its source version. Commits `92c8e2e`
+  and `94e1fa0` fixed both cases; the live Expo log then converged from one
+  final pending capture to repeated `pending 0 / imported 0` cycles.
+- The durable background-insight close/reopen phone scenario was intentionally
+  deferred by the user. Automated coverage and cloud deployment are complete,
+  but do not record that specific interaction as phone-verified yet.
+- The next personal cloud test APK is configured as ReMind `1.0.2`, Android
+  build 33, package `app.remind.notes`. GitHub Actions branch
+  `cloud-build-33` produces artifact
+  `ReMind-1.0.2-build33-diagnostics-background-insights`; this is a build target,
+  not an installed or verified delivery until the workflow succeeds and the APK
+  is installed on the Redmi.
 
 ## Cloud mode
 
@@ -220,8 +237,8 @@ Before changing anything:
 - Audit `codex/preserve-main-20260811` against `main` and selectively recover only
   changes that are still needed and pass current tests.
 - Complete real-phone validation for the `6004964` development batch across
-  Wi-Fi/mobile-data switches, background/force-close recovery, link-source pills,
-  and durable Xiaoyuzhou insight completion before producing a new signed APK.
+  Wi-Fi/mobile-data switches, background/force-close recovery, and durable
+  Xiaoyuzhou insight completion after build 33 is installed.
 - Keep dated handoff and migration documents as append-only history. Update this
   file whenever the current release, installed build, authoritative branch, or
   runtime topology changes.

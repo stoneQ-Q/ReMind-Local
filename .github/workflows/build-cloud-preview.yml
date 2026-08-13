@@ -3,7 +3,7 @@ name: Build ReMind Cloud APK
 on:
   push:
     branches:
-      - cloud-build-32
+      - cloud-build-33
   workflow_dispatch:
 
 permissions:
@@ -45,22 +45,24 @@ jobs:
           npm test
 
       - name: Build signed cloud APK
+        env:
+          REMIND_ANDROID_VERSION_CODE: "33"
         run: |
           mkdir -p artifacts
-          eas build --platform android --profile preview-local --local --non-interactive --output artifacts/ReMind-1.0.2-build32-xiaoyuzhou-transcript.apk
+          eas build --platform android --profile preview-local --local --non-interactive --output artifacts/ReMind-1.0.2-build33-diagnostics-background-insights.apk
 
       - name: Verify APK and checksum
         run: |
-          unzip -t artifacts/ReMind-1.0.2-build32-xiaoyuzhou-transcript.apk
+          unzip -t artifacts/ReMind-1.0.2-build33-diagnostics-background-insights.apk
           cd artifacts
-          sha256sum ReMind-1.0.2-build32-xiaoyuzhou-transcript.apk > SHA256SUMS.txt
+          sha256sum ReMind-1.0.2-build33-diagnostics-background-insights.apk > SHA256SUMS.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ReMind-1.0.2-build32-xiaoyuzhou-transcript
+          name: ReMind-1.0.2-build33-diagnostics-background-insights
           path: |
-            artifacts/ReMind-1.0.2-build32-xiaoyuzhou-transcript.apk
+            artifacts/ReMind-1.0.2-build33-diagnostics-background-insights.apk
             artifacts/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
