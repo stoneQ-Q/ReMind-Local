@@ -1,7 +1,7 @@
 # ReMind current state
 
 > This is the single current checkpoint for starting a new ReMind task.
-> Last verified: 2026-08-11, Asia/Shanghai.
+> Last verified: 2026-08-13, Asia/Shanghai.
 
 ## Source authority
 
@@ -19,6 +19,63 @@
   Do not develop, deploy, or install services from it while `main` is authoritative.
 
 Always verify the live HEAD because it can advance after this file is updated.
+
+## App variants, runtime modes, and development environment
+
+Do not use the words "version", "mode", and "development build" as if they
+describe the same layer. The current project has two installable app variants,
+two runtime modes inside the personal test app, and one development environment.
+
+### Installable app variants
+
+1. Personal test app: `ReMind`
+   - Android package: `app.remind.notes`
+   - Current phone-verified delivery: version `1.0.2`, build 31
+   - Current device: Redmi Note 13 Pro, Android 16
+   - This app can expose both cloud and local runtime modes when both service
+     addresses are included in its build configuration.
+   - The `preview` and `preview-local` EAS profile names refer to internal build
+     profiles for this same personal test app. `preview-local` is not the separate
+     public `ReMind Local` product.
+
+2. Public local self-hosted app: `ReMind Local`
+   - Android package: `app.remind.notes.local`
+   - Planned/configured version: `1.0.3` preview
+   - EAS profile: `public-local`
+   - It can be installed alongside the personal test app because it has a separate
+     package identifier.
+   - It does not embed the maintainer's private cloud or LAN service addresses.
+     Each user connects their own Mac and uses their own API keys.
+   - The repository contains its build configuration and release documentation,
+     but this checkpoint has no evidence that the public preview has been formally
+     released or installed on the current phone.
+
+The repository also has a generic `production` EAS profile, but there is no
+verified store or production release. Do not count it as a third delivered app.
+
+### Runtime modes in the personal test app
+
+1. Cloud mode
+   - Uses the hosted ReMind API and cloud account.
+   - Cloud Worker owns WeChat polling, link processing, and the cloud capture path.
+   - This is the mode currently used on the build-31 personal test app.
+
+2. Local mode
+   - Connects to a Mac-hosted ReMind service on the same LAN.
+   - Uses the local Worker and, only when local WeChat is intentionally active,
+     the local gateway.
+   - Local and cloud data stores are distinct; switching modes does not imply full
+     bidirectional migration or synchronization.
+
+### Development environment
+
+- Expo/Metro (`npm start`, Expo Go where applicable, or a development build) is a
+  code-development and debugging path, not a third user-facing app product.
+- Development source behavior must not be described as installed-phone behavior
+  until a signed APK is built, installed, and explicitly verified.
+
+Short classification: **2 installable app variants, 2 runtime modes in the
+personal test app, and 1 development environment.**
 
 ## Installed app and source after it
 
