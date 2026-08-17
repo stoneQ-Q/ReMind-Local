@@ -7,7 +7,8 @@
 
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
-- Current continuity checkpoint before this documentation update: `e3e3e30`
+- Current authoritative feature checkpoint before this documentation update:
+  `d2e7d39`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -92,7 +93,7 @@ personal test app, and 1 development environment.**
 
 ## Pending development changes
 
-- The authoritative `main` working tree now contains a development-only first
+- Authoritative `main` commit `d2e7d39` contains a development-only first
   pass of the zero-configuration consumer experience. A clean consumer install
   prefers the hosted cloud service, creates its anonymous device account in the
   background, securely retains the one-time recovery code until acknowledged,
@@ -100,7 +101,7 @@ personal test app, and 1 development environment.**
   key. The consumer settings describe managed intelligence, privacy, trial
   credit, and usage; BYOK fields and local service addresses remain available
   only in the explicit `ReMind Local` build variant.
-- The same working tree extends managed AI to synchronous and durable text
+- The same source checkpoint extends managed AI to synchronous and durable text
   organization. New managed accounts may receive an operator-configured starter
   credit, text calls reserve a server-priced upper bound before contacting the
   provider, settle from provider token usage, and release the reservation on
