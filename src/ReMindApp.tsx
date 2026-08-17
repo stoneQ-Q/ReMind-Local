@@ -5019,11 +5019,11 @@ function CloudAccountSettings({
                 </View>
                 <View style={styles.cloudAiSettingsCopy}>
                   <Text style={styles.cloudAiSettingsTitle}>
-                    {consumer ? '智能整理' : 'AI 与 API Key'}
+                    {consumer ? '智能功能' : 'AI 与 API Key'}
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     {consumer
-                      ? '整理方式与链接处理'
+                      ? '整理记录、问答与链接处理'
                       : '关闭 AI、使用自己的 Key，或查看托管服务状态'}
                   </Text>
                 </View>
@@ -5726,6 +5726,17 @@ function WechatBinding({
                 <View style={styles.wechatSuccessDot} />
                 <Text style={styles.wechatSuccessText}>同步已开启</Text>
               </View>
+              {consumer ? (
+                <View style={styles.replyModeCard}>
+                  <Text style={styles.replyModeTitle}>怎么使用</Text>
+                  <Text style={styles.replyModeDescription}>
+                    打开微信，进入连接时出现的 ReMind 助手聊天。直接发送文字，或把公众号文章、普通网页、小红书和小宇宙链接转发给它。
+                  </Text>
+                  <Text style={styles.replyModeDescription}>
+                    ReMind 会先保存原始内容；链接取得正文后，再按照“智能功能”里的链接处理方式继续。App 会自动同步，也可以点击下面的“立即同步”。
+                  </Text>
+                </View>
+              ) : null}
               {!consumer ? (
                 <View style={styles.serviceStatusCard}>
                 <Text style={styles.serviceStatusTitle}>运行状态</Text>

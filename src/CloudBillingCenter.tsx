@@ -109,7 +109,7 @@ export function CloudBillingCenter({
           </Text>
           <Text style={styles.copy}>
             {consumer
-              ? '忆粒用于智能整理和问 ReMind。完成后只记录实际使用量，没有用到的部分会自动归还。'
+              ? '忆粒用于整理记录、问 ReMind 和自动处理链接。完成后只记录实际使用量，没有用到的部分会自动归还。'
               : '余额不会出现负数。任务开始前先预占，完成后按实际用量结算，失败或未使用的部分会释放。'}
           </Text>
 
@@ -210,7 +210,7 @@ export function CloudBillingCenter({
                   </Text>
                   <Text style={styles.emptyLedgerCopy}>
                     {consumer
-                      ? '完成第一次智能整理后，这里会显示获赠、留出和实际使用的忆粒。'
+                      ? '第一次使用智能功能后，这里会显示获赠、留出和实际使用的忆粒。'
                       : '目前没有充值、赠送、预占或结算。使用自己的 API Key 不会从这里扣费。'}
                   </Text>
                 </View>
