@@ -2,7 +2,10 @@ import type { Pool } from 'pg';
 
 import type { CredentialCipher } from './credential-cipher.js';
 import { SecureLinkPageFetcher, validatePublicLinkUrl } from './link-page.js';
-import { resolveMediaProviderCredential } from './media-provider-routing.js';
+import {
+  resolveMediaProviderCredential,
+  type ManagedProviderCredentials,
+} from './media-provider-routing.js';
 
 const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
 const MODEL = 'deepseek-v4-flash';
@@ -23,6 +26,15 @@ type Draft = {
   citations: Citation[];
 };
 
+export type OrganizationExecution = {
+  managedCredentials?: ManagedProviderCredentials;
+  reservedCostMicros?: bigint;
+  onUsage?: (usage: {
+    promptTokens: number;
+    completionTokens: number;
+  }) => void;
+};
+
 export class OrganizationError extends Error {
   constructor(readonly code: string, readonly status = 400) {
     super(code);
@@ -35,6 +47,7 @@ export async function organizeDaily(
   userId: string,
   body: unknown,
   signal: AbortSignal,
+  execution: OrganizationExecution = {},
 ): Promise<{ drafts: Draft[]; ignoredSourceIds: string[]; model: string }> {
   const sources = parseSources(record(body)?.sources);
   if (!sources) throw new OrganizationError('invalid_request');
@@ -56,7 +69,7 @@ export async function organizeDaily(
         })),
     })),
   });
-  const key = await apiKey(pool, cipher, userId);
+  const key = await apiKey(pool, cipher, userId, execution);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const raw = await generateJson(
@@ -64,6 +77,8 @@ export async function organizeDaily(
         attempt === 0 ? DAILY_PROMPT : DAILY_RETRY_PROMPT,
         request,
         signal,
+        3_000,
+        execution.onUsage,
       );
       const validated = validateDrafts(raw, sources, evidenceBySource);
       if (validated.drafts.length > 1) {
@@ -90,6 +105,7 @@ export async function organizeLink(
   userId: string,
   body: unknown,
   signal: AbortSignal,
+  execution: OrganizationExecution = {},
 ): Promise<{ drafts: Draft[]; ignoredSourceIds: string[]; model: string }> {
   const value = record(body);
   const sourceId = shortText(value?.sourceId, 128);
@@ -125,7 +141,7 @@ export async function organizeLink(
       createdAt: new Date().toISOString(),
     },
   ];
-  const key = await apiKey(pool, cipher, userId);
+  const key = await apiKey(pool, cipher, userId, execution);
   const request = JSON.stringify({
     sourceId,
     url,
@@ -141,6 +157,7 @@ export async function organizeLink(
         request,
         signal,
         5_000,
+        execution.onUsage,
       );
       const validated = validateDrafts(
         raw,
@@ -203,6 +220,7 @@ export async function suggestThemeMerge(
   userId: string,
   body: unknown,
   signal: AbortSignal,
+  execution: OrganizationExecution = {},
 ): Promise<Record<string, unknown> & { model: string }> {
   const value = record(body);
   const source = parseThemeSource(value?.source);
@@ -210,10 +228,12 @@ export async function suggestThemeMerge(
   if (!source || !themes) throw new OrganizationError('invalid_request');
   const raw = record(
     await generateJson(
-      await apiKey(pool, cipher, userId),
+      await apiKey(pool, cipher, userId, execution),
       THEME_PROMPT,
       JSON.stringify({ source, themes }),
       signal,
+      3_000,
+      execution.onUsage,
     ),
   );
   if (!raw) throw new OrganizationError('ai_invalid_response', 502);
@@ -237,6 +257,7 @@ export async function answerMemoryQuestion(
   userId: string,
   body: unknown,
   signal: AbortSignal,
+  execution: OrganizationExecution = {},
 ): Promise<{
   answer: string;
   insufficient: boolean;
@@ -251,7 +272,7 @@ export async function answerMemoryQuestion(
   const evidenceBySource = evidenceMap(sources);
   const raw = record(
     await generateJson(
-      await apiKey(pool, cipher, userId),
+      await apiKey(pool, cipher, userId, execution),
       MEMORY_QUESTION_PROMPT,
       JSON.stringify({
         question,
@@ -259,6 +280,8 @@ export async function answerMemoryQuestion(
         evidenceCandidates: serializeEvidence(evidenceBySource),
       }),
       signal,
+      3_000,
+      execution.onUsage,
     ),
   );
   if (!raw || typeof raw.insufficient !== 'boolean') {
@@ -285,6 +308,7 @@ export async function generateMemoryInsight(
   userId: string,
   body: unknown,
   signal: AbortSignal,
+  execution: OrganizationExecution = {},
 ): Promise<Record<string, unknown> & { model: string }> {
   const value = record(body);
   const period = value?.period === 'week' || value?.period === 'month' ? value.period : null;
@@ -297,7 +321,7 @@ export async function generateMemoryInsight(
   const evidenceBySource = evidenceMap(sources);
   const raw = record(
     await generateJson(
-      await apiKey(pool, cipher, userId),
+      await apiKey(pool, cipher, userId, execution),
       MEMORY_INSIGHT_PROMPT,
       JSON.stringify({
         period,
@@ -307,6 +331,8 @@ export async function generateMemoryInsight(
         evidenceCandidates: serializeEvidence(evidenceBySource),
       }),
       signal,
+      3_000,
+      execution.onUsage,
     ),
   );
   if (!raw) throw new OrganizationError('ai_invalid_response', 502);
@@ -364,11 +390,17 @@ function validateMemoryCitations(
   return citations;
 }
 
-async function apiKey(pool: Pool, cipher: CredentialCipher, userId: string): Promise<string> {
+async function apiKey(
+  pool: Pool,
+  cipher: CredentialCipher,
+  userId: string,
+  execution: OrganizationExecution,
+): Promise<string> {
   const credential = await resolveMediaProviderCredential(pool, cipher, {
     userId,
     provider: 'deepseek',
-    reservedCostMicros: 0n,
+    reservedCostMicros: execution.reservedCostMicros ?? 0n,
+    managedCredentials: execution.managedCredentials,
   });
   return credential.apiKey;
 }
@@ -379,6 +411,7 @@ async function generateJson(
   user: string,
   signal: AbortSignal,
   maxTokens = 3_000,
+  onUsage?: OrganizationExecution['onUsage'],
 ): Promise<unknown> {
   const response = await fetch(DEEPSEEK_URL, {
     method: 'POST',
@@ -405,6 +438,12 @@ async function generateJson(
     throw new OrganizationError('ai_provider_failed', 502);
   }
   const payload = record(await response.json());
+  const usage = record(payload?.usage);
+  const promptTokens = tokenCount(usage?.prompt_tokens);
+  const completionTokens = tokenCount(usage?.completion_tokens);
+  if (promptTokens !== null && completionTokens !== null) {
+    onUsage?.({ promptTokens, completionTokens });
+  }
   const choices = Array.isArray(payload?.choices) ? payload.choices : [];
   const message = record(record(choices[0])?.message);
   const content = shortText(message?.content, 30_000);
@@ -414,6 +453,12 @@ async function generateJson(
   } catch {
     throw new OrganizationError('ai_invalid_response', 502);
   }
+}
+
+function tokenCount(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) >= 0
+    ? Number(value)
+    : null;
 }
 
 function validateDrafts(

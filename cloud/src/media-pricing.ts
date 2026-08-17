@@ -1,11 +1,14 @@
 const ONE_MILLION = 1_000_000n;
 const SECONDS_PER_MINUTE = 60n;
 
-export type ManagedMediaPriceCatalog = {
-  zhipuVisionPerImageMicros: bigint;
-  zhipuAsrPerMinuteMicros: bigint;
+export type ManagedTextPriceCatalog = {
   deepseekInputPerMillionTokensMicros: bigint;
   deepseekOutputPerMillionTokensMicros: bigint;
+};
+
+export type ManagedMediaPriceCatalog = ManagedTextPriceCatalog & {
+  zhipuVisionPerImageMicros: bigint;
+  zhipuAsrPerMinuteMicros: bigint;
 };
 
 export class ManagedMediaPricingUnavailableError extends Error {
@@ -24,6 +27,19 @@ export function managedMediaPriceCatalogFromEnvironment(
     zhipuAsrPerMinuteMicros: requiredPositiveMicros(
       environment.REMIND_PRICE_ZHIPU_ASR_PER_MINUTE_MICROS,
     ),
+    deepseekInputPerMillionTokensMicros: requiredPositiveMicros(
+      environment.REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS,
+    ),
+    deepseekOutputPerMillionTokensMicros: requiredPositiveMicros(
+      environment.REMIND_PRICE_DEEPSEEK_OUTPUT_PER_MILLION_TOKENS_MICROS,
+    ),
+  };
+}
+
+export function managedTextPriceCatalogFromEnvironment(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): ManagedTextPriceCatalog {
+  return {
     deepseekInputPerMillionTokensMicros: requiredPositiveMicros(
       environment.REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS,
     ),
@@ -55,7 +71,7 @@ export function estimateManagedTranscriptionCost(
 }
 
 export function estimateManagedTextCost(
-  catalog: ManagedMediaPriceCatalog,
+  catalog: ManagedTextPriceCatalog,
   inputTokens: number,
   maximumOutputTokens: number,
 ): bigint {
@@ -72,7 +88,7 @@ export function estimateManagedTextCost(
 }
 
 export function actualManagedTextCost(
-  catalog: ManagedMediaPriceCatalog,
+  catalog: ManagedTextPriceCatalog,
   promptTokens: number,
   completionTokens: number,
 ): bigint {

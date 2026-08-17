@@ -19,6 +19,7 @@ export const REMIND_LOCAL_API_URL_STORAGE_KEY = 'remind.service.local-api-url.v1
 const WECHAT_DEVICE_ID_STORAGE_KEY = 'remind.wechat.device-id';
 const WECHAT_DEVICE_SECRET_STORAGE_KEY = 'remind.wechat.device-secret';
 const CLOUD_SESSION_STORAGE_KEY = 'remind.cloud.session';
+const CLOUD_RECOVERY_CODE_STORAGE_KEY = 'remind.cloud.recovery-code';
 
 export function wechatDeviceIdStorageKey(scope: string): string {
   return scopedStorageKey(WECHAT_DEVICE_ID_STORAGE_KEY, scope);
@@ -30,6 +31,10 @@ export function wechatDeviceSecretStorageKey(scope: string): string {
 
 export function cloudSessionStorageKey(scope: string): string {
   return scopedStorageKey(CLOUD_SESSION_STORAGE_KEY, scope);
+}
+
+export function cloudRecoveryCodeStorageKey(scope: string): string {
+  return scopedStorageKey(CLOUD_RECOVERY_CODE_STORAGE_KEY, scope);
 }
 
 function scopedStorageKey(key: string, scope: string): string {

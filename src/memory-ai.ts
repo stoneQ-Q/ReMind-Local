@@ -1,6 +1,7 @@
 import { requestAuthenticatedDeviceApi } from './wechat-sync';
 import { createLocalId } from './note-utils';
 import { getActiveReMindAppMode } from './service-contract';
+import { isConsumerReMindApp } from './app-variant';
 import type {
   InsightPeriod,
   MemoryAnswer,
@@ -188,7 +189,15 @@ async function memoryAiError(response: Response): Promise<string> {
   if (payload?.error === 'ai_not_configured') {
     return getActiveReMindAppMode() === 'local'
       ? '本地服务尚未配置 DeepSeek Key，请先完成本地 AI 配置。'
-      : '请先在“AI 与 API Key”中保存自己的 Key。';
+      : isConsumerReMindApp()
+        ? 'ReMind 智能服务暂时不可用，请稍后重试。'
+        : '请先在“AI 与 API Key”中保存自己的 Key。';
+  }
+  if (payload?.error === 'managed_service_unavailable') {
+    return 'ReMind 智能服务正在维护，请稍后重试。';
+  }
+  if (payload?.error === 'insufficient_balance') {
+    return '本次内测额度不足，已有记录不会受到影响。';
   }
   if (payload?.error === 'ai_auth_failed') return 'API Key 已失效，请更新后重试。';
   if (payload?.error === 'ai_rate_limited') return 'AI 服务现在比较忙，请稍后再试。';

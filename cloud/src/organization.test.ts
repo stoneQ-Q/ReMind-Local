@@ -324,4 +324,73 @@ describe('cloud organization', () => {
     expect(result.drafts[0]?.citations[0]?.quote).toContain('页面证据');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('uses the server credential and reports usage in managed mode', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM users')) {
+        return { rows: [{ ai_mode: 'managed', status: 'active' }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const providerClient = {
+      query: vi.fn(async () => ({ rows: [{ status: 'active' }] })),
+      release: vi.fn(),
+    };
+    const pool = { query, connect: vi.fn(async () => providerClient) };
+    const onUsage = vi.fn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        expect(new Headers(init.headers).get('Authorization')).toBe(
+          'Bearer managed-deepseek-key',
+        );
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    drafts: [],
+                    ignoredSourceIds: ['managed-note'],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 120, completion_tokens: 30 },
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    await organizeDaily(
+      pool as never,
+      {} as never,
+      'managed-user',
+      {
+        sources: [
+          {
+            id: 'managed-note',
+            content: '这是一条由 ReMind 托管服务整理的内测记录。',
+            createdAt: '2026-08-17T00:00:00.000Z',
+          },
+        ],
+      },
+      new AbortController().signal,
+      {
+        managedCredentials: { deepseek: 'managed-deepseek-key' },
+        reservedCostMicros: 50_000n,
+        onUsage,
+      },
+    );
+
+    expect(onUsage).toHaveBeenCalledWith({
+      promptTokens: 120,
+      completionTokens: 30,
+    });
+    expect(query).not.toHaveBeenCalledWith(
+      expect.stringContaining('FROM api_credentials'),
+      expect.anything(),
+    );
+  });
 });

@@ -6,6 +6,7 @@ import {
   estimateManagedTextCost,
   estimateManagedTranscriptionCost,
   managedMediaPriceCatalogFromEnvironment,
+  managedTextPriceCatalogFromEnvironment,
   ManagedMediaPricingUnavailableError,
 } from './media-pricing.js';
 
@@ -17,6 +18,18 @@ const catalog = {
 };
 
 describe('managed media pricing', () => {
+  it('loads text-only pricing without enabling managed media', () => {
+    expect(
+      managedTextPriceCatalogFromEnvironment({
+        REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS: '1000000',
+        REMIND_PRICE_DEEPSEEK_OUTPUT_PER_MILLION_TOKENS_MICROS: '2000000',
+      }),
+    ).toEqual({
+      deepseekInputPerMillionTokensMicros: 1_000_000n,
+      deepseekOutputPerMillionTokensMicros: 2_000_000n,
+    });
+  });
+
   it('refuses managed pricing when any server-side rate is absent', () => {
     expect(() => managedMediaPriceCatalogFromEnvironment({})).toThrow(
       ManagedMediaPricingUnavailableError,

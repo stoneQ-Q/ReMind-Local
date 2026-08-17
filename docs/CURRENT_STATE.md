@@ -1,7 +1,7 @@
 # ReMind current state
 
 > This is the single current checkpoint for starting a new ReMind task.
-> Last verified: 2026-08-13, Asia/Shanghai.
+> Last verified: 2026-08-17, Asia/Shanghai.
 
 ## Source authority
 
@@ -91,6 +91,44 @@ personal test app, and 1 development environment.**
   build and explicit installation verification.
 
 ## Pending development changes
+
+- The authoritative `main` working tree now contains a development-only first
+  pass of the zero-configuration consumer experience. A clean consumer install
+  prefers the hosted cloud service, creates its anonymous device account in the
+  background, securely retains the one-time recovery code until acknowledged,
+  and enables ReMind-managed AI without asking the user for a provider or API
+  key. The consumer settings describe managed intelligence, privacy, trial
+  credit, and usage; BYOK fields and local service addresses remain available
+  only in the explicit `ReMind Local` build variant.
+- The same working tree extends managed AI to synchronous and durable text
+  organization. New managed accounts may receive an operator-configured starter
+  credit, text calls reserve a server-priced upper bound before contacting the
+  provider, settle from provider token usage, and release the reservation on
+  failure. Public enablement is fail-closed behind
+  `REMIND_CONSUMER_MANAGED_AI_ENABLED`; the starter credit, platform DeepSeek
+  credential, price table, and existing cost limits must all be explicitly
+  configured. No payment entry point was opened.
+- The managed rollout is now intentionally split: DeepSeek-backed text
+  organization and memory Q&A can be enabled while media remains in BYOK mode.
+  Consumer-managed text requires only the platform DeepSeek credential and the
+  two DeepSeek text rates; it does not implicitly enable managed image, audio,
+  or video processing.
+- A read-only production audit on 2026-08-17 found that daily local backups and
+  encrypted off-site uploads had continued through 2026-08-16. The health check
+  nevertheless reported a stale backup because its filename sort selected the
+  older `remind-pre-*` release backup instead of newer `remind-<timestamp>` daily
+  backups. The development source now restricts that check to daily backup
+  filenames. This monitoring fix is not active until the next cloud deployment.
+- Verification on 2026-08-17: App and cloud TypeScript passed; all 158 App
+  source tests in 40 files and all 194 cloud tests in 48 files passed (the root
+  aggregate suite also passed 306 tests in 79 files); the cloud production
+  build passed; Expo SDK 54 public config preserved `ReMind`
+  (`app.remind.notes`) and `ReMind Local` (`app.remind.notes.local`) as separate
+  variants; and Android Expo exports completed successfully for both variants.
+  Their unminified bundles were also verified to differ at the compile-time app
+  boundary. This work has not
+  been deployed to the cloud, built as a signed APK, installed, or phone-verified.
+  The deployed cloud and installed-phone facts below remain unchanged.
 
 - The authoritative `main` development source contains a pending-release fix for
   cloud WeChat pullback: repeated cloud captures no longer count as newly

@@ -6,6 +6,7 @@ import {
   WhisperFirstByokMediaProcessingProvider,
 } from './byok-media-provider.js';
 import {
+  consumerManagedAiEnabled,
   dashscopeConfig,
   mediaProviderMode,
   whisperServiceUrl,
@@ -33,8 +34,12 @@ import {
   createMediaProcessingHandlers,
   ensureNextMediaProcessingJob,
 } from './media-processing.js';
-import { managedMediaPriceCatalogFromEnvironment } from './media-pricing.js';
 import {
+  managedMediaPriceCatalogFromEnvironment,
+  managedTextPriceCatalogFromEnvironment,
+} from './media-pricing.js';
+import {
+  managedProviderCredentialsFromEnvironment,
   requiredManagedProviderCredentialsFromEnvironment,
 } from './media-provider-routing.js';
 import { cleanupNextExpiredObject } from './object-files.js';
@@ -62,6 +67,24 @@ const paraformer = dashscope
   : null;
 const xiaoyuzhouAudioEnabled =
   xiaoyuzhouTranscriptionEnabled() && Boolean(paraformer);
+const managedConsumerEnabled = consumerManagedAiEnabled();
+const managedMediaCredentials =
+  mediaMode === 'remote'
+    ? requiredManagedProviderCredentialsFromEnvironment()
+    : null;
+const managedMediaPriceCatalog =
+  mediaMode === 'remote' ? managedMediaPriceCatalogFromEnvironment() : null;
+const managedTextCredentials = managedConsumerEnabled
+  ? managedProviderCredentialsFromEnvironment()
+  : null;
+const managedTextPriceCatalog = managedConsumerEnabled
+  ? managedTextPriceCatalogFromEnvironment()
+  : null;
+if (managedConsumerEnabled && !managedTextCredentials?.deepseek) {
+  throw new Error(
+    'Managed consumer AI requires text pricing and a platform DeepSeek credential',
+  );
+}
 const mediaHandlers: JobHandlers =
   mediaMode === 'mock'
     ? createMediaProcessingHandlers(database, objectStore)
@@ -85,10 +108,8 @@ const mediaHandlers: JobHandlers =
               database,
               credentialCipher,
               {
-                managedCredentials:
-                  requiredManagedProviderCredentialsFromEnvironment(),
-                managedPriceCatalog:
-                  managedMediaPriceCatalogFromEnvironment(),
+                managedCredentials: managedMediaCredentials!,
+                managedPriceCatalog: managedMediaPriceCatalog!,
               },
             ),
           )
@@ -104,7 +125,16 @@ const handlers: JobHandlers = new Map([
   ['wechat.poll', createWechatPollHandler(database, credentialCipher)],
   [
     LINK_ORGANIZATION_JOB_TYPE,
-    createLinkOrganizationHandler(database, credentialCipher),
+    createLinkOrganizationHandler(
+      database,
+      credentialCipher,
+      managedTextCredentials && managedTextPriceCatalog
+        ? {
+            credentials: managedTextCredentials,
+            priceCatalog: managedTextPriceCatalog,
+          }
+        : undefined,
+    ),
   ],
   [
     'link.parse',

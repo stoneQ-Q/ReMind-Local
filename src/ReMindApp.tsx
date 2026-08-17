@@ -120,6 +120,7 @@ import {
 } from './obsidian-sync';
 import { colors } from './theme';
 import { CloudAiSettings } from './CloudAiSettings';
+import { updateCloudAiMode } from './cloud-ai-settings';
 import { CloudBillingCenter } from './CloudBillingCenter';
 import { CloudTaskCenter } from './CloudTaskCenter';
 import type {
@@ -146,15 +147,18 @@ import {
 } from './data-backup';
 import {
   getCloudAccountOverview,
+  getPendingCloudRecoveryCode,
   hasStoredCloudSession,
   isHostedCloudConfigured,
   recoverCloudAccount,
   registerCloudAccount,
+  acknowledgeCloudRecoveryCode,
   revokeCloudDevice,
   type CloudAccountOverview,
   type CloudDevice,
   type CloudDeviceRegistration,
 } from './cloud-auth';
+import { isConsumerReMindApp } from './app-variant';
 import {
   configureLocalReMindService,
   getReMindModeStatus,
@@ -298,6 +302,7 @@ export function ReMindApp() {
     useState<LinkAutomationMode>('review');
   const [linkAutomationReady, setLinkAutomationReady] = useState(false);
   const linkJobRefreshActive = useRef(false);
+  const consumerAccountBootstrapActive = useRef(false);
 
   const refreshCloudAccount = useCallback(async () => {
     if (!isHostedCloudConfigured()) {
@@ -727,12 +732,37 @@ export function ReMindApp() {
   }, [serviceMode.active, serviceModeReady]);
 
   useEffect(() => {
-    if (!isHostedCloudConfigured()) return;
+    if (!serviceModeReady || !isHostedCloudConfigured()) return;
+    if (
+      isConsumerReMindApp() &&
+      serviceMode.active === 'cloud' &&
+      !consumerAccountBootstrapActive.current
+    ) {
+      consumerAccountBootstrapActive.current = true;
+      void hasStoredCloudSession()
+        .then(async (stored) => {
+          if (!stored) {
+            await registerCloudAccount(cloudDeviceRegistration());
+            await updateCloudAiMode('managed');
+          }
+          setCloudSessionAvailable(true);
+          await refreshCloudAccount();
+        })
+        .catch(() => {
+          setCloudAccountError(
+            '云端智能服务暂时无法连接，仍可继续记录和查看手机里的内容。',
+          );
+        })
+        .finally(() => {
+          consumerAccountBootstrapActive.current = false;
+        });
+      return;
+    }
     void hasStoredCloudSession().then(setCloudSessionAvailable);
     void refreshCloudAccount().catch(() => {
       setCloudAccountError('暂时无法连接云端，手机里的笔记不受影响。');
     });
-  }, [refreshCloudAccount]);
+  }, [refreshCloudAccount, serviceMode.active, serviceModeReady]);
 
   useEffect(() => {
     if (!wechatConnection?.bound) return;
@@ -1073,7 +1103,10 @@ export function ReMindApp() {
               setCloudAccountVisible(true);
               setCloudAccountError(null);
               setCloudAccountLoading(true);
-              void refreshCloudAccount()
+              void Promise.all([
+                refreshCloudAccount(),
+                getPendingCloudRecoveryCode().then(setCloudRecoveryCode),
+              ])
                 .catch(() =>
                   setCloudAccountError(
                     '暂时无法连接云端，手机里的笔记不受影响。',
@@ -2086,7 +2119,10 @@ export function ReMindApp() {
         configured={isHostedCloudConfigured()}
         error={cloudAccountError}
         loading={cloudAccountLoading}
-        onAcknowledgeRecoveryCode={() => setCloudRecoveryCode(null)}
+        onAcknowledgeRecoveryCode={() => {
+          void acknowledgeCloudRecoveryCode();
+          setCloudRecoveryCode(null);
+        }}
         onCloseTasks={() => {
           setCloudOverlay(null);
           void refreshCloudAccount().catch(() => {
@@ -4675,6 +4711,7 @@ function CloudAccountSettings({
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const consumer = isConsumerReMindApp();
   const [recovering, setRecovering] = useState(false);
   const [recoveryInput, setRecoveryInput] = useState('');
   const [localAddress, setLocalAddress] = useState(
@@ -4697,7 +4734,9 @@ function CloudAccountSettings({
           <Pressable hitSlop={10} onPress={onClose}>
             <Text style={styles.editorCancel}>关闭</Text>
           </Pressable>
-          <Text style={styles.editorHeading}>连接方式</Text>
+          <Text style={styles.editorHeading}>
+            {consumer ? 'ReMind 设置' : '连接方式'}
+          </Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -4714,6 +4753,15 @@ function CloudAccountSettings({
             </Text>
           </View>
 
+          {consumer ? (
+            <View style={styles.cloudAccountNotice}>
+              <Text style={styles.cloudAccountNoticeText}>
+                普通版会自动连接 ReMind 云端服务，不需要填写服务器地址或配置模型。
+                即使网络暂时不可用，手机里的记录仍可查看和继续添加。
+              </Text>
+            </View>
+          ) : (
+            <>
           <Text style={styles.serviceModeHeading}>选择使用方式</Text>
           <Text style={styles.serviceModeIntro}>
             切换只改变之后使用的服务，不会自动上传、删除或迁移手机里已有的笔记。
@@ -4828,6 +4876,8 @@ function CloudAccountSettings({
               </Text>
             ) : null}
           </View>
+            </>
+          )}
           {error ? (
             <Text style={styles.cloudAccountError}>{error}</Text>
           ) : null}
@@ -4919,10 +4969,12 @@ function CloudAccountSettings({
                 </View>
                 <View style={styles.cloudAiSettingsCopy}>
                   <Text style={styles.cloudAiSettingsTitle}>
-                    AI 与 API Key
+                    {consumer ? '智能服务与用量' : 'AI 与 API Key'}
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
-                    关闭 AI、使用自己的 Key，或查看托管服务状态
+                    {consumer
+                      ? '查看托管智能服务、隐私说明和自动整理偏好'
+                      : '关闭 AI、使用自己的 Key，或查看托管服务状态'}
                   </Text>
                 </View>
                 <Text style={styles.cloudAiSettingsChevron}>›</Text>
@@ -4951,9 +5003,13 @@ function CloudAccountSettings({
                   </Text>
                 </View>
                 <View style={styles.cloudAiSettingsCopy}>
-                  <Text style={styles.cloudAiSettingsTitle}>余额与费用</Text>
+                  <Text style={styles.cloudAiSettingsTitle}>
+                    {consumer ? '额度与用量' : '余额与费用'}
+                  </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
-                    查看可用余额、任务预占和每一笔费用记录
+                    {consumer
+                      ? '查看内测赠送额度、任务占用和使用记录'
+                      : '查看可用余额、任务预占和每一笔费用记录'}
                   </Text>
                 </View>
                 <Text style={styles.cloudAiSettingsChevron}>›</Text>

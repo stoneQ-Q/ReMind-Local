@@ -78,6 +78,7 @@ describe('ReMind service mode persistence', () => {
   });
 
   it('keeps the original mode when the target probe fails', async () => {
+    setActiveReMindAppMode('local');
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>

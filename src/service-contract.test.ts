@@ -17,6 +17,7 @@ const ENV_KEYS = [
   'EXPO_PUBLIC_REMIND_SERVICE_MODE',
   'EXPO_PUBLIC_REMIND_LOCAL_API_URL',
   'EXPO_PUBLIC_REMIND_CLOUD_API_URL',
+  'EXPO_PUBLIC_REMIND_APP_VARIANT',
 ] as const;
 
 afterEach(() => {
@@ -108,7 +109,7 @@ describe('ReMind service contract', () => {
     process.env.EXPO_PUBLIC_REMIND_CLOUD_API_URL =
       'https://api.remind.example';
 
-    expect(getActiveReMindAppMode()).toBe('local');
+    expect(getActiveReMindAppMode()).toBe('cloud');
     setActiveReMindAppMode('cloud');
     expect(getActiveReMindAppMode()).toBe('cloud');
     expect(getReMindServiceConfig()?.baseUrl).toBe(
@@ -120,5 +121,15 @@ describe('ReMind service contract', () => {
     expect(getReMindServiceConfig()?.baseUrl).toBe(
       'http://192.168.1.8:8787',
     );
+  });
+
+  it('keeps ReMind Local on its self-hosted service when both are present', () => {
+    process.env.EXPO_PUBLIC_REMIND_APP_VARIANT = 'public-local';
+    process.env.EXPO_PUBLIC_REMIND_LOCAL_API_URL =
+      'http://192.168.1.8:8787';
+    process.env.EXPO_PUBLIC_REMIND_CLOUD_API_URL =
+      'https://api.remind.example';
+
+    expect(getActiveReMindAppMode()).toBe('local');
   });
 });

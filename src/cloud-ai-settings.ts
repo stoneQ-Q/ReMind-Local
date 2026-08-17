@@ -23,7 +23,7 @@ export async function getCloudAiSettings(): Promise<CloudAiSettings> {
 }
 
 export async function updateCloudAiMode(
-  mode: Exclude<CloudAiMode, 'managed'>,
+  mode: CloudAiMode,
 ): Promise<CloudAiSettings> {
   return requestAiSettings('ai/settings', {
     method: 'PUT',

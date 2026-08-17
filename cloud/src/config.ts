@@ -23,6 +23,21 @@ export function releaseIdentifier(): string {
   return /^[A-Za-z0-9._-]{1,64}$/.test(value) ? value : 'unknown';
 }
 
+export function consumerManagedAiEnabled(): boolean {
+  return booleanEnvironment('REMIND_CONSUMER_MANAGED_AI_ENABLED', false);
+}
+
+export function consumerStarterCreditMicros(): bigint {
+  const normalized =
+    process.env.REMIND_CONSUMER_STARTER_CREDIT_MICROS?.trim() || '0';
+  if (!/^[0-9]{1,18}$/.test(normalized)) {
+    throw new Error(
+      'REMIND_CONSUMER_STARTER_CREDIT_MICROS must be a nonnegative integer',
+    );
+  }
+  return BigInt(normalized);
+}
+
 export function workerPollMs(): number {
   const value = Number(process.env.REMIND_WORKER_POLL_MS ?? '1000');
   if (!Number.isInteger(value) || value < 100 || value > 60_000) {
@@ -58,6 +73,15 @@ export function xiaoyuzhouTranscriptionEnabled(): boolean {
     throw new Error(
       'REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED must be true or false',
     );
+  }
+  return value === 'true';
+}
+
+function booleanEnvironment(name: string, fallback: boolean): boolean {
+  const value = process.env[name]?.trim();
+  if (!value) return fallback;
+  if (value !== 'true' && value !== 'false') {
+    throw new Error(`${name} must be true or false`);
   }
   return value === 'true';
 }

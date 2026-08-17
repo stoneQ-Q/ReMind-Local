@@ -87,7 +87,7 @@ esac
 
 latest_backup="$(
   find "$backup_directory" -maxdepth 1 -type f \
-    -name 'remind-*.dump' ! -name '*.partial' -print 2>/dev/null |
+    -name 'remind-[0-9]*.dump' ! -name '*.partial' -print 2>/dev/null |
     sort |
     tail -n 1
 )"

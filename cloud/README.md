@@ -115,7 +115,9 @@ PostgreSQL 备份只包含对象元数据，不包含 `remind-object-data` 中�
 - 小宇宙原始音频不下载、不进入对象存储；数据库仅保存百炼异步任务 ID、完整逐字稿和时间戳片段，供失败重试与来源追溯；
 - 整个请求支持取消、跨用户隔离和幂等创建。
 
-媒体处理默认关闭。`REMIND_MEDIA_PROVIDER=mock` 只用于无网络、零费用的故障测试；`REMIND_MEDIA_PROVIDER=byok` 只注册真实 BYOK 处理器；`REMIND_MEDIA_PROVIDER=remote` 同时启用 BYOK 和托管处理，但要求 Worker 具备两家平台密钥、API 与 Worker 具备完整价格表。平台密钥只传给 Worker，API 不持有。未知配置或托管配置缺失会使服务拒绝启动，因此不会把模拟结果误当作真实分析返回给用户。
+媒体处理默认关闭。`REMIND_MEDIA_PROVIDER=mock` 只用于无网络、零费用的故障测试；`REMIND_MEDIA_PROVIDER=byok` 只注册真实 BYOK 处理器；`REMIND_MEDIA_PROVIDER=remote` 同时启用 BYOK 和托管处理，但要求 Worker 具备两家平台密钥、API 与 Worker 具备完整价格表。智谱平台 Key 只传给 Worker；DeepSeek 平台 Key 同时传给 API 和 Worker，因为同步文字整理在 API 内完成，二者都不得向手机或日志返回密钥。未知配置或托管配置缺失会使服务拒绝启动，因此不会把模拟结果误当作真实分析返回给用户。
+
+普通版文字托管服务还必须显式设置 `REMIND_CONSUMER_MANAGED_AI_ENABLED=true`。新账号才会默认进入 `managed` 模式，并按 `REMIND_CONSUMER_STARTER_CREDIT_MICROS` 获得一笔来源为 `gift` 的内测额度。文字整理使用 DeepSeek 输入/输出价格先预占费用，再按供应商返回的实际 token 用量结算；失败时释放全部预占。文字托管可以在媒体仍保持 `byok` 时单独开放，不会顺带开放图片、语音或视频托管。若托管开关、DeepSeek 平台 Key 或两项文字价格任一缺失，API 与 Worker 会拒绝启动，不会降级为用户 Key 或产生未入账调用。
 
 真实供应商的网络与凭据边界已经接入 BYOK Worker：
 

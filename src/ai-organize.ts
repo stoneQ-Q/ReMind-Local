@@ -66,6 +66,10 @@ async function organizationErrorMessage(
       return '笔记整理服务认证失效，已有内容和视频转写已经保留，请修复服务后重试。';
     case 'ai_rate_limited':
       return '笔记整理服务当前繁忙，已有内容已经保留，请稍后重试。';
+    case 'managed_service_unavailable':
+      return 'ReMind 智能服务正在维护，原始内容已经保留，请稍后重试。';
+    case 'insufficient_balance':
+      return '本次内测额度不足，原始内容已经保留。你仍可继续记录和查看已有内容。';
     case 'ai_timeout':
       return '笔记整理等待超时，已有内容已经保留，请稍后重试。';
     case 'ai_invalid_response':

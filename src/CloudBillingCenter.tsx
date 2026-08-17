@@ -21,6 +21,7 @@ import {
   type CloudLedgerEntry,
 } from './cloud-billing';
 import { colors } from './theme';
+import { isConsumerReMindApp } from './app-variant';
 
 export function CloudBillingCenter({
   onClose,
@@ -29,6 +30,7 @@ export function CloudBillingCenter({
   onClose: () => void;
   visible: boolean;
 }) {
+  const consumer = isConsumerReMindApp();
   const insets = useSafeAreaInsets();
   const [overview, setOverview] = useState<CloudBillingOverview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -73,7 +75,9 @@ export function CloudBillingCenter({
           <Pressable hitSlop={10} onPress={onClose}>
             <Text style={styles.close}>关闭</Text>
           </Pressable>
-          <Text style={styles.heading}>余额与费用</Text>
+          <Text style={styles.heading}>
+            {consumer ? '额度与用量' : '余额与费用'}
+          </Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -93,9 +97,13 @@ export function CloudBillingCenter({
           <View style={styles.heroMark}>
             <Text style={styles.heroMarkText}>¥</Text>
           </View>
-          <Text style={styles.title}>每一笔费用都能看清楚</Text>
+          <Text style={styles.title}>
+            {consumer ? '内测额度，用多少都看得见' : '每一笔费用都能看清楚'}
+          </Text>
           <Text style={styles.copy}>
-            余额不会出现负数。任务开始前先预占，完成后按实际用量结算，失败或未使用的部分会释放。
+            {consumer
+              ? '当前不会向你收款。任务开始前先占用赠送额度，完成后按实际用量结算，失败或未使用的部分会自动退回。'
+              : '余额不会出现负数。任务开始前先预占，完成后按实际用量结算，失败或未使用的部分会释放。'}
           </Text>
 
           {loading && !overview ? (
@@ -106,7 +114,9 @@ export function CloudBillingCenter({
           ) : account ? (
             <>
               <View style={styles.balanceCard}>
-                <Text style={styles.balanceLabel}>当前可用</Text>
+                <Text style={styles.balanceLabel}>
+                  {consumer ? '剩余内测额度' : '当前可用'}
+                </Text>
                 <Text
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
@@ -167,11 +177,15 @@ export function CloudBillingCenter({
                 </View>
                 <View style={styles.topUpCopy}>
                   <View style={styles.topUpTitleRow}>
-                    <Text style={styles.topUpTitle}>充值暂未开放</Text>
+                    <Text style={styles.topUpTitle}>
+                      {consumer ? '内测期间无需充值' : '充值暂未开放'}
+                    </Text>
                     <Text style={styles.lockedBadge}>无付款入口</Text>
                   </View>
                   <Text style={styles.topUpDescription}>
-                    私密测试阶段先验证成本和稳定性，完成支付、退款、对账与合规后再开放。
+                    {consumer
+                      ? '先使用赠送额度体验智能整理；额度不足时仍可正常记录和查看已有内容。'
+                      : '私密测试阶段先验证成本和稳定性，完成支付、退款、对账与合规后再开放。'}
                   </Text>
                 </View>
                 <Text style={styles.topUpChevron}>›</Text>
@@ -191,8 +205,9 @@ export function CloudBillingCenter({
                 <View style={styles.emptyLedger}>
                   <Text style={styles.emptyLedgerTitle}>还没有费用记录</Text>
                   <Text style={styles.emptyLedgerCopy}>
-                    目前没有充值、赠送、预占或结算。使用自己的 API Key
-                    不会从这里扣费。
+                    {consumer
+                      ? '还没有赠送、占用或结算记录。完成第一次智能整理后会在这里显示。'
+                      : '目前没有充值、赠送、预占或结算。使用自己的 API Key 不会从这里扣费。'}
                   </Text>
                 </View>
               )}
