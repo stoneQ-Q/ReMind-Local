@@ -8,7 +8,7 @@
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
 - Current authoritative feature checkpoint before this documentation update:
-  `47e68ff`
+  `aaa2f44`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -95,6 +95,34 @@ personal test app, and 1 development environment.**
   build and explicit installation verification.
 
 ## Pending development changes
+
+- Managed link transcription checkpoint `aaa2f44` keeps the existing Alibaba
+  Cloud Bailian `paraformer-v2` integration and makes it the default audio/video
+  transcription path for ordinary managed accounts. Supported Xiaoyuzhou audio
+  and Xiaohongshu video URLs are sent directly from their validated public CDN
+  locations; ordinary managed media no longer falls back to the shared server
+  Whisper path when Bailian pricing or configuration is unavailable.
+- Server Whisper is now restricted by the private
+  `REMIND_SERVER_WHISPER_USER_IDS` UUID allowlist. The current single production
+  account is the only allowlisted account; its link audio/video continues to use
+  server Whisper without consuming `忆粒`. BYOK users outside that allowlist use
+  their own configured speech provider. The production UUID remains only in the
+  private server environment and is not hardcoded in source.
+- Bailian transcription reserves `忆粒` from the trusted media duration before
+  provider submission, then settles from Paraformer's returned effective speech
+  duration and releases the unused reservation. Migration
+  `0018_managed_link_transcription.sql` generalized the prior Xiaoyuzhou task
+  table, attached durable billing-job state, and added DashScope provider health.
+- The consumer `忆粒与用量` page now explains that a five-minute video costs
+  about 2.4 `忆粒` to transcribe and usually 3–5 after organization, while a
+  one-hour Xiaoyuzhou episode costs about 28.8 to transcribe and usually 30–35
+  after organization. It also states that actual transcription settles by
+  effective speech duration and unused reservation is returned.
+- Verification for `aaa2f44`: App and cloud TypeScript passed, the complete root
+  suite passed 333 tests in 85 files, the cloud production build passed, and an
+  Expo SDK 54 Android export completed at
+  `/tmp/remind-managed-transcription-export`. No signed APK was generated or
+  installed, as requested while the broader redesign is still being combined.
 
 - WeChat onboarding copy checkpoint `47e68ff` removes the implementation-focused
   `不需要电脑或绑定码` statement. The consumer path now starts with `开始连接`,
@@ -385,6 +413,22 @@ personal test app, and 1 development environment.**
   loaded in the production API container, the existing managed account remained
   at 1,989,753 micros with zero reserved usage, and the existing cloud WeChat
   connection remained online. No local gateway was started.
+- Cloud release `aaa2f44` was deployed on 2026-08-17 from the committed source
+  after verified custom-format PostgreSQL backup
+  `remind-pre-aaa2f44-20260817T101123Z.dump` (12,326,488 bytes, mode 0600) and
+  private environment backup
+  `remind.env.pre-aaa2f44-20260817T101123Z` (mode 0600). Migration 0018 applied,
+  public readiness reported `aaa2f44`, the health check passed, DashScope provider
+  health was active, and the Worker loaded one Whisper-allowlisted account plus
+  the Bailian price and credentials without exposing their values.
+- Post-deployment checks confirmed the production routing artifact selects
+  `whisper` for the allowlisted account and `dashscope` for an ordinary managed
+  account. The existing account balance remained 1,989,753 micros with zero
+  reserved usage, one cloud WeChat connection remained active, and the stored
+  WeChat note count remained 19. No synthetic ordinary account or billable media
+  task was created solely for deployment testing; the first real ordinary-user
+  transcription still needs end-to-end ledger observation. The Mac local gateway
+  remained unloaded.
 
 ## WeChat polling safety
 
