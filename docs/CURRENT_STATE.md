@@ -8,7 +8,7 @@
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
 - Current authoritative feature checkpoint before this documentation update:
-  `22f1877`
+  `47e68ff`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -35,7 +35,7 @@ two runtime modes inside the personal test app, and one development environment.
    - Current device: Redmi Note 13 Pro, Android 16
    - This app can expose both cloud and local runtime modes when both service
      addresses are included in its build configuration.
-- Development source after `22f1877` no longer exposes that mode distinction
+- Development source after `47e68ff` no longer exposes that mode distinction
   in the consumer UI. The hosted service is an implementation detail for
   ordinary users; only `ReMind Local` keeps self-hosting controls.
    - The `preview` and `preview-local` EAS profile names refer to internal build
@@ -96,6 +96,23 @@ personal test app, and 1 development environment.**
 
 ## Pending development changes
 
+- WeChat onboarding copy checkpoint `47e68ff` removes the implementation-focused
+  `不需要电脑或绑定码` statement. The consumer path now starts with `开始连接`,
+  explains that tapping `开始连接微信` generates a QR code valid for ten minutes,
+  and repeats that real server TTL on the QR screen before the same-phone
+  screenshot instructions.
+- Real-phone end-to-end re-pairing completed on 2026-08-17 after the reset below:
+  the App generated a QR code, WeChat scan and confirmation succeeded, the cloud
+  saved a new encrypted active connection, polling resumed, the user sent a test
+  message, and the App received it. Read-only cloud verification found one active
+  connection and the stored WeChat message count increased from 18 to 19. This
+  verifies self-service re-pairing and post-pair capture without Codex, terminal,
+  a local gateway, or a manual cloud restart on the user path.
+- Verification for `47e68ff`: App TypeScript passed, all 326 tests in 84 files
+  passed, and an Android Expo export completed at
+  `/tmp/remind-wechat-onboarding-copy-export`. The cloud release remains
+  `54841e8`; no signed APK was built or installed.
+
 - Consumer header checkpoint `22f1877` replaces the ambiguous one-character
   `设` mark with a wider button labelled `设置`. TypeScript passed, all 326 tests
   in 84 files passed, and an Android Expo export completed at
@@ -108,12 +125,11 @@ personal test app, and 1 development environment.**
   (12,311,564 bytes, mode 0600, `ubuntu:ubuntu`). The transaction cancelled the
   current poll, marked the connection revoked, cleared its provider hash and
   encrypted credentials, advanced its poll generation, and removed its poll job.
-- Post-change verification found zero active WeChat connections, while all 18
+- Immediate post-reset verification found zero active WeChat connections, while all 18
   existing WeChat messages and the corresponding 18 cloud notes remained. Public
   readiness stayed healthy on cloud release `54841e8`. The local gateway was not
-  started. A fresh real-phone QR scan and post-connection capture are now pending;
-  do not describe the self-service re-pairing flow as end-to-end verified until
-  the user completes them.
+  started. The fresh real-phone QR scan and post-connection capture were then
+  completed successfully as recorded above.
 
 - Consumer clarity checkpoint `f00ba85` renames `智能整理` settings to
   `智能功能` and defines three separate concepts: organizing one record into a
