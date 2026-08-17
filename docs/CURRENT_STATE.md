@@ -8,7 +8,7 @@
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
 - Current authoritative feature checkpoint before this documentation update:
-  `06e1a49`
+  `54841e8`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -35,6 +35,9 @@ two runtime modes inside the personal test app, and one development environment.
    - Current device: Redmi Note 13 Pro, Android 16
    - This app can expose both cloud and local runtime modes when both service
      addresses are included in its build configuration.
+   - Development source after `dcd859d` no longer exposes that mode distinction
+     in the consumer UI. The hosted service is an implementation detail for
+     ordinary users; only `ReMind Local` keeps self-hosting controls.
    - The `preview` and `preview-local` EAS profile names refer to internal build
      profiles for this same personal test app. `preview-local` is not the separate
      public `ReMind Local` product.
@@ -92,6 +95,36 @@ personal test app, and 1 development environment.**
   build and explicit installation verification.
 
 ## Pending development changes
+
+- Consumer experience checkpoint `dcd859d`, with Node-24-compatible cloud lock
+  follow-up `54841e8`, removes the cloud/local choice and “cloud connected”
+  account details from ordinary ReMind settings. The header now opens plain
+  ReMind settings, whose primary entries are WeChat, intelligent organization,
+  and `忆粒`; diagnostics remains available as a help path. `ReMind Local`
+  retains explicit service addresses, runtime modes, API keys, task quotes, and
+  device controls.
+- The same batch simplifies `忆粒` activity by collapsing a completed job's
+  reserve/settle/release ledger sequence into one actual-use row while keeping
+  active reservations visible. `问 ReMind` now separates the user's question,
+  evidence status, answer, citations, and follow-up questions instead of placing
+  them in one large answer card. The rejected legacy `灵` mark and consumer
+  currency symbol were removed.
+- Consumer WeChat connection now has an in-App self-service QR flow. The cloud
+  requests the short-lived iLink QR, returns only a rendered QR image plus an
+  authenticated encrypted session token bound to the current ReMind account,
+  rate-limits creation and checks, accepts the optional WeChat verification
+  number in the App, and saves protocol credentials only after WeChat confirms.
+  The session expires after ten minutes and neither API responses nor logs expose
+  confirmed credentials. The existing six-digit gateway binding flow remains
+  for `ReMind Local`.
+- Verification for this batch on 2026-08-17: App TypeScript passed, 326 tests in
+  84 files passed, and an Android Expo export completed; cloud TypeScript and
+  production build passed, 209 tests in 52 files passed, and production
+  dependencies reported zero known vulnerabilities. A fresh-account real QR
+  scan has not yet been completed because the current production test account is
+  already bound; do not disturb that working connection merely to exercise the
+  first-time path. The settings and already-connected WeChat screens still need
+  the user's Expo visual review before a signed APK is produced.
 
 - Authoritative `main` through commit `06e1a49` contains the first
   pass of the zero-configuration consumer experience. A clean consumer install
@@ -271,6 +304,17 @@ personal test app, and 1 development environment.**
   release `06e1a49`, and the server health check passed. This verifies the live
   Expo development session, not a newly signed or installed APK; build 31
   remains the phone-installed delivery.
+- Cloud release `54841e8` was deployed on 2026-08-17 after verified custom-format
+  backup `remind-pre-54841e8-20260817T082520Z.dump` (12,293,455 bytes, mode
+  0600). The first build attempt from `dcd859d` stopped before symlink switching
+  because the Node 24 container rejected an incomplete optional-dependency lock;
+  `54841e8` regenerated that lock with the server npm version and then deployed
+  successfully. API, Worker, backup, Caddy, PostgreSQL, Whisper, public readiness,
+  and the health check passed; `/ready` reported `54841e8`. The self-service
+  WeChat endpoint rejects unauthenticated requests, its QR runtime dependency
+  loaded in the production API container, the existing managed account remained
+  at 1,989,753 micros with zero reserved usage, and the existing cloud WeChat
+  connection remained online. No local gateway was started.
 
 ## WeChat polling safety
 
