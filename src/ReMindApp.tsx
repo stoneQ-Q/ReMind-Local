@@ -1148,56 +1148,60 @@ export function ReMindApp() {
               />
             ) : null}
           </Pressable>
-          <Pressable
-            accessibilityLabel="设置 Obsidian 同步"
-            onPress={() => {
-              setObsidianVisible(true);
-              setObsidianError(null);
-              void getObsidianSyncStatus(db).then(setObsidianStatus);
-            }}
-            style={({ pressed }) => [
-              styles.obsidianBadge,
-              obsidianStatus.configured && styles.obsidianBadgeConfigured,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text maxFontSizeMultiplier={1} style={styles.obsidianBadgeMark}>
-              库
-            </Text>
-            <View
-              style={[
-                styles.headerStatusDot,
-                obsidianStatus.configured && styles.headerStatusDotActive,
-              ]}
-            />
-          </Pressable>
-          <Pressable
-            accessibilityLabel="连接微信 ClawBot"
-            onPress={() => {
-              setWechatVisible(true);
-              setWechatLoading(true);
-              setWechatError(null);
-              void getWechatConnection(!consumer)
-                .then(setWechatConnection)
-                .catch(() => setWechatError('暂时无法连接微信服务'))
-                .finally(() => setWechatLoading(false));
-            }}
-            style={({ pressed }) => [
-              styles.wechatBadge,
-              wechatConnection?.bound && styles.wechatBadgeBound,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text maxFontSizeMultiplier={1} style={styles.wechatBadgeMark}>
-              微
-            </Text>
-            <View
-              style={[
-                styles.headerStatusDot,
-                wechatConnection?.bound && styles.headerStatusDotActive,
-              ]}
-            />
-          </Pressable>
+          {!consumer ? (
+            <>
+              <Pressable
+                accessibilityLabel="设置 Obsidian 同步"
+                onPress={() => {
+                  setObsidianVisible(true);
+                  setObsidianError(null);
+                  void getObsidianSyncStatus(db).then(setObsidianStatus);
+                }}
+                style={({ pressed }) => [
+                  styles.obsidianBadge,
+                  obsidianStatus.configured && styles.obsidianBadgeConfigured,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text maxFontSizeMultiplier={1} style={styles.obsidianBadgeMark}>
+                  库
+                </Text>
+                <View
+                  style={[
+                    styles.headerStatusDot,
+                    obsidianStatus.configured && styles.headerStatusDotActive,
+                  ]}
+                />
+              </Pressable>
+              <Pressable
+                accessibilityLabel="连接微信 ClawBot"
+                onPress={() => {
+                  setWechatVisible(true);
+                  setWechatLoading(true);
+                  setWechatError(null);
+                  void getWechatConnection(!consumer)
+                    .then(setWechatConnection)
+                    .catch(() => setWechatError('暂时无法连接微信服务'))
+                    .finally(() => setWechatLoading(false));
+                }}
+                style={({ pressed }) => [
+                  styles.wechatBadge,
+                  wechatConnection?.bound && styles.wechatBadgeBound,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text maxFontSizeMultiplier={1} style={styles.wechatBadgeMark}>
+                  微
+                </Text>
+                <View
+                  style={[
+                    styles.headerStatusDot,
+                    wechatConnection?.bound && styles.headerStatusDotActive,
+                  ]}
+                />
+              </Pressable>
+            </>
+          ) : null}
         </View>
       </View>
 
@@ -2207,6 +2211,13 @@ export function ReMindApp() {
         }}
         onOpenBilling={() => {
           setCloudOverlay('billing');
+        }}
+        onOpenObsidian={() => {
+          setCloudOverlay(null);
+          setCloudAccountVisible(false);
+          setObsidianVisible(true);
+          setObsidianError(null);
+          void getObsidianSyncStatus(db).then(setObsidianStatus);
         }}
         onOpenWechat={() => {
           setCloudOverlay(null);
@@ -4712,6 +4723,7 @@ function CloudAccountSettings({
   onOpenAi,
   onOpenBilling,
   onOpenDiagnostics,
+  onOpenObsidian,
   onOpenTasks,
   onOpenWechat,
   onRecover,
@@ -4735,6 +4747,7 @@ function CloudAccountSettings({
   onOpenAi: () => void;
   onOpenBilling: () => void;
   onOpenDiagnostics: () => void;
+  onOpenObsidian: () => void;
   onOpenTasks: () => void;
   onOpenWechat: () => void;
   onRecover: (recoveryCode: string) => Promise<void>;
@@ -4779,24 +4792,20 @@ function CloudAccountSettings({
         <ScrollView
           contentContainerStyle={[
             styles.cloudAccountBody,
+            consumer && styles.cloudAccountBodyConsumer,
             { paddingBottom: insets.bottom + 28 },
           ]}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.cloudAccountHeroMark}>
-            <Text style={styles.cloudAccountHeroMarkText}>
-              {consumer ? '设' : serviceMode.active === 'cloud' ? '云' : '机'}
-            </Text>
-          </View>
-
-          {consumer ? (
-            <View style={styles.cloudAccountNotice}>
-              <Text style={styles.cloudAccountNoticeText}>
-                ReMind 已经准备就绪，不需要选择连接方式、填写服务器地址或配置模型。
-                网络暂时不可用时，手机里的记录仍可查看和继续添加。
+          {!consumer ? (
+            <View style={styles.cloudAccountHeroMark}>
+              <Text style={styles.cloudAccountHeroMarkText}>
+                {serviceMode.active === 'cloud' ? '云' : '机'}
               </Text>
             </View>
-          ) : (
+          ) : null}
+
+          {!consumer ? (
             <>
           <Text style={styles.serviceModeHeading}>选择使用方式</Text>
           <Text style={styles.serviceModeIntro}>
@@ -4913,7 +4922,7 @@ function CloudAccountSettings({
             ) : null}
           </View>
             </>
-          )}
+          ) : null}
           {error ? (
             <Text style={styles.cloudAccountError}>{error}</Text>
           ) : null}
@@ -4975,9 +4984,7 @@ function CloudAccountSettings({
                     </Text>
                   </View>
                 </>
-              ) : (
-                <Text style={styles.cloudAccountTitle}>功能与使用</Text>
-              )}
+              ) : null}
               {consumer ? (
                 <Pressable
                   disabled={loading}
@@ -4993,7 +5000,7 @@ function CloudAccountSettings({
                   <View style={styles.cloudAiSettingsCopy}>
                     <Text style={styles.cloudAiSettingsTitle}>连接微信</Text>
                     <Text style={styles.cloudAiSettingsDescription}>
-                      把微信消息直接保存到 ReMind
+                      接收微信记录
                     </Text>
                   </View>
                   <Text style={styles.cloudAiSettingsChevron}>›</Text>
@@ -5016,7 +5023,7 @@ function CloudAccountSettings({
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     {consumer
-                      ? '设置文字整理、问答和链接自动整理'
+                      ? '整理方式与链接处理'
                       : '关闭 AI、使用自己的 Key，或查看托管服务状态'}
                   </Text>
                 </View>
@@ -5051,12 +5058,33 @@ function CloudAccountSettings({
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     {consumer
-                      ? '查看可用忆粒和最近实际使用'
+                      ? '余额与使用记录'
                       : '查看可用余额、任务预占和每一笔费用记录'}
                   </Text>
                 </View>
                 <Text style={styles.cloudAiSettingsChevron}>›</Text>
               </Pressable>
+              {consumer ? (
+                <Pressable
+                  disabled={loading}
+                  onPress={onOpenObsidian}
+                  style={({ pressed }) => [
+                    styles.cloudAiSettingsButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={styles.cloudAiSettingsMark}>
+                    <Text style={styles.cloudAiSettingsMarkText}>库</Text>
+                  </View>
+                  <View style={styles.cloudAiSettingsCopy}>
+                    <Text style={styles.cloudAiSettingsTitle}>笔记库</Text>
+                    <Text style={styles.cloudAiSettingsDescription}>
+                      Obsidian 同步与备份
+                    </Text>
+                  </View>
+                  <Text style={styles.cloudAiSettingsChevron}>›</Text>
+                </Pressable>
+              ) : null}
               {!consumer ? (
                 <Pressable
                   disabled={loading}
@@ -5247,30 +5275,34 @@ function CloudAccountSettings({
               </Pressable>
             </>
           )}
-          <Text style={styles.cloudDeviceSectionTitle}>
-            {consumer ? '需要帮助时' : '运行信息'}
-          </Text>
-          <Pressable
-            disabled={loading}
-            onPress={onOpenDiagnostics}
-            style={({ pressed }) => [
-              styles.cloudAiSettingsButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <View style={[styles.cloudAiSettingsMark, styles.diagnosticsMark]}>
-              <Ionicons color={colors.sageText} name="pulse-outline" size={20} />
-            </View>
-            <View style={styles.cloudAiSettingsCopy}>
-              <Text style={styles.cloudAiSettingsTitle}>运行状态与诊断</Text>
-              <Text style={styles.cloudAiSettingsDescription}>
-                {consumer
-                  ? '遇到同步或连接问题时，在这里查看状态'
-                  : '查看安装版本、运行模式、云端发布、微信连接和最近同步'}
+          {!consumer || __DEV__ ? (
+            <>
+              <Text style={styles.cloudDeviceSectionTitle}>
+                {consumer ? '开发工具' : '运行信息'}
               </Text>
-            </View>
-            <Text style={styles.cloudAiSettingsChevron}>›</Text>
-          </Pressable>
+              <Pressable
+                disabled={loading}
+                onPress={onOpenDiagnostics}
+                style={({ pressed }) => [
+                  styles.cloudAiSettingsButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={[styles.cloudAiSettingsMark, styles.diagnosticsMark]}>
+                  <Ionicons color={colors.sageText} name="pulse-outline" size={20} />
+                </View>
+                <View style={styles.cloudAiSettingsCopy}>
+                  <Text style={styles.cloudAiSettingsTitle}>运行状态与诊断</Text>
+                  <Text style={styles.cloudAiSettingsDescription}>
+                    {consumer
+                      ? '查看连接、同步与版本状态'
+                      : '查看安装版本、运行模式、云端发布、微信连接和最近同步'}
+                  </Text>
+                </View>
+                <Text style={styles.cloudAiSettingsChevron}>›</Text>
+              </Pressable>
+            </>
+          ) : null}
           {!consumer ? (
             <Text style={styles.cloudAccountFootnote}>
               云端会话凭据只保存在这台设备的系统安全存储中。退出账号不会清除 ReMind
@@ -8190,6 +8222,9 @@ const styles = StyleSheet.create({
   cloudAccountBody: {
     paddingHorizontal: 24,
     paddingTop: 30,
+  },
+  cloudAccountBodyConsumer: {
+    paddingTop: 16,
   },
   cloudAccountHeroMark: {
     width: 66,
