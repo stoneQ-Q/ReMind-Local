@@ -8,7 +8,7 @@
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
 - Current authoritative feature checkpoint before this documentation update:
-  `d2e7d39`
+  `06e1a49`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -93,7 +93,7 @@ personal test app, and 1 development environment.**
 
 ## Pending development changes
 
-- Authoritative `main` commit `d2e7d39` contains a development-only first
+- Authoritative `main` through commit `06e1a49` contains the first
   pass of the zero-configuration consumer experience. A clean consumer install
   prefers the hosted cloud service, creates its anonymous device account in the
   background, securely retains the one-time recovery code until acknowledged,
@@ -127,8 +127,8 @@ personal test app, and 1 development environment.**
   encrypted off-site uploads had continued through 2026-08-16. The health check
   nevertheless reported a stale backup because its filename sort selected the
   older `remind-pre-*` release backup instead of newer `remind-<timestamp>` daily
-  backups. The development source now restricts that check to daily backup
-  filenames. This monitoring fix is not active until the next cloud deployment.
+  backups. Release `06e1a49` restricts that check to daily backup filenames; the
+  corrected health check is now active and passes in production.
 - Verification on 2026-08-17: App and cloud TypeScript passed; all 158 App
   source tests in 40 files and all 198 cloud tests in 49 files passed (the root
   aggregate suite also passed 313 tests in 81 files); the cloud production
@@ -136,9 +136,9 @@ personal test app, and 1 development environment.**
   (`app.remind.notes`) and `ReMind Local` (`app.remind.notes.local`) as separate
   variants; and Android Expo exports completed successfully for both variants.
   Their unminified bundles were also verified to differ at the compile-time app
-  boundary. This work has not
-  been deployed to the cloud, built as a signed APK, installed, or phone-verified.
-  The deployed cloud and installed-phone facts below remain unchanged.
+  boundary. The cloud portion is deployed as described below. The consumer App
+  UI has not been built as a signed APK, installed, or phone-verified; build 31
+  remains the installed delivery.
 
 - The authoritative `main` development source contains a pending-release fix for
   cloud WeChat pullback: repeated cloud captures no longer count as newly
@@ -235,8 +235,9 @@ personal test app, and 1 development environment.**
 - Public readiness endpoint:
   `https://remind.43-129-237-189.sslip.io/ready`
 - On 2026-08-11 the endpoint returned HTTP 200 with the database ready.
-- The readiness response does not currently expose a Git release SHA, so the exact
-  deployed source commit must not be inferred from repository HEAD alone.
+- The readiness response exposes a safe release identifier. Continue to verify it
+  directly because repository HEAD, installed App build, and cloud release can
+  advance independently.
 - Last documented phone verification before later source work was build 31.
 - Cloud release `6004964` was deployed on 2026-08-13 after recoverable backup
   `remind-pre-6004964-20260813T111902Z.dump`. PostgreSQL, migration, API, Worker,
@@ -244,6 +245,24 @@ personal test app, and 1 development environment.**
   `6004964`, the Worker reported server Whisper and Xiaoyuzhou Paraformer enabled,
   and existing user/note counts remained present. The local Mac gateway remained
   unloaded during deployment.
+- Cloud release `06e1a49` was deployed on 2026-08-17 from a committed Git
+  archive after verified custom-format backup
+  `remind-pre-06e1a49-20260817T040452Z.dump` (12,167,983 bytes, mode 0600).
+  PostgreSQL migration, API, Worker, backup, Caddy, Whisper, public readiness,
+  and the corrected backup health check passed. The restarted backup service
+  also created and uploaded encrypted backup
+  `remind-20260817T040708Z.dump.enc`.
+- The user-authorized single-account bootstrap reused the existing encrypted
+  DeepSeek credential without printing it, enabled managed text while keeping
+  media in BYOK mode, and granted 200 `忆粒` through one gift-ledger entry. The
+  account is `managed`, has no reserved usage, and both API and Worker loaded the
+  managed configuration successfully. The prior private environment remains at
+  `/opt/remind/shared/remind.env.pre-06e1a49` with mode 0600 for emergency
+  rollback; the active environment remains mode 0600 and `ubuntu:ubuntu`.
+- A real authenticated model call from the current Expo session is still needed
+  to complete the phone-to-platform-Key billing verification. Do not claim that
+  final interaction until it has been observed; the server-side configuration,
+  fail-closed startup, account grant, and health checks are verified.
 
 ## WeChat polling safety
 
