@@ -220,7 +220,7 @@ export function CloudAiSettings({
             <Text style={styles.close}>关闭</Text>
           </Pressable>
           <Text style={styles.heading}>
-            {consumer ? '智能服务与灵光' : 'AI 与 API Key'}
+            {consumer ? '智能服务与忆粒' : 'AI 与 API Key'}
           </Text>
           <View style={styles.headerSpacer} />
         </View>
@@ -316,7 +316,7 @@ export function CloudAiSettings({
               <Text style={styles.sectionTitle}>链接自动整理</Text>
               <Text style={styles.sectionCopy}>
                 {consumer
-                  ? '只处理已经取得可追溯正文或视频转写的链接。自动整理会使用灵光，原始链接和证据仍会保留。'
+                  ? '只处理已经取得可追溯正文或视频转写的链接。自动整理会使用忆粒，原始链接和证据仍会保留。'
                   : '只处理已经取得可追溯正文或视频转写的链接。自动模式会直接使用你的 DeepSeek Key；原始链接和证据仍会保留。'}
               </Text>
               <AiModeCard
@@ -459,7 +459,7 @@ export function CloudAiSettings({
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <Text style={styles.footnote}>
             {consumer
-              ? '当前为托管服务内测。灵光用完或服务暂时不可用时，不会影响手机里的原始记录。'
+              ? '当前为托管服务内测。忆粒用完或服务暂时不可用时，不会影响手机里的原始记录。'
               : 'ReMind 不会显示或下载已经保存的完整 Key。若怀疑泄露，请在对应供应商后台撤销并生成新 Key。'}
           </Text>
         </ScrollView>

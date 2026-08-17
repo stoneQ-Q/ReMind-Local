@@ -15,7 +15,7 @@ vi.mock('./cloud-api', () => ({
 import { requestCloudJson } from './cloud-api';
 import {
   formatCnyMicros,
-  formatLingguangMicros,
+  formatYiliMicros,
   getCloudBillingOverview,
 } from './cloud-billing';
 
@@ -97,12 +97,12 @@ describe('cloud billing client', () => {
     expect(formatCnyMicros('2500000', true)).toBe('+¥2.50');
   });
 
-  it('formats consumer usage as branded lingguang without currency', () => {
-    expect(formatLingguangMicros('0')).toBe('0 灵光');
-    expect(formatLingguangMicros('10000')).toBe('1 灵光');
-    expect(formatLingguangMicros('12345')).toBe('1.23 灵光');
-    expect(formatLingguangMicros('2000000')).toBe('200 灵光');
-    expect(formatLingguangMicros('-12500', true)).toBe('-1.25 灵光');
-    expect(formatLingguangMicros('12500', true)).toBe('+1.25 灵光');
+  it('formats consumer usage as branded yili without currency', () => {
+    expect(formatYiliMicros('0')).toBe('0 忆粒');
+    expect(formatYiliMicros('10000')).toBe('1 忆粒');
+    expect(formatYiliMicros('12345')).toBe('1.23 忆粒');
+    expect(formatYiliMicros('2000000')).toBe('200 忆粒');
+    expect(formatYiliMicros('-12500', true)).toBe('-1.25 忆粒');
+    expect(formatYiliMicros('12500', true)).toBe('+1.25 忆粒');
   });
 });

@@ -21,7 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { isConsumerReMindApp } from './app-variant';
-import { formatCnyMicros, formatLingguangMicros } from './cloud-billing';
+import { formatCnyMicros, formatYiliMicros } from './cloud-billing';
 import {
   cancelCloudMediaTask,
   confirmCloudMediaTask,
@@ -73,7 +73,7 @@ function CloudTaskCenterScreen({
   visible: boolean;
 }) {
   const consumer = isConsumerReMindApp();
-  const formatUsage = consumer ? formatLingguangMicros : formatCnyMicros;
+  const formatUsage = consumer ? formatYiliMicros : formatCnyMicros;
   const insets = useSafeAreaInsets();
   const [tasks, setTasks] = useState<CloudMediaTask[]>([]);
   const [loading, setLoading] = useState(false);
@@ -122,10 +122,10 @@ function CloudTaskCenterScreen({
       const amount = formatUsage(quote.estimatedCostMicros);
       Alert.alert(
         quote.confirmationRequired
-          ? consumer ? '确认本次预计灵光？' : '确认这笔预计费用？'
+          ? consumer ? '确认本次预计忆粒？' : '确认这笔预计费用？'
           : '开始这个任务？',
         consumer
-          ? `本次最多留出 ${amount}。完成后只记录实际使用的灵光，未使用的会自动归还。`
+          ? `本次最多留出 ${amount}。完成后只记录实际使用的忆粒，未使用的会自动归还。`
           : `服务端预计最多预占 ${amount}。完成后按实际用量结算，未使用部分会退回可用余额。`,
         [
           { text: '暂不开始', style: 'cancel' },
@@ -155,7 +155,7 @@ function CloudTaskCenterScreen({
       Alert.alert(
         '取消这个任务？',
         consumer
-          ? '未使用的灵光会自动归还；任务已经使用的灵光仍会保留在记录中。'
+          ? '未使用的忆粒会自动归还；任务已经使用的忆粒仍会保留在记录中。'
           : '未使用的预占金额会释放；已经实际产生的第三方费用仍会按实际用量结算。',
         [
           { text: '继续任务', style: 'cancel' },
@@ -219,11 +219,11 @@ function CloudTaskCenterScreen({
             <Text style={styles.heroMarkText}>任</Text>
           </View>
           <Text style={styles.title}>
-            {consumer ? '确认灵光后，任务才会开始' : '费用确认后，任务才会开始'}
+            {consumer ? '确认忆粒后，任务才会开始' : '费用确认后，任务才会开始'}
           </Text>
           <Text style={styles.copy}>
             {consumer
-              ? '图片、语音和视频会在云端排队处理。需要较多灵光的任务不会自动开始；离开页面后，进行中的任务仍会继续。'
+              ? '图片、语音和视频会在云端排队处理。需要较多忆粒的任务不会自动开始；离开页面后，进行中的任务仍会继续。'
               : '图片、语音和视频会在云端排队处理。高费用任务不会自动确认；离开这个页面后，进行中的任务仍会继续。'}
           </Text>
 
@@ -269,7 +269,7 @@ function CloudTaskCenterScreen({
 
           <Text style={styles.footnote}>
             {consumer
-              ? '页面只显示当前账号最近 50 个任务，每 4 秒刷新进行中状态。灵光的留出、使用和归还都由服务端记录。'
+              ? '页面只显示当前账号最近 50 个任务，每 4 秒刷新进行中状态。忆粒的留出、使用和归还都由服务端记录。'
               : '页面只显示当前账号最近 50 个任务，每 4 秒刷新进行中状态。价格、余额预占和最终结算都由服务端决定。'}
           </Text>
         </ScrollView>
@@ -373,7 +373,7 @@ function TaskCard({
   task: CloudMediaTask;
 }) {
   const consumer = isConsumerReMindApp();
-  const formatUsage = consumer ? formatLingguangMicros : formatCnyMicros;
+  const formatUsage = consumer ? formatYiliMicros : formatCnyMicros;
   const presentation = taskPresentation(task.request.status);
   const statusLabel =
     task.request.status === 'processing' &&
@@ -436,7 +436,7 @@ function TaskCard({
       <View style={styles.costRow}>
         <Text style={styles.costLabel}>
           {consumer
-            ? terminal ? '实际灵光' : '预计灵光'
+            ? terminal ? '实际忆粒' : '预计忆粒'
             : terminal ? '实际费用' : '预计费用'}
         </Text>
         <Text style={styles.costValue}>{formatUsage(displayedCost)}</Text>
@@ -448,13 +448,13 @@ function TaskCard({
             {expired
               ? '报价已过期'
               : quote.confirmationRequired
-                ? consumer ? '等待你确认灵光' : '等待你的费用确认'
+                ? consumer ? '等待你确认忆粒' : '等待你的费用确认'
                 : '等待开始'}
           </Text>
           <Text style={styles.quoteCopy}>
             {expired
               ? consumer
-                ? '这次预估已经过期，不会使用灵光。请取消后重新提交。'
+                ? '这次预估已经过期，不会使用忆粒。请取消后重新提交。'
                 : '这笔报价不会再扣款。请取消后重新提交，获取新的服务端报价。'
               : consumer
                 ? `预估有效至 ${formatTaskTime(quote.expiresAt)}；确认时会先留出 ${formatUsage(quote.estimatedCostMicros)}。`
@@ -596,7 +596,7 @@ function taskErrorMessage(reason: unknown): string {
   if (code === 'quote_expired') return '报价已过期，请取消任务后重新提交。';
   if (code === 'insufficient_balance') {
     return isConsumerReMindApp()
-      ? '可用灵光不足，任务没有开始。'
+      ? '可用忆粒不足，任务没有开始。'
       : '可用余额不足，任务没有开始。';
   }
   if (code === 'daily_limit_exceeded') return '已达到今日消费上限，任务没有开始。';

@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CloudBillingError,
   formatCnyMicros,
-  formatLingguangMicros,
+  formatYiliMicros,
   getCloudBillingOverview,
   type CloudBillingOverview,
   type CloudLedgerEntry,
@@ -63,7 +63,7 @@ export function CloudBillingCenter({
   }, [load, visible]);
 
   const account = overview?.account;
-  const formatUsage = consumer ? formatLingguangMicros : formatCnyMicros;
+  const formatUsage = consumer ? formatYiliMicros : formatCnyMicros;
 
   return (
     <Modal
@@ -78,7 +78,7 @@ export function CloudBillingCenter({
             <Text style={styles.close}>关闭</Text>
           </Pressable>
           <Text style={styles.heading}>
-            {consumer ? '灵光与用量' : '余额与费用'}
+            {consumer ? '忆粒与用量' : '余额与费用'}
           </Text>
           <View style={styles.headerSpacer} />
         </View>
@@ -100,11 +100,11 @@ export function CloudBillingCenter({
             <Text style={styles.heroMarkText}>{consumer ? '灵' : '¥'}</Text>
           </View>
           <Text style={styles.title}>
-            {consumer ? '每一次灵光，都用得明白' : '每一笔费用都能看清楚'}
+            {consumer ? '每一粒记忆，都用得明白' : '每一笔费用都能看清楚'}
           </Text>
           <Text style={styles.copy}>
             {consumer
-              ? '新用户会收到一份灵光。智能整理开始前先暂时留出一部分，完成后只记下实际使用的灵光，未使用的会自动归还。'
+              ? '新用户会收到一份忆粒。智能整理开始前先暂时留出一部分，完成后只记下实际使用的忆粒，未使用的会自动归还。'
               : '余额不会出现负数。任务开始前先预占，完成后按实际用量结算，失败或未使用的部分会释放。'}
           </Text>
 
@@ -117,7 +117,7 @@ export function CloudBillingCenter({
             <>
               <View style={styles.balanceCard}>
                 <Text style={styles.balanceLabel}>
-                  {consumer ? '剩余灵光' : '当前可用'}
+                  {consumer ? '剩余忆粒' : '当前可用'}
                 </Text>
                 <Text
                   adjustsFontSizeToFit
@@ -129,7 +129,7 @@ export function CloudBillingCenter({
                 </Text>
                 <View style={styles.balanceBreakdown}>
                   <BalanceStat
-                    label={consumer ? '全部灵光' : '账户余额'}
+                    label={consumer ? '全部忆粒' : '账户余额'}
                     value={formatUsage(account.balanceMicros)}
                   />
                   <View style={styles.balanceDivider} />
@@ -142,7 +142,7 @@ export function CloudBillingCenter({
 
               <View style={styles.limitCard}>
                 <Text style={styles.limitTitle}>
-                  {consumer ? '灵光使用上限' : '消费安全上限'}
+                  {consumer ? '忆粒使用上限' : '消费安全上限'}
                 </Text>
                 <Text style={styles.limitCopy}>
                   {consumer
@@ -169,9 +169,9 @@ export function CloudBillingCenter({
                 accessibilityState={{ disabled: true }}
                 onPress={() =>
                   Alert.alert(
-                    consumer ? '内测灵光无需补充' : '私密测试暂不充值',
+                    consumer ? '内测忆粒无需补充' : '私密测试暂不充值',
                     consumer
-                      ? '内测阶段由 ReMind 赠送灵光，不会向你收款或跳转到支付页面。'
+                      ? '内测阶段由 ReMind 赠送忆粒，不会向你收款或跳转到支付页面。'
                       : '支付、退款和对账链路尚未完成。当前不会收款，也不会跳转到任何支付页面。',
                   )
                 }
@@ -186,13 +186,13 @@ export function CloudBillingCenter({
                 <View style={styles.topUpCopy}>
                   <View style={styles.topUpTitleRow}>
                     <Text style={styles.topUpTitle}>
-                      {consumer ? '内测期间赠送灵光' : '充值暂未开放'}
+                      {consumer ? '内测期间赠送忆粒' : '充值暂未开放'}
                     </Text>
                     <Text style={styles.lockedBadge}>无付款入口</Text>
                   </View>
                   <Text style={styles.topUpDescription}>
                     {consumer
-                      ? '先用获赠的灵光体验智能整理；灵光用完后仍可正常记录和查看已有内容。'
+                      ? '先用获赠的忆粒体验智能整理；忆粒用完后仍可正常记录和查看已有内容。'
                       : '私密测试阶段先验证成本和稳定性，完成支付、退款、对账与合规后再开放。'}
                   </Text>
                 </View>
@@ -201,7 +201,7 @@ export function CloudBillingCenter({
 
               <View style={styles.ledgerHeader}>
                 <Text style={styles.ledgerTitle}>
-                  {consumer ? '灵光记录' : '费用明细'}
+                  {consumer ? '忆粒记录' : '费用明细'}
                 </Text>
                 <Text style={styles.ledgerCount}>
                   最近 {overview.entries.length} 笔
@@ -214,11 +214,11 @@ export function CloudBillingCenter({
               ) : (
                 <View style={styles.emptyLedger}>
                   <Text style={styles.emptyLedgerTitle}>
-                    {consumer ? '还没有灵光记录' : '还没有费用记录'}
+                    {consumer ? '还没有忆粒记录' : '还没有费用记录'}
                   </Text>
                   <Text style={styles.emptyLedgerCopy}>
                     {consumer
-                      ? '完成第一次智能整理后，这里会显示获赠、留出和实际使用的灵光。'
+                      ? '完成第一次智能整理后，这里会显示获赠、留出和实际使用的忆粒。'
                       : '目前没有充值、赠送、预占或结算。使用自己的 API Key 不会从这里扣费。'}
                   </Text>
                 </View>
@@ -244,7 +244,7 @@ export function CloudBillingCenter({
 
           <Text style={styles.footnote}>
             {consumer
-              ? '灵光记录只会追加，不会悄悄改写过去的使用明细。'
+              ? '忆粒记录只会追加，不会悄悄改写过去的使用明细。'
               : '金额由服务端以整数微元记录，App 不使用浮点数计算余额。账本只追加新记录，历史记录不能直接修改。'}
           </Text>
         </ScrollView>
@@ -264,7 +264,7 @@ function BalanceStat({ label, value }: { label: string; value: string }) {
 
 function LedgerRow({ entry }: { entry: CloudLedgerEntry }) {
   const consumer = isConsumerReMindApp();
-  const formatUsage = consumer ? formatLingguangMicros : formatCnyMicros;
+  const formatUsage = consumer ? formatYiliMicros : formatCnyMicros;
   const presentation = ledgerPresentation(entry, formatUsage, consumer);
   return (
     <View style={styles.ledgerRow}>
@@ -305,7 +305,7 @@ function ledgerPresentation(
 } {
   if (entry.kind === 'reserve') {
     return {
-      title: consumer ? '为任务留出灵光' : '任务费用预占',
+      title: consumer ? '为任务留出忆粒' : '任务费用预占',
       amount: `${consumer ? '留出' : '预占'} ${formatUsage(entry.amountMicros)}`,
       icon: '锁',
       iconStyle: styles.ledgerIconReserved,
@@ -315,7 +315,7 @@ function ledgerPresentation(
   }
   if (entry.kind === 'release') {
     return {
-      title: consumer ? '未使用灵光归还' : '未使用预占退回',
+      title: consumer ? '未使用忆粒归还' : '未使用预占退回',
       amount: `归还 ${formatUsage(entry.amountMicros)}`,
       icon: '回',
       iconStyle: styles.ledgerIconPositive,
@@ -325,7 +325,7 @@ function ledgerPresentation(
   }
   if (entry.kind === 'settle') {
     return {
-      title: consumer ? '本次使用灵光' : '任务实际结算',
+      title: consumer ? '本次使用忆粒' : '任务实际结算',
       amount: formatUsage(entry.balanceDeltaMicros, true),
       icon: '用',
       iconStyle: styles.ledgerIconSettled,
@@ -336,16 +336,16 @@ function ledgerPresentation(
 
   const title =
     entry.kind === 'refund'
-      ? consumer ? '灵光退回' : '退款到账'
+      ? consumer ? '忆粒退回' : '退款到账'
       : entry.kind === 'adjustment'
-        ? consumer ? '灵光调整' : '余额调整'
+        ? consumer ? '忆粒调整' : '余额调整'
         : entry.source === 'gift'
-          ? consumer ? '获赠体验灵光' : '体验额度赠送'
+          ? consumer ? '获赠体验忆粒' : '体验额度赠送'
           : entry.source === 'payment'
-            ? consumer ? '灵光到账' : '充值到账'
+            ? consumer ? '忆粒到账' : '充值到账'
             : entry.source === 'operator'
-              ? consumer ? '灵光调整' : '人工额度调整'
-              : consumer ? '灵光增加' : '余额增加';
+              ? consumer ? '忆粒调整' : '人工额度调整'
+              : consumer ? '忆粒增加' : '余额增加';
   return {
     title,
     amount: formatUsage(entry.balanceDeltaMicros, true),
@@ -385,7 +385,7 @@ function billingErrorMessage(reason: unknown): string {
       return '这个安装包尚未配置私密测试云端。';
     }
   }
-  return '暂时无法读取灵光与使用记录，请稍后重试。';
+  return '暂时无法读取忆粒与使用记录，请稍后重试。';
 }
 
 const styles = StyleSheet.create({

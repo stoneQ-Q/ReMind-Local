@@ -77,16 +77,16 @@ export function formatCnyMicros(value: string, showPlus = false): string {
   return `${sign}¥${grouped}.${fraction}`;
 }
 
-const MICROS_PER_LINGGUANG = 10_000n;
+const MICROS_PER_YILI = 10_000n;
 
-export function formatLingguangMicros(
+export function formatYiliMicros(
   value: string,
   showPlus = false,
 ): string {
   const micros = BigInt(value);
   const negative = micros < 0n;
   const absolute = negative ? -micros : micros;
-  const microsPerHundredth = MICROS_PER_LINGGUANG / 100n;
+  const microsPerHundredth = MICROS_PER_YILI / 100n;
   const hundredths =
     (absolute + microsPerHundredth / 2n) / microsPerHundredth;
   const whole = hundredths / 100n;
@@ -98,7 +98,7 @@ export function formatLingguangMicros(
     ? ''
     : `.${fraction.toString().padStart(2, '0').replace(/0$/, '')}`;
   const sign = negative ? '-' : showPlus && micros > 0n ? '+' : '';
-  return `${sign}${grouped}${decimal} 灵光`;
+  return `${sign}${grouped}${decimal} 忆粒`;
 }
 
 export { CloudApiRequestError as CloudBillingError };

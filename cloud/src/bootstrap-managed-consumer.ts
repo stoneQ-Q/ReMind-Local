@@ -10,7 +10,7 @@ import { credentialCipherFromEnvironment } from './credential-cipher.js';
 
 const CONFIRMATION = 'bootstrap-single-consumer';
 const STARTER_CREDIT_MICROS = 2_000_000n;
-const STARTER_LINGGUANG = 200;
+const STARTER_YILI = 200;
 
 export function upsertEnvironmentLines(
   source: string,
@@ -119,7 +119,7 @@ async function main(): Promise<void> {
       { source: 'gift', reason: 'consumer_managed_trial' },
     );
     console.log(
-      `Managed consumer bootstrap completed for one account with ${STARTER_LINGGUANG} Lingguang`,
+      `Managed consumer bootstrap completed for one account with ${STARTER_YILI} Yili`,
     );
   } finally {
     await pool.end();
