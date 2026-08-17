@@ -11,6 +11,7 @@ import {
   AppState,
   Keyboard,
   KeyboardAvoidingView,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -131,13 +132,17 @@ import type {
 } from './types';
 import {
   approveWechatProcessingCost,
+  checkCloudWechatLogin,
   getWechatConnection,
   getWechatProcessingLinks,
   isWechatApiConfigured,
   retryWechatProcessingLink,
+  startCloudWechatLogin,
   syncWechatInbox,
   updateWechatReplyMode,
   type WechatConnection,
+  type WechatLoginCheck,
+  type WechatLoginSession,
   type WechatProcessingLink,
   type WechatReplyMode,
 } from './wechat-sync';
@@ -190,6 +195,7 @@ const LIBRARY_FILTERS: { value: LibraryFilter; label: string }[] = [
 export function ReMindApp() {
   const db = useSQLiteContext();
   const insets = useSafeAreaInsets();
+  const consumer = isConsumerReMindApp();
   const captureRef = useRef<TextInput>(null);
   const noteListRef = useRef<SectionList<Note>>(null);
   const linkAutoProcessing = useRef(false);
@@ -760,7 +766,11 @@ export function ReMindApp() {
     }
     void hasStoredCloudSession().then(setCloudSessionAvailable);
     void refreshCloudAccount().catch(() => {
-      setCloudAccountError('暂时无法连接云端，手机里的笔记不受影响。');
+      setCloudAccountError(
+        isConsumerReMindApp()
+          ? 'ReMind 暂时无法联网，手机里的笔记不受影响。'
+          : '暂时无法连接云端，手机里的笔记不受影响。',
+      );
     });
   }, [refreshCloudAccount, serviceMode.active, serviceModeReady]);
 
@@ -1097,7 +1107,7 @@ export function ReMindApp() {
         </View>
         <View style={styles.headerActions}>
           <Pressable
-            accessibilityLabel="连接方式与云端账号"
+            accessibilityLabel={consumer ? 'ReMind 设置' : '连接方式与云端账号'}
             onPress={() => {
               setCloudOverlay(null);
               setCloudAccountVisible(true);
@@ -1109,30 +1119,34 @@ export function ReMindApp() {
               ])
                 .catch(() =>
                   setCloudAccountError(
-                    '暂时无法连接云端，手机里的笔记不受影响。',
+                    consumer
+                      ? 'ReMind 暂时无法联网，手机里的笔记不受影响。'
+                      : '暂时无法连接云端，手机里的笔记不受影响。',
                   ),
                 )
                 .finally(() => setCloudAccountLoading(false));
             }}
             style={({ pressed }) => [
               styles.cloudBadge,
-              serviceMode.active === 'cloud' && styles.cloudBadgeConnected,
+              !consumer && serviceMode.active === 'cloud' && styles.cloudBadgeConnected,
               pressed && styles.pressed,
             ]}
           >
             <Text maxFontSizeMultiplier={1} style={styles.cloudBadgeMark}>
-              {serviceMode.active === 'cloud' ? '云' : '机'}
+              {consumer ? '设' : serviceMode.active === 'cloud' ? '云' : '机'}
             </Text>
-            <View
-              style={[
-                styles.headerStatusDot,
-                ((serviceMode.active === 'local' &&
-                  serviceMode.available.local) ||
-                  (serviceMode.active === 'cloud' &&
-                    (cloudAccount || cloudSessionAvailable))) &&
-                  styles.headerStatusDotActive,
-              ]}
-            />
+            {!consumer ? (
+              <View
+                style={[
+                  styles.headerStatusDot,
+                  ((serviceMode.active === 'local' &&
+                    serviceMode.available.local) ||
+                    (serviceMode.active === 'cloud' &&
+                      (cloudAccount || cloudSessionAvailable))) &&
+                    styles.headerStatusDotActive,
+                ]}
+              />
+            ) : null}
           </Pressable>
           <Pressable
             accessibilityLabel="设置 Obsidian 同步"
@@ -1163,7 +1177,7 @@ export function ReMindApp() {
               setWechatVisible(true);
               setWechatLoading(true);
               setWechatError(null);
-              void getWechatConnection(true)
+              void getWechatConnection(!consumer)
                 .then(setWechatConnection)
                 .catch(() => setWechatError('暂时无法连接微信服务'))
                 .finally(() => setWechatLoading(false));
@@ -1960,11 +1974,18 @@ export function ReMindApp() {
         error={wechatError}
         loading={wechatLoading}
         onClose={() => setWechatVisible(false)}
+        onConnected={async () => {
+          const connection = await getWechatConnection(false);
+          setWechatConnection(connection);
+          await Haptics.notificationAsync(
+            Haptics.NotificationFeedbackType.Success,
+          );
+        }}
         onRefresh={async () => {
           setWechatLoading(true);
           setWechatError(null);
           try {
-            const connection = await getWechatConnection(true);
+            const connection = await getWechatConnection(!consumer);
             setWechatConnection(connection);
             if (connection.bound) {
               const [imported, processingLinks] = await Promise.all([
@@ -1983,8 +2004,10 @@ export function ReMindApp() {
               Alert.alert(
                 '同步完成',
                 imported > 0
-                  ? `已读取并刷新 ${imported} 条云端微信记录。请到“笔记 → 原始记录”查看。`
-                  : '当前云端账号下没有可同步的微信记录。请确认 Expo Go 恢复的是原来的云端账号。',
+                  ? `已读取并刷新 ${imported} 条微信记录。请到“笔记 → 原始记录”查看。`
+                  : consumer
+                    ? '目前没有新的微信记录。'
+                    : '当前云端账号下没有可同步的微信记录。请确认 Expo Go 恢复的是原来的云端账号。',
               );
             }
           } catch {
@@ -2135,7 +2158,7 @@ export function ReMindApp() {
           if (cloudRecoveryCode) {
             Alert.alert(
               '先保存恢复码',
-              '它是以后换手机或重新安装时找回云端账号的唯一凭据。',
+              '它是以后换手机或重新安装时找回账号的唯一凭据。',
             );
             return;
           }
@@ -2184,6 +2207,17 @@ export function ReMindApp() {
         }}
         onOpenBilling={() => {
           setCloudOverlay('billing');
+        }}
+        onOpenWechat={() => {
+          setCloudOverlay(null);
+          setCloudAccountVisible(false);
+          setWechatVisible(true);
+          setWechatLoading(true);
+          setWechatError(null);
+          void getWechatConnection(!consumer)
+            .then(setWechatConnection)
+            .catch(() => setWechatError('暂时无法连接微信服务'))
+            .finally(() => setWechatLoading(false));
         }}
         onOpenTasks={() => {
           setCloudOverlay('tasks');
@@ -4679,6 +4713,7 @@ function CloudAccountSettings({
   onOpenBilling,
   onOpenDiagnostics,
   onOpenTasks,
+  onOpenWechat,
   onRecover,
   onRegister,
   onRevoke,
@@ -4701,6 +4736,7 @@ function CloudAccountSettings({
   onOpenBilling: () => void;
   onOpenDiagnostics: () => void;
   onOpenTasks: () => void;
+  onOpenWechat: () => void;
   onRecover: (recoveryCode: string) => Promise<void>;
   onRegister: () => Promise<void>;
   onRevoke: (device: CloudDevice) => void;
@@ -4749,15 +4785,15 @@ function CloudAccountSettings({
         >
           <View style={styles.cloudAccountHeroMark}>
             <Text style={styles.cloudAccountHeroMarkText}>
-              {serviceMode.active === 'cloud' ? '云' : '机'}
+              {consumer ? '设' : serviceMode.active === 'cloud' ? '云' : '机'}
             </Text>
           </View>
 
           {consumer ? (
             <View style={styles.cloudAccountNotice}>
               <Text style={styles.cloudAccountNoticeText}>
-                普通版会自动连接 ReMind 云端服务，不需要填写服务器地址或配置模型。
-                即使网络暂时不可用，手机里的记录仍可查看和继续添加。
+                ReMind 已经准备就绪，不需要选择连接方式、填写服务器地址或配置模型。
+                网络暂时不可用时，手机里的记录仍可查看和继续添加。
               </Text>
             </View>
           ) : (
@@ -4882,26 +4918,6 @@ function CloudAccountSettings({
             <Text style={styles.cloudAccountError}>{error}</Text>
           ) : null}
 
-          <Pressable
-            disabled={loading}
-            onPress={onOpenDiagnostics}
-            style={({ pressed }) => [
-              styles.cloudAiSettingsButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            <View style={[styles.cloudAiSettingsMark, styles.diagnosticsMark]}>
-              <Ionicons color={colors.sageText} name="pulse-outline" size={20} />
-            </View>
-            <View style={styles.cloudAiSettingsCopy}>
-              <Text style={styles.cloudAiSettingsTitle}>运行状态与诊断</Text>
-              <Text style={styles.cloudAiSettingsDescription}>
-                查看安装版本、运行模式、云端发布、微信连接和最近同步
-              </Text>
-            </View>
-            <Text style={styles.cloudAiSettingsChevron}>›</Text>
-          </Pressable>
-
           {recoveryCode ? (
             <>
               <Text style={styles.cloudAccountTitle}>账号已经开通</Text>
@@ -4945,17 +4961,44 @@ function CloudAccountSettings({
             </>
           ) : account ? (
             <>
-              <Text style={styles.cloudAccountTitle}>云端已经连接</Text>
-              <Text style={styles.cloudAccountCopy}>
-                当前共有 {account.devices.length}{' '}
-                台设备可以访问这个账号。移除旧设备不会删除本地笔记或云端内容。
-              </Text>
-              <View style={styles.cloudAccountStatus}>
-                <View style={styles.cloudAccountStatusDot} />
-                <Text style={styles.cloudAccountStatusText}>
-                  会话已开启 · 到期前会自动续期
-                </Text>
-              </View>
+              {!consumer ? (
+                <>
+                  <Text style={styles.cloudAccountTitle}>云端已经连接</Text>
+                  <Text style={styles.cloudAccountCopy}>
+                    当前共有 {account.devices.length}{' '}
+                    台设备可以访问这个账号。移除旧设备不会删除本地笔记或云端内容。
+                  </Text>
+                  <View style={styles.cloudAccountStatus}>
+                    <View style={styles.cloudAccountStatusDot} />
+                    <Text style={styles.cloudAccountStatusText}>
+                      会话已开启 · 到期前会自动续期
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.cloudAccountTitle}>功能与使用</Text>
+              )}
+              {consumer ? (
+                <Pressable
+                  disabled={loading}
+                  onPress={onOpenWechat}
+                  style={({ pressed }) => [
+                    styles.cloudAiSettingsButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={[styles.cloudAiSettingsMark, styles.wechatBadgeBound]}>
+                    <Text style={styles.cloudAiSettingsMarkText}>微</Text>
+                  </View>
+                  <View style={styles.cloudAiSettingsCopy}>
+                    <Text style={styles.cloudAiSettingsTitle}>连接微信</Text>
+                    <Text style={styles.cloudAiSettingsDescription}>
+                      把微信消息直接保存到 ReMind
+                    </Text>
+                  </View>
+                  <Text style={styles.cloudAiSettingsChevron}>›</Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 disabled={loading}
                 onPress={onOpenAi}
@@ -4969,11 +5012,11 @@ function CloudAccountSettings({
                 </View>
                 <View style={styles.cloudAiSettingsCopy}>
                   <Text style={styles.cloudAiSettingsTitle}>
-                    {consumer ? '智能服务与忆粒' : 'AI 与 API Key'}
+                    {consumer ? '智能整理' : 'AI 与 API Key'}
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     {consumer
-                      ? '查看托管智能服务、隐私说明和自动整理偏好'
+                      ? '设置文字整理、问答和链接自动整理'
                       : '关闭 AI、使用自己的 Key，或查看托管服务状态'}
                   </Text>
                 </View>
@@ -4999,7 +5042,7 @@ function CloudAccountSettings({
                       styles.cloudBillingSettingsMarkText,
                     ]}
                   >
-                    ¥
+                    {consumer ? '忆' : '¥'}
                   </Text>
                 </View>
                 <View style={styles.cloudAiSettingsCopy}>
@@ -5008,20 +5051,21 @@ function CloudAccountSettings({
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     {consumer
-                      ? '查看获赠忆粒、任务留出和使用记录'
+                      ? '查看可用忆粒和最近实际使用'
                       : '查看可用余额、任务预占和每一笔费用记录'}
                   </Text>
                 </View>
                 <Text style={styles.cloudAiSettingsChevron}>›</Text>
               </Pressable>
-              <Pressable
-                disabled={loading}
-                onPress={onOpenTasks}
-                style={({ pressed }) => [
-                  styles.cloudAiSettingsButton,
-                  pressed && styles.pressed,
-                ]}
-              >
+              {!consumer ? (
+                <Pressable
+                  disabled={loading}
+                  onPress={onOpenTasks}
+                  style={({ pressed }) => [
+                    styles.cloudAiSettingsButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
                 <View
                   style={[
                     styles.cloudAiSettingsMark,
@@ -5044,9 +5088,12 @@ function CloudAccountSettings({
                   </Text>
                 </View>
                 <Text style={styles.cloudAiSettingsChevron}>›</Text>
-              </Pressable>
-              <Text style={styles.cloudDeviceSectionTitle}>登录设备</Text>
-              {account.devices.map((device) => (
+                </Pressable>
+              ) : null}
+              {!consumer ? (
+                <Text style={styles.cloudDeviceSectionTitle}>登录设备</Text>
+              ) : null}
+              {!consumer ? account.devices.map((device) => (
                 <View key={device.id} style={styles.cloudDeviceCard}>
                   <View style={styles.cloudDeviceCopy}>
                     <View style={styles.cloudDeviceTitleRow}>
@@ -5075,29 +5122,41 @@ function CloudAccountSettings({
                     </Text>
                   </Pressable>
                 </View>
-              ))}
+              )) : null}
             </>
           ) : sessionAvailable ? (
             <>
-              <Text style={styles.cloudAccountTitle}>云端账号仍在这台手机上</Text>
+              <Text style={styles.cloudAccountTitle}>
+                {consumer ? 'ReMind 暂时离线' : '云端账号仍在这台手机上'}
+              </Text>
               <Text style={styles.cloudAccountCopy}>
-                当前网络暂时无法刷新账号资料，但登录凭据仍安全保存在系统安全存储中。恢复联网后会自动继续使用原账号。
+                {consumer
+                  ? '当前网络暂时无法刷新服务状态，恢复联网后会自动继续。'
+                  : '当前网络暂时无法刷新账号资料，但登录凭据仍安全保存在系统安全存储中。恢复联网后会自动继续使用原账号。'}
               </Text>
               <View style={styles.cloudAccountNotice}>
                 <Text style={styles.cloudAccountNoticeText}>
-                  无需重新开通，也不要输入恢复码。手机里的本地笔记不受影响。
+                  {consumer
+                    ? '无需重新设置，手机里的记录不受影响。'
+                    : '无需重新开通，也不要输入恢复码。手机里的本地笔记不受影响。'}
                 </Text>
               </View>
             </>
           ) : !configured ? (
             <>
-              <Text style={styles.cloudAccountTitle}>现在使用本地模式</Text>
+              <Text style={styles.cloudAccountTitle}>
+                {consumer ? '服务暂未准备好' : '现在使用本地模式'}
+              </Text>
               <Text style={styles.cloudAccountCopy}>
-                私密测试云端尚未写入这个安装包。你仍然可以正常记录、搜索和使用本地备份，现有内容不会受到影响。
+                {consumer
+                  ? '你仍然可以正常记录、搜索和查看已有内容。'
+                  : '私密测试云端尚未写入这个安装包。你仍然可以正常记录、搜索和使用本地备份，现有内容不会受到影响。'}
               </Text>
               <View style={styles.cloudAccountNotice}>
                 <Text style={styles.cloudAccountNoticeText}>
-                  云端地址配置完成后，这里会自动出现开通和恢复入口。
+                  {consumer
+                    ? '请稍后重新打开 ReMind。'
+                    : '云端地址配置完成后，这里会自动出现开通和恢复入口。'}
                 </Text>
               </View>
             </>
@@ -5149,9 +5208,13 @@ function CloudAccountSettings({
             </>
           ) : (
             <>
-              <Text style={styles.cloudAccountTitle}>让手机随时连接云端</Text>
+              <Text style={styles.cloudAccountTitle}>
+                {consumer ? '准备 ReMind' : '让手机随时连接云端'}
+              </Text>
               <Text style={styles.cloudAccountCopy}>
-                开通后可以在不同网络下使用云端能力。现在只建立账号和设备会话，不会自动上传本地笔记，也不会产生费用。
+                {consumer
+                  ? '只需一次即可完成，不需要填写服务器地址或模型 Key。'
+                  : '开通后可以在不同网络下使用云端能力。现在只建立账号和设备会话，不会自动上传本地笔记，也不会产生费用。'}
               </Text>
               <Pressable
                 disabled={loading}
@@ -5166,7 +5229,7 @@ function CloudAccountSettings({
                   <ActivityIndicator color={colors.white} />
                 ) : (
                   <Text style={styles.cloudAccountPrimaryText}>
-                    开通云端账号
+                    {consumer ? '继续' : '开通云端账号'}
                   </Text>
                 )}
               </Pressable>
@@ -5184,10 +5247,36 @@ function CloudAccountSettings({
               </Pressable>
             </>
           )}
-          <Text style={styles.cloudAccountFootnote}>
-            云端会话凭据只保存在这台设备的系统安全存储中。退出账号不会清除 ReMind
-            本地数据库。
+          <Text style={styles.cloudDeviceSectionTitle}>
+            {consumer ? '需要帮助时' : '运行信息'}
           </Text>
+          <Pressable
+            disabled={loading}
+            onPress={onOpenDiagnostics}
+            style={({ pressed }) => [
+              styles.cloudAiSettingsButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <View style={[styles.cloudAiSettingsMark, styles.diagnosticsMark]}>
+              <Ionicons color={colors.sageText} name="pulse-outline" size={20} />
+            </View>
+            <View style={styles.cloudAiSettingsCopy}>
+              <Text style={styles.cloudAiSettingsTitle}>运行状态与诊断</Text>
+              <Text style={styles.cloudAiSettingsDescription}>
+                {consumer
+                  ? '遇到同步或连接问题时，在这里查看状态'
+                  : '查看安装版本、运行模式、云端发布、微信连接和最近同步'}
+              </Text>
+            </View>
+            <Text style={styles.cloudAiSettingsChevron}>›</Text>
+          </Pressable>
+          {!consumer ? (
+            <Text style={styles.cloudAccountFootnote}>
+              云端会话凭据只保存在这台设备的系统安全存储中。退出账号不会清除 ReMind
+              本地数据库。
+            </Text>
+          ) : null}
         </ScrollView>
         <CloudTaskCenter
           embedded
@@ -5430,6 +5519,7 @@ function WechatBinding({
   error,
   loading,
   onClose,
+  onConnected,
   onRefresh,
   onReplyModeChange,
   visible,
@@ -5438,11 +5528,114 @@ function WechatBinding({
   error: string | null;
   loading: boolean;
   onClose: () => void;
+  onConnected: () => Promise<void>;
   onRefresh: () => Promise<void>;
   onReplyModeChange: (replyMode: WechatReplyMode) => Promise<void>;
   visible: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const consumer = isConsumerReMindApp();
+  const [loginSession, setLoginSession] = useState<WechatLoginSession | null>(null);
+  const [loginStatus, setLoginStatus] =
+    useState<WechatLoginCheck['status']>('waiting');
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [loginPollKey, setLoginPollKey] = useState(0);
+
+  useEffect(() => {
+    if (visible) return;
+    setLoginSession(null);
+    setLoginStatus('waiting');
+    setLoginBusy(false);
+    setLoginError(null);
+    setVerificationCode('');
+  }, [visible]);
+
+  useEffect(() => {
+    if (!consumer || !visible || !loginSession || connection?.bound) return;
+    if (loginStatus === 'verification_required') return;
+    let active = true;
+    let sessionToken = loginSession.sessionToken;
+    const poll = async () => {
+      setLoginBusy(true);
+      try {
+        while (active) {
+          const result = await checkCloudWechatLogin(sessionToken);
+          if (!active) return;
+          setLoginStatus(result.status);
+          if (result.sessionToken) {
+            sessionToken = result.sessionToken;
+            setLoginSession((current) =>
+              current ? { ...current, sessionToken } : current,
+            );
+          }
+          if (result.status === 'connected') {
+            setLoginSession(null);
+            await onConnected();
+            return;
+          }
+          if (result.status === 'waiting' || result.status === 'scanned') {
+            await new Promise((resolve) => setTimeout(resolve, 900));
+            continue;
+          }
+          return;
+        }
+      } catch (reason) {
+        if (active) setLoginError(wechatLoginErrorMessage(reason));
+      } finally {
+        if (active) setLoginBusy(false);
+      }
+    };
+    void poll();
+    return () => {
+      active = false;
+    };
+  }, [connection?.bound, consumer, loginPollKey, loginSession?.expiresAt, visible]);
+
+  const beginWechatLogin = async () => {
+    if (loginBusy) return;
+    setLoginBusy(true);
+    setLoginError(null);
+    setLoginStatus('waiting');
+    setVerificationCode('');
+    try {
+      setLoginSession(await startCloudWechatLogin());
+    } catch (reason) {
+      setLoginError(wechatLoginErrorMessage(reason));
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+
+  const submitWechatVerificationCode = async () => {
+    if (!loginSession || loginBusy || !/^\d{4,8}$/.test(verificationCode)) return;
+    setLoginBusy(true);
+    setLoginError(null);
+    try {
+      const result = await checkCloudWechatLogin(
+        loginSession.sessionToken,
+        verificationCode,
+      );
+      setLoginStatus(result.status);
+      if (result.sessionToken) {
+        const sessionToken = result.sessionToken;
+        setLoginSession((current) =>
+          current ? { ...current, sessionToken } : current,
+        );
+      }
+      if (result.status === 'connected') {
+        setLoginSession(null);
+        await onConnected();
+      } else if (result.status === 'waiting' || result.status === 'scanned') {
+        setLoginPollKey((value) => value + 1);
+      }
+    } catch (reason) {
+      setLoginError(wechatLoginErrorMessage(reason));
+    } finally {
+      setLoginBusy(false);
+    }
+  };
 
   return (
     <Modal
@@ -5477,7 +5670,9 @@ function WechatBinding({
             <Text style={styles.wechatHeroBody}>
               {connection?.bound
                 ? '现在向 ReMind 微信助手发送文字，内容会自动出现在 App。'
-                : '把下面的六位码交给电脑端微信网关，只需配对一次。'}
+                : consumer
+                  ? '在 App 里完成一次微信确认，之后发送给 ReMind 微信助手的内容会自动保存。'
+                  : '把下面的六位码交给电脑端微信网关，只需配对一次。'}
             </Text>
           </View>
 
@@ -5499,7 +5694,8 @@ function WechatBinding({
                 <View style={styles.wechatSuccessDot} />
                 <Text style={styles.wechatSuccessText}>同步已开启</Text>
               </View>
-              <View style={styles.serviceStatusCard}>
+              {!consumer ? (
+                <View style={styles.serviceStatusCard}>
                 <Text style={styles.serviceStatusTitle}>运行状态</Text>
                 <ServiceStatusRow
                   available={connection.gatewayOnline}
@@ -5523,7 +5719,8 @@ function WechatBinding({
                   label="图片理解"
                   unavailableLabel="未配置"
                 />
-              </View>
+                </View>
+              ) : null}
               <View style={styles.replyModeCard}>
                 <Text style={styles.replyModeTitle}>记录后的微信回复</Text>
                 <Text style={styles.replyModeDescription}>
@@ -5570,6 +5767,106 @@ function WechatBinding({
                 })}
               </View>
             </View>
+          ) : consumer ? (
+            loginSession ? (
+              <View style={styles.wechatLoginCard}>
+                <Text style={styles.wechatLoginTitle}>用微信确认连接</Text>
+                <Text style={styles.wechatLoginCopy}>
+                  用微信“扫一扫”扫描下面的二维码。如果微信就在这台手机上，可以先截图，再从扫一扫的相册中选择。
+                </Text>
+                <View style={styles.wechatQrFrame}>
+                  <Image
+                    accessibilityLabel="微信连接二维码"
+                    source={{ uri: loginSession.qrImageDataUrl }}
+                    style={styles.wechatQrImage}
+                  />
+                </View>
+                <View style={styles.wechatLoginStatusRow}>
+                  {loginBusy ? (
+                    <ActivityIndicator color={colors.accent} size="small" />
+                  ) : (
+                    <View style={styles.wechatLoginStatusDot} />
+                  )}
+                  <Text style={styles.wechatLoginStatusText}>
+                    {wechatLoginStatusText(loginStatus)}
+                  </Text>
+                </View>
+                {loginStatus === 'verification_required' ? (
+                  <View style={styles.wechatVerificationCard}>
+                    <Text style={styles.wechatVerificationTitle}>
+                      输入微信显示的数字
+                    </Text>
+                    <TextInput
+                      accessibilityLabel="微信确认数字"
+                      keyboardType="number-pad"
+                      maxLength={8}
+                      onChangeText={setVerificationCode}
+                      placeholder="请输入 4–8 位数字"
+                      placeholderTextColor={colors.faint}
+                      style={styles.wechatVerificationInput}
+                      value={verificationCode}
+                    />
+                    <Pressable
+                      disabled={loginBusy || !/^\d{4,8}$/.test(verificationCode)}
+                      onPress={() => void submitWechatVerificationCode()}
+                      style={({ pressed }) => [
+                        styles.wechatLoginPrimary,
+                        (loginBusy || !/^\d{4,8}$/.test(verificationCode)) &&
+                          styles.wechatRefreshDisabled,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={styles.wechatLoginPrimaryText}>继续连接</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                {loginError ? (
+                  <Text style={styles.wechatLoginError}>{loginError}</Text>
+                ) : null}
+                {loginStatus === 'expired' ||
+                loginStatus === 'blocked' ||
+                loginStatus === 'conflict' ||
+                loginError ? (
+                  <Pressable
+                    disabled={loginBusy}
+                    onPress={() => void beginWechatLogin()}
+                    style={({ pressed }) => [
+                      styles.wechatLoginSecondary,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={styles.wechatLoginSecondaryText}>
+                      重新生成二维码
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : (
+              <View style={styles.wechatStartCard}>
+                <Text style={styles.wechatStartTitle}>不需要电脑或绑定码</Text>
+                <Text style={styles.wechatStartCopy}>
+                  点击后会生成一个短时二维码。完成微信确认后，ReMind 会自动检查并开启同步。
+                </Text>
+                {loginError ? (
+                  <Text style={styles.wechatLoginError}>{loginError}</Text>
+                ) : null}
+                <Pressable
+                  disabled={loginBusy}
+                  onPress={() => void beginWechatLogin()}
+                  style={({ pressed }) => [
+                    styles.wechatLoginPrimary,
+                    loginBusy && styles.wechatRefreshDisabled,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  {loginBusy ? (
+                    <ActivityIndicator color={colors.white} size="small" />
+                  ) : (
+                    <Text style={styles.wechatLoginPrimaryText}>开始连接微信</Text>
+                  )}
+                </Pressable>
+              </View>
+            )
           ) : connection?.bindingCode ? (
             <View style={styles.bindingCard}>
               <Text style={styles.bindingLabel}>网关配对码</Text>
@@ -5594,7 +5891,8 @@ function WechatBinding({
             </View>
           )}
 
-          <Pressable
+          {connection?.bound || !consumer ? (
+            <Pressable
             disabled={loading}
             onPress={() => void onRefresh()}
             style={({ pressed }) => [
@@ -5606,11 +5904,50 @@ function WechatBinding({
             <Text style={styles.wechatRefreshText}>
               {connection?.bound ? '立即同步' : '我已配对，检查状态'}
             </Text>
-          </Pressable>
+            </Pressable>
+          ) : null}
         </ScrollView>
       </View>
     </Modal>
   );
+}
+
+function wechatLoginStatusText(status: WechatLoginCheck['status']): string {
+  switch (status) {
+    case 'scanned':
+      return '已扫码，请在微信中确认';
+    case 'verification_required':
+      return '微信需要再确认一次';
+    case 'connected':
+      return '连接成功';
+    case 'expired':
+      return '二维码已过期';
+    case 'blocked':
+      return '确认次数过多，请重新开始';
+    case 'conflict':
+      return '这个微信助手已连接到其他客户端';
+    default:
+      return '等待微信扫码确认';
+  }
+}
+
+function wechatLoginErrorMessage(reason: unknown): string {
+  if (reason instanceof Error && reason.name === 'AbortError') {
+    return '连接检查超时，请确认网络后重试。';
+  }
+  const code =
+    reason instanceof Error && 'code' in reason
+      ? String((reason as Error & { code: unknown }).code)
+      : reason instanceof Error
+        ? reason.message
+        : '';
+  if (code === 'wechat_already_bound') return '微信已经连接，无需重复操作。';
+  if (code === 'invalid_wechat_login_session') return '二维码已经失效，请重新生成。';
+  if (code === 'rate_limited') return '尝试次数较多，请稍后再试。';
+  if (code === 'unauthorized' || code === 'cloud_session_missing') {
+    return '账号连接已失效，请重新打开 ReMind 后再试。';
+  }
+  return '暂时无法发起微信连接，请稍后重试。';
 }
 
 function ServiceStatusRow({
@@ -8467,6 +8804,139 @@ const styles = StyleSheet.create({
     marginTop: 2,
     color: colors.muted,
     fontSize: 12,
+  },
+  wechatStartCard: {
+    marginTop: 28,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 21,
+    backgroundColor: colors.surface,
+  },
+  wechatStartTitle: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  wechatStartCopy: {
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 21,
+  },
+  wechatLoginCard: {
+    marginTop: 26,
+    padding: 18,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 22,
+    backgroundColor: colors.surface,
+  },
+  wechatLoginTitle: {
+    color: colors.ink,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  wechatLoginCopy: {
+    marginTop: 7,
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  wechatQrFrame: {
+    width: 244,
+    height: 244,
+    marginTop: 18,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 18,
+    backgroundColor: colors.white,
+  },
+  wechatQrImage: {
+    width: '100%',
+    height: '100%',
+  },
+  wechatLoginStatusRow: {
+    minHeight: 24,
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  wechatLoginStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+  },
+  wechatLoginStatusText: {
+    color: colors.sageText,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  wechatVerificationCard: {
+    width: '100%',
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: colors.sage,
+  },
+  wechatVerificationTitle: {
+    color: colors.sageText,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  wechatVerificationInput: {
+    minHeight: 48,
+    marginTop: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
+    color: colors.ink,
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 2,
+    textAlign: 'center',
+  },
+  wechatLoginPrimary: {
+    minHeight: 50,
+    marginTop: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: colors.accent,
+  },
+  wechatLoginPrimaryText: {
+    color: colors.white,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  wechatLoginSecondary: {
+    minHeight: 44,
+    marginTop: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+  },
+  wechatLoginSecondaryText: {
+    color: colors.sageText,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  wechatLoginError: {
+    marginTop: 12,
+    color: colors.danger,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
   },
   bindingCard: {
     marginTop: 30,

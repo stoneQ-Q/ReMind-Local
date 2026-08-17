@@ -54,6 +54,22 @@ const AUTH_RULES = new Map<string, RateLimitRule>([
       windowMilliseconds: 15 * 60_000,
     },
   ],
+  [
+    '/api/v1/wechat/login',
+    {
+      scope: 'wechat_login_start',
+      maximumRequests: 10,
+      windowMilliseconds: 60 * 60_000,
+    },
+  ],
+  [
+    '/api/v1/wechat/login/check',
+    {
+      scope: 'wechat_login_check',
+      maximumRequests: 120,
+      windowMilliseconds: 15 * 60_000,
+    },
+  ],
 ]);
 
 export class RequestRateLimiter {

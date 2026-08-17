@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Platform,
   Pressable,
@@ -18,6 +17,7 @@ import {
   formatCnyMicros,
   formatYiliMicros,
   getCloudBillingOverview,
+  simplifyConsumerLedger,
   type CloudBillingOverview,
   type CloudLedgerEntry,
 } from './cloud-billing';
@@ -64,6 +64,11 @@ export function CloudBillingCenter({
 
   const account = overview?.account;
   const formatUsage = consumer ? formatYiliMicros : formatCnyMicros;
+  const displayedEntries = overview
+    ? consumer
+      ? simplifyConsumerLedger(overview.entries)
+      : overview.entries
+    : [];
 
   return (
     <Modal
@@ -97,14 +102,14 @@ export function CloudBillingCenter({
           }
         >
           <View style={styles.heroMark}>
-            <Text style={styles.heroMarkText}>{consumer ? '灵' : '¥'}</Text>
+            <Text style={styles.heroMarkText}>{consumer ? '忆' : '¥'}</Text>
           </View>
           <Text style={styles.title}>
-            {consumer ? '每一粒记忆，都用得明白' : '每一笔费用都能看清楚'}
+            {consumer ? '你的忆粒' : '每一笔费用都能看清楚'}
           </Text>
           <Text style={styles.copy}>
             {consumer
-              ? '新用户会收到一份忆粒。智能整理开始前先暂时留出一部分，完成后只记下实际使用的忆粒，未使用的会自动归还。'
+              ? '忆粒用于智能整理和问 ReMind。完成后只记录实际使用量，没有用到的部分会自动归还。'
               : '余额不会出现负数。任务开始前先预占，完成后按实际用量结算，失败或未使用的部分会释放。'}
           </Text>
 
@@ -117,7 +122,7 @@ export function CloudBillingCenter({
             <>
               <View style={styles.balanceCard}>
                 <Text style={styles.balanceLabel}>
-                  {consumer ? '剩余忆粒' : '当前可用'}
+                  {consumer ? '现在可用' : '当前可用'}
                 </Text>
                 <Text
                   adjustsFontSizeToFit
@@ -129,12 +134,12 @@ export function CloudBillingCenter({
                 </Text>
                 <View style={styles.balanceBreakdown}>
                   <BalanceStat
-                    label={consumer ? '全部忆粒' : '账户余额'}
+                    label={consumer ? '全部' : '账户余额'}
                     value={formatUsage(account.balanceMicros)}
                   />
                   <View style={styles.balanceDivider} />
                   <BalanceStat
-                    label={consumer ? '处理中留出' : '任务预占'}
+                    label={consumer ? '处理中' : '任务预占'}
                     value={formatUsage(account.reservedMicros)}
                   />
                 </View>
@@ -142,7 +147,7 @@ export function CloudBillingCenter({
 
               <View style={styles.limitCard}>
                 <Text style={styles.limitTitle}>
-                  {consumer ? '忆粒使用上限' : '消费安全上限'}
+                  {consumer ? '使用保护' : '消费安全上限'}
                 </Text>
                 <Text style={styles.limitCopy}>
                   {consumer
@@ -165,50 +170,37 @@ export function CloudBillingCenter({
                 </View>
               </View>
 
-              <Pressable
-                accessibilityState={{ disabled: true }}
-                onPress={() =>
-                  Alert.alert(
-                    consumer ? '内测忆粒无需补充' : '私密测试暂不充值',
-                    consumer
-                      ? '内测阶段由 ReMind 赠送忆粒，不会向你收款或跳转到支付页面。'
-                      : '支付、退款和对账链路尚未完成。当前不会收款，也不会跳转到任何支付页面。',
-                  )
-                }
-                style={({ pressed }) => [
-                  styles.topUpCard,
-                  pressed && styles.pressed,
-                ]}
-              >
+              <View style={styles.topUpCard}>
                 <View style={styles.topUpIcon}>
                   <Text style={styles.topUpIconText}>＋</Text>
                 </View>
                 <View style={styles.topUpCopy}>
                   <View style={styles.topUpTitleRow}>
                     <Text style={styles.topUpTitle}>
-                      {consumer ? '内测期间赠送忆粒' : '充值暂未开放'}
+                      {consumer ? '内测体验规则' : '充值暂未开放'}
                     </Text>
-                    <Text style={styles.lockedBadge}>无付款入口</Text>
+                    <Text style={styles.lockedBadge}>
+                      {consumer ? '暂不收费' : '无付款入口'}
+                    </Text>
                   </View>
                   <Text style={styles.topUpDescription}>
                     {consumer
-                      ? '先用获赠的忆粒体验智能整理；忆粒用完后仍可正常记录和查看已有内容。'
+                      ? '当前忆粒由 ReMind 赠送。用完后仍可正常记录、搜索和查看已有内容。'
                       : '私密测试阶段先验证成本和稳定性，完成支付、退款、对账与合规后再开放。'}
                   </Text>
                 </View>
-                <Text style={styles.topUpChevron}>›</Text>
-              </Pressable>
+              </View>
 
               <View style={styles.ledgerHeader}>
                 <Text style={styles.ledgerTitle}>
-                  {consumer ? '忆粒记录' : '费用明细'}
+                  {consumer ? '最近使用' : '费用明细'}
                 </Text>
                 <Text style={styles.ledgerCount}>
-                  最近 {overview.entries.length} 笔
+                  最近 {displayedEntries.length} 笔
                 </Text>
               </View>
-              {overview.entries.length ? (
-                overview.entries.map((entry) => (
+              {displayedEntries.length ? (
+                displayedEntries.map((entry) => (
                   <LedgerRow entry={entry} key={entry.id} />
                 ))
               ) : (
@@ -244,7 +236,7 @@ export function CloudBillingCenter({
 
           <Text style={styles.footnote}>
             {consumer
-              ? '忆粒记录只会追加，不会悄悄改写过去的使用明细。'
+              ? '这里优先展示实际使用；正在处理的任务会临时留出忆粒，完成或失败后自动结算。'
               : '金额由服务端以整数微元记录，App 不使用浮点数计算余额。账本只追加新记录，历史记录不能直接修改。'}
           </Text>
         </ScrollView>
@@ -325,7 +317,7 @@ function ledgerPresentation(
   }
   if (entry.kind === 'settle') {
     return {
-      title: consumer ? '本次使用忆粒' : '任务实际结算',
+      title: consumer ? '智能服务使用' : '任务实际结算',
       amount: formatUsage(entry.balanceDeltaMicros, true),
       icon: '用',
       iconStyle: styles.ledgerIconSettled,
@@ -594,10 +586,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 10,
     lineHeight: 15,
-  },
-  topUpChevron: {
-    color: colors.faint,
-    fontSize: 24,
   },
   ledgerHeader: {
     marginTop: 28,

@@ -53,4 +53,19 @@ describe('public API request rate limiter', () => {
       limiter.check('203.0.113.8', '/api/v1/wechat/bindings/claim').allowed,
     ).toBe(false);
   });
+
+  it('separately limits self-service WeChat login creation and checks', () => {
+    const limiter = new RequestRateLimiter(() => 0);
+    for (let index = 0; index < 10; index += 1) {
+      expect(limiter.check('203.0.113.9', '/api/v1/wechat/login').allowed).toBe(
+        true,
+      );
+    }
+    expect(limiter.check('203.0.113.9', '/api/v1/wechat/login').allowed).toBe(
+      false,
+    );
+    expect(
+      limiter.check('203.0.113.9', '/api/v1/wechat/login/check').allowed,
+    ).toBe(true);
+  });
 });

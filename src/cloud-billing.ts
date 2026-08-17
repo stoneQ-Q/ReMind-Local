@@ -101,6 +101,27 @@ export function formatYiliMicros(
   return `${sign}${grouped}${decimal} 忆粒`;
 }
 
+export function simplifyConsumerLedger(
+  entries: CloudLedgerEntry[],
+): CloudLedgerEntry[] {
+  const jobKinds = new Map<string, Set<CloudLedgerKind>>();
+  for (const entry of entries) {
+    if (!entry.jobId) continue;
+    const kinds = jobKinds.get(entry.jobId) ?? new Set<CloudLedgerKind>();
+    kinds.add(entry.kind);
+    jobKinds.set(entry.jobId, kinds);
+  }
+
+  return entries.filter((entry) => {
+    if (!entry.jobId) return true;
+    if (entry.kind === 'settle') return true;
+    if (entry.kind === 'release') return false;
+    if (entry.kind !== 'reserve') return true;
+    const kinds = jobKinds.get(entry.jobId);
+    return !kinds?.has('settle') && !kinds?.has('release');
+  });
+}
+
 export { CloudApiRequestError as CloudBillingError };
 
 function isBillingAccount(value: unknown): value is CloudBillingAccount {

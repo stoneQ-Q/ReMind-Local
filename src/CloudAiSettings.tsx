@@ -220,7 +220,7 @@ export function CloudAiSettings({
             <Text style={styles.close}>关闭</Text>
           </Pressable>
           <Text style={styles.heading}>
-            {consumer ? '智能服务与忆粒' : 'AI 与 API Key'}
+            {consumer ? '智能整理' : 'AI 与 API Key'}
           </Text>
           <View style={styles.headerSpacer} />
         </View>
@@ -233,14 +233,14 @@ export function CloudAiSettings({
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.heroMark}>
-            <Text style={styles.heroMarkText}>AI</Text>
+            <Text style={styles.heroMarkText}>{consumer ? '智' : 'AI'}</Text>
           </View>
           <Text style={styles.title}>
-            {consumer ? 'ReMind 已经为你准备好了' : '选择谁来承担模型费用'}
+            {consumer ? '打开就能用' : '选择谁来承担模型费用'}
           </Text>
           <Text style={styles.copy}>
             {consumer
-              ? '无需配置模型或 API Key。智能整理会使用 ReMind 托管服务，关闭后仍可继续记录、搜索和查看已有内容。'
+              ? '不用选择模型，也不用填写 API Key。ReMind 会直接帮你整理文字记录、回答笔记问题。'
               : '关闭 AI 不会删除笔记；使用自己的 Key 时，模型费用直接由对应供应商向你结算。'}
           </Text>
 
@@ -258,18 +258,18 @@ export function CloudAiSettings({
                     badge={
                       settings?.mode === 'bring_your_own_key'
                         ? '旧账号待切换'
-                        : '已托管'
+                        : '已开启'
                     }
                     description={
                       settings?.mode === 'bring_your_own_key'
                         ? '你的旧账号配置仍被安全保留。点这里切换后，之后不再需要自己承担模型配置。'
-                        : '文字整理和问答由 ReMind 自动完成，不需要准备任何 Key；图片和音视频托管会在后续单独开放。'
+                        : '可用于文字整理和问 ReMind；图片、语音和视频的智能处理将在后续开放。'
                     }
                     disabled={Boolean(acting)}
                     label={
                       settings?.mode === 'bring_your_own_key'
                         ? '切换到 ReMind 智能服务'
-                        : '使用 ReMind 智能服务'
+                        : '使用智能整理'
                     }
                     onPress={() => void changeMode('managed')}
                   />
@@ -277,7 +277,7 @@ export function CloudAiSettings({
                     active={settings?.mode === 'disabled'}
                     description="只记录和搜索，不再发起新的智能整理；已有笔记不会删除。"
                     disabled={Boolean(acting)}
-                    label="暂时关闭智能服务"
+                    label="关闭智能整理"
                     onPress={() => void changeMode('disabled')}
                   />
                 </>
@@ -304,40 +304,42 @@ export function CloudAiSettings({
 
               <View style={styles.securityNotice}>
                 <Text style={styles.securityNoticeTitle}>
-                  {consumer ? '隐私说明' : 'Key 如何保存'}
+                  {consumer ? '什么时候会使用云端' : 'Key 如何保存'}
                 </Text>
                 <Text style={styles.securityNoticeCopy}>
                   {consumer
-                    ? '普通版不会要求你提供任何模型 Key。内容仅在完成你发起的整理、问答或媒体理解时提交给云端处理。'
+                    ? '只有在你发起整理、问答，或开启链接自动整理时，相关内容才会提交处理；原始记录仍会保留。'
                     : '输入后立即通过当前云端会话提交；App 不保存完整值，服务端加密存储，之后只返回末四位。'}
                 </Text>
               </View>
 
-              <Text style={styles.sectionTitle}>链接自动整理</Text>
+              <Text style={styles.sectionTitle}>
+                {consumer ? '收到链接后' : '链接自动整理'}
+              </Text>
               <Text style={styles.sectionCopy}>
                 {consumer
-                  ? '只处理已经取得可追溯正文或视频转写的链接。自动整理会使用忆粒，原始链接和证据仍会保留。'
+                  ? '选择 ReMind 获取到链接正文后如何处理。自动整理会使用忆粒，原始链接和依据都会保留。'
                   : '只处理已经取得可追溯正文或视频转写的链接。自动模式会直接使用你的 DeepSeek Key；原始链接和证据仍会保留。'}
               </Text>
               <AiModeCard
                 active={linkAutomationMode === 'review'}
                 description="保持逐篇生成、审核和确认，不自动创建正式笔记。"
                 disabled={Boolean(acting)}
-                label="每次由我审核"
+                label={consumer ? '先让我看看' : '每次由我审核'}
                 onPress={() => void changeLinkAutomation('review')}
               />
               <AiModeCard
                 active={linkAutomationMode === 'auto_note'}
                 description="链接处理完成后自动生成正式来源笔记；主题仍由你决定。"
                 disabled={Boolean(acting)}
-                label="自动生成笔记"
+                label={consumer ? '自动整理成笔记' : '自动生成笔记'}
                 onPress={() => void changeLinkAutomation('auto_note')}
               />
               <AiModeCard
                 active={linkAutomationMode === 'auto_note_and_theme'}
                 description="自动生成笔记并接受主题建议；之后可在来源笔记中随时重新归类。"
                 disabled={Boolean(acting)}
-                label="自动生成并归入主题"
+                label={consumer ? '自动整理并归类' : '自动生成并归入主题'}
                 onPress={() =>
                   void changeLinkAutomation('auto_note_and_theme')
                 }
@@ -459,7 +461,7 @@ export function CloudAiSettings({
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <Text style={styles.footnote}>
             {consumer
-              ? '当前为托管服务内测。忆粒用完或服务暂时不可用时，不会影响手机里的原始记录。'
+              ? '智能整理暂处于内测。忆粒用完或服务暂时不可用时，不会影响原始记录。'
               : 'ReMind 不会显示或下载已经保存的完整 Key。若怀疑泄露，请在对应供应商后台撤销并生成新 Key。'}
           </Text>
         </ScrollView>

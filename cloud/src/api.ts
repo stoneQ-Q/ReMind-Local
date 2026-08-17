@@ -94,6 +94,11 @@ import {
   listCloudWechatCaptures,
   updateCloudWechatReplyMode,
 } from './wechat-bindings.js';
+import { saveWechatConnection } from './wechat-connections.js';
+import {
+  checkWechatLogin,
+  startWechatLogin,
+} from './wechat-login.js';
 import type { WechatProtocolCredentials } from './wechat-protocol.js';
 
 const port = apiPort();
@@ -337,6 +342,106 @@ const server = createServer(async (request, response) => {
         200,
         await getCloudWechatStatus(database, account.userId),
       );
+      return;
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/wechat/login'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const status = await getCloudWechatStatus(database, account.userId);
+      if (status.bound) {
+        sendJson(response, 409, { error: 'wechat_already_bound' });
+        return;
+      }
+      try {
+        sendJson(
+          response,
+          201,
+          await startWechatLogin(credentialCipher, account.userId),
+        );
+      } catch (error) {
+        console.warn(
+          'Unable to start WeChat login',
+          error instanceof Error ? error.message : 'unknown error',
+        );
+        sendJson(response, 503, { error: 'wechat_login_unavailable' });
+      }
+      return;
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/wechat/login/check'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const sessionToken =
+        isRecord(body) && typeof body.sessionToken === 'string'
+          ? body.sessionToken
+          : '';
+      const verificationCode =
+        isRecord(body) && typeof body.verificationCode === 'string'
+          ? body.verificationCode.trim()
+          : undefined;
+      if (
+        !sessionToken ||
+        (verificationCode !== undefined && !/^\d{4,8}$/.test(verificationCode))
+      ) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      try {
+        const existing = await getCloudWechatStatus(database, account.userId);
+        if (existing.bound) {
+          sendJson(response, 200, {
+            status: 'connected',
+            sessionToken: null,
+          });
+          return;
+        }
+        const result = await checkWechatLogin(
+          credentialCipher,
+          account.userId,
+          sessionToken,
+          verificationCode,
+        );
+        if (result.status === 'connected' && result.credentials) {
+          await saveWechatConnection(
+            database,
+            credentialCipher,
+            account.userId,
+            result.credentials,
+          );
+        }
+        sendJson(response, 200, {
+          status: result.status,
+          sessionToken: result.sessionToken,
+        });
+      } catch (error) {
+        const code = error instanceof Error ? error.message : '';
+        if (code === 'invalid_wechat_login_session') {
+          sendJson(response, 400, { error: code });
+        } else {
+          console.warn('Unable to check WeChat login', code || 'unknown error');
+          sendJson(response, 503, { error: 'wechat_login_unavailable' });
+        }
+      }
       return;
     }
 
