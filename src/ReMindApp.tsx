@@ -5816,7 +5816,7 @@ function WechatBinding({
               <View style={styles.wechatLoginCard}>
                 <Text style={styles.wechatLoginTitle}>用微信确认连接</Text>
                 <Text style={styles.wechatLoginCopy}>
-                  用微信“扫一扫”扫描下面的二维码。如果微信就在这台手机上，可以先截图，再从扫一扫的相册中选择。
+                  用微信“扫一扫”扫描下面的二维码，二维码 10 分钟内有效。如果微信就在这台手机上，可以先截图，再从扫一扫的相册中选择。
                 </Text>
                 <View style={styles.wechatQrFrame}>
                   <Image
@@ -5887,9 +5887,9 @@ function WechatBinding({
               </View>
             ) : (
               <View style={styles.wechatStartCard}>
-                <Text style={styles.wechatStartTitle}>不需要电脑或绑定码</Text>
+                <Text style={styles.wechatStartTitle}>开始连接</Text>
                 <Text style={styles.wechatStartCopy}>
-                  点击后会生成一个短时二维码。完成微信确认后，ReMind 会自动检查并开启同步。
+                  点击“开始连接微信”后会生成一个二维码，10 分钟内有效。使用微信扫码并完成确认后，ReMind 会自动检查并开启同步。
                 </Text>
                 {loginError ? (
                   <Text style={styles.wechatLoginError}>{loginError}</Text>
