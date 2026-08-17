@@ -8,7 +8,7 @@
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
 - Current authoritative feature checkpoint before this documentation update:
-  `54841e8`
+  `cd72f3d`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -35,9 +35,9 @@ two runtime modes inside the personal test app, and one development environment.
    - Current device: Redmi Note 13 Pro, Android 16
    - This app can expose both cloud and local runtime modes when both service
      addresses are included in its build configuration.
-   - Development source after `dcd859d` no longer exposes that mode distinction
-     in the consumer UI. The hosted service is an implementation detail for
-     ordinary users; only `ReMind Local` keeps self-hosting controls.
+- Development source after `cd72f3d` no longer exposes that mode distinction
+  in the consumer UI. The hosted service is an implementation detail for
+  ordinary users; only `ReMind Local` keeps self-hosting controls.
    - The `preview` and `preview-local` EAS profile names refer to internal build
      profiles for this same personal test app. `preview-local` is not the separate
      public `ReMind Local` product.
@@ -95,6 +95,24 @@ personal test app, and 1 development environment.**
   build and explicit installation verification.
 
 ## Pending development changes
+
+- Consumer settings checkpoint `cd72f3d` consolidates the ordinary ReMind home
+  header to one `设置` entry. WeChat connection, intelligent organization,
+  `忆粒与用量`, and the Obsidian note library now live directly inside settings;
+  the redundant top-level `微` and `库` entries remain available only in
+  `ReMind Local`.
+- The consumer settings sheet no longer shows the decorative readiness mark,
+  the “ReMind 已经准备就绪” explanation, the cloud/local selector, or the
+  `功能与使用` heading. Its short descriptions now identify only the action
+  behind each row. `运行状态与诊断` remains visible in Expo/development through
+  `__DEV__`, stays available in `ReMind Local`, and is hidden from production
+  consumer builds.
+- Verification for `cd72f3d` on 2026-08-17: App TypeScript passed, all 326 tests
+  in 84 files passed, and an Android Expo export completed successfully at
+  `/tmp/remind-settings-consolidation-export`. This is source/export validation,
+  not a signed APK build or phone installation. The deployed cloud release
+  remains `54841e8`, the phone-installed signed delivery is unchanged, and the
+  local gateway was not started.
 
 - Consumer experience checkpoint `dcd859d`, with Node-24-compatible cloud lock
   follow-up `54841e8`, removes the cloud/local choice and “cloud connected”
