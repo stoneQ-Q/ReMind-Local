@@ -259,10 +259,18 @@ personal test app, and 1 development environment.**
   managed configuration successfully. The prior private environment remains at
   `/opt/remind/shared/remind.env.pre-06e1a49` with mode 0600 for emergency
   rollback; the active environment remains mode 0600 and `ubuntu:ubuntu`.
-- A real authenticated model call from the current Expo session is still needed
-  to complete the phone-to-platform-Key billing verification. Do not claim that
-  final interaction until it has been observed; the server-side configuration,
-  fail-closed startup, account grant, and health checks are verified.
+- Expo real-phone verification on 2026-08-17 completed the authenticated
+  phone-to-managed-DeepSeek billing path for `问 ReMind`. The visible response
+  correctly reported that there was not enough direct evidence for “loop
+  engineering”, separated potentially related saved material from direct facts,
+  and offered evidence-grounded follow-up questions. The corresponding
+  `ai.text` job succeeded with DeepSeek: 114,880 micros were reserved, 10,247
+  micros were settled (about 1.02 `忆粒`), the unused 104,633 micros were
+  released, reserved usage returned to zero, and the account balance became
+  1,989,753 micros (displayed as 198.98 `忆粒`). Public readiness still reported
+  release `06e1a49`, and the server health check passed. This verifies the live
+  Expo development session, not a newly signed or installed APK; build 31
+  remains the phone-installed delivery.
 
 ## WeChat polling safety
 
