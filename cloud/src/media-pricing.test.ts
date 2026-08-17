@@ -6,6 +6,8 @@ import {
   estimateManagedTextCost,
   estimateManagedTranscriptionCost,
   managedMediaPriceCatalogFromEnvironment,
+  managedTranscriptionCost,
+  managedTranscriptionPriceCatalogFromEnvironment,
   managedTextPriceCatalogFromEnvironment,
   ManagedMediaPricingUnavailableError,
 } from './media-pricing.js';
@@ -18,6 +20,16 @@ const catalog = {
 };
 
 describe('managed media pricing', () => {
+  it('prices Bailian transcription by whole billable seconds', () => {
+    const transcriptionCatalog =
+      managedTranscriptionPriceCatalogFromEnvironment({
+        REMIND_PRICE_DASHSCOPE_ASR_PER_SECOND_MICROS: '80',
+      });
+    expect(managedTranscriptionCost(transcriptionCatalog, 300)).toBe(24_000n);
+    expect(managedTranscriptionCost(transcriptionCatalog, 3_600)).toBe(
+      288_000n,
+    );
+  });
   it('loads text-only pricing without enabling managed media', () => {
     expect(
       managedTextPriceCatalogFromEnvironment({
@@ -66,7 +78,7 @@ describe('managed media pricing', () => {
     expect(() => estimateManagedImageCost(catalog, 0)).toThrow(
       'invalid_image_count',
     );
-    expect(() => estimateManagedTranscriptionCost(catalog, 21_601)).toThrow(
+    expect(() => estimateManagedTranscriptionCost(catalog, 43_201)).toThrow(
       'invalid_media_duration',
     );
     expect(() => estimateManagedTextCost(catalog, -1, 100)).toThrow(

@@ -6,6 +6,10 @@ export type ManagedTextPriceCatalog = {
   deepseekOutputPerMillionTokensMicros: bigint;
 };
 
+export type ManagedTranscriptionPriceCatalog = {
+  dashscopeAsrPerSecondMicros: bigint;
+};
+
 export type ManagedMediaPriceCatalog = ManagedTextPriceCatalog & {
   zhipuVisionPerImageMicros: bigint;
   zhipuAsrPerMinuteMicros: bigint;
@@ -47,6 +51,26 @@ export function managedTextPriceCatalogFromEnvironment(
       environment.REMIND_PRICE_DEEPSEEK_OUTPUT_PER_MILLION_TOKENS_MICROS,
     ),
   };
+}
+
+export function managedTranscriptionPriceCatalogFromEnvironment(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): ManagedTranscriptionPriceCatalog {
+  return {
+    dashscopeAsrPerSecondMicros: requiredPositiveMicros(
+      environment.REMIND_PRICE_DASHSCOPE_ASR_PER_SECOND_MICROS,
+    ),
+  };
+}
+
+export function managedTranscriptionCost(
+  catalog: ManagedTranscriptionPriceCatalog,
+  durationSeconds: number,
+): bigint {
+  return (
+    catalog.dashscopeAsrPerSecondMicros *
+    BigInt(validDurationSeconds(durationSeconds))
+  );
 }
 
 export function estimateManagedImageCost(
@@ -117,7 +141,7 @@ function requiredPositiveMicros(value: string | undefined): bigint {
 }
 
 function validDurationSeconds(value: number): number {
-  if (!Number.isInteger(value) || value < 1 || value > 21_600) {
+  if (!Number.isInteger(value) || value < 1 || value > 43_200) {
     throw new Error('invalid_media_duration');
   }
   return value;

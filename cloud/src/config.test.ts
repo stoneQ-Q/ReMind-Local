@@ -5,6 +5,7 @@ import {
   consumerStarterCreditMicros,
   dashscopeConfig,
   releaseIdentifier,
+  serverWhisperUserIds,
   xiaoyuzhouTranscriptionEnabled,
 } from './config.js';
 
@@ -15,6 +16,8 @@ const originalRelease = process.env.REMIND_RELEASE;
 const originalManagedConsumer = process.env.REMIND_CONSUMER_MANAGED_AI_ENABLED;
 const originalStarterCredit =
   process.env.REMIND_CONSUMER_STARTER_CREDIT_MICROS;
+const originalServerWhisperUsers =
+  process.env.REMIND_SERVER_WHISPER_USER_IDS;
 
 afterEach(() => {
   if (originalValue === undefined) {
@@ -33,6 +36,30 @@ afterEach(() => {
     'REMIND_CONSUMER_STARTER_CREDIT_MICROS',
     originalStarterCredit,
   );
+  restoreEnvironment(
+    'REMIND_SERVER_WHISPER_USER_IDS',
+    originalServerWhisperUsers,
+  );
+});
+
+describe('serverWhisperUserIds', () => {
+  it('is empty by default and accepts an explicit UUID allowlist', () => {
+    delete process.env.REMIND_SERVER_WHISPER_USER_IDS;
+    expect([...serverWhisperUserIds()]).toEqual([]);
+
+    process.env.REMIND_SERVER_WHISPER_USER_IDS =
+      '11111111-1111-4111-8111-111111111111';
+    expect([...serverWhisperUserIds()]).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+  });
+
+  it('rejects a malformed allowlist instead of widening access', () => {
+    process.env.REMIND_SERVER_WHISPER_USER_IDS = 'everyone';
+    expect(() => serverWhisperUserIds()).toThrow(
+      'REMIND_SERVER_WHISPER_USER_IDS must contain UUIDs',
+    );
+  });
 });
 
 describe('consumer managed AI', () => {

@@ -1,9 +1,20 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { Pool, PoolClient } from 'pg';
 
+import { releaseJobCost, settleJobCost } from './billing.js';
+import {
+  confirmAndReserveManagedJobQuote,
+  createManagedJobQuote,
+} from './job-quotes.js';
 import type { JobHandler } from './jobs.js';
 import {
   SecureLinkPageFetcher,
   SecureXiaohongshuVideoFetcher,
+  SecureXiaoyuzhouAudioFetcher,
+  type LinkAudioFetcher,
   type LinkPageFetcher,
   type LinkVideoFetcher,
   validatePublicLinkUrl,
@@ -20,6 +31,15 @@ import {
   type ParaformerSegment,
   type ParaformerTranscript,
 } from './paraformer-client.js';
+import {
+  managedTranscriptionCost,
+  type ManagedTranscriptionPriceCatalog,
+} from './media-pricing.js';
+import {
+  extractVideoAudioSegments,
+  type ExtractedAudioSegment,
+} from './video-audio-segments.js';
+import type { WhisperMediaClient } from './whisper-media-client.js';
 
 const LINK_JOB_TYPE = 'link.parse';
 
@@ -27,7 +47,42 @@ type LinkNoteRow = {
   id: string;
   user_id: string;
   source_url: string;
+  ai_mode: string;
 };
+
+export type LinkTranscriptionOptions = {
+  priceCatalog: ManagedTranscriptionPriceCatalog | null;
+  serverWhisperUserIds: ReadonlySet<string>;
+  whisper: WhisperMediaClient | null;
+  audioFetcher?: LinkAudioFetcher;
+};
+
+export function selectLinkTranscriptionProvider(input: {
+  userId: string;
+  aiMode: string;
+  supportedMedia: boolean;
+  paraformerAvailable: boolean;
+  managedPricingAvailable: boolean;
+  managedDurationAvailable: boolean;
+  whisperAvailable: boolean;
+  serverWhisperUserIds: ReadonlySet<string>;
+}): 'whisper' | 'dashscope' | 'legacy' | 'unavailable' {
+  if (!input.supportedMedia) return 'legacy';
+  if (
+    input.whisperAvailable &&
+    input.serverWhisperUserIds.has(input.userId)
+  ) {
+    return 'whisper';
+  }
+  if (input.aiMode === 'managed') {
+    return input.paraformerAvailable &&
+      input.managedPricingAvailable &&
+      input.managedDurationAvailable
+      ? 'dashscope'
+      : 'unavailable';
+  }
+  return 'legacy';
+}
 
 export async function ensureNextLinkParseJob(
   pool: Pool,
@@ -136,6 +191,7 @@ export function createLinkParseHandler(
   fetcher: LinkPageFetcher = new SecureLinkPageFetcher(),
   videoFetcher: LinkVideoFetcher = new SecureXiaohongshuVideoFetcher(),
   paraformer: ParaformerClient | null = null,
+  transcriptionOptions: LinkTranscriptionOptions | null = null,
 ): JobHandler {
   return async (job, signal) => {
     const { noteId, generation } = parseLinkJobInput(job.input);
@@ -153,14 +209,63 @@ export function createLinkParseHandler(
         snapshot.platform,
         snapshot.images,
       );
-      const video =
-        snapshot.platform === 'xiaohongshu' &&
-        snapshot.mediaType === 'video' &&
-        snapshot.transientVideoUrl
-          ? await videoFetcher.fetch(snapshot.transientVideoUrl, signal)
-          : null;
-      const audioTranscription =
+      const supportedMedia = Boolean(
+        (snapshot.platform === 'xiaoyuzhou' &&
+          snapshot.mediaType === 'audio' &&
+          snapshot.transientAudioUrl) ||
+          (snapshot.platform === 'xiaohongshu' &&
+            snapshot.mediaType === 'video' &&
+            snapshot.transientVideoUrl),
+      );
+      const transcriptionProvider = selectLinkTranscriptionProvider({
+        userId: job.userId,
+        aiMode: note.ai_mode,
+        supportedMedia,
+        paraformerAvailable: Boolean(paraformer),
+        managedPricingAvailable: Boolean(transcriptionOptions?.priceCatalog),
+        managedDurationAvailable:
+          Number.isInteger(snapshot.durationSeconds) &&
+          (snapshot.durationSeconds ?? 0) >= 1,
+        whisperAvailable: Boolean(transcriptionOptions?.whisper),
+        serverWhisperUserIds:
+          transcriptionOptions?.serverWhisperUserIds ?? new Set(),
+      });
+      if (transcriptionProvider === 'unavailable') {
+        throw new Error('managed_transcription_unavailable');
+      }
+      const managedApiTranscription =
+        transcriptionProvider === 'dashscope' &&
         paraformer &&
+        transcriptionOptions?.priceCatalog &&
+        supportedMedia
+          ? await transcribeManagedLinkMedia(pool, paraformer, {
+              userId: job.userId,
+              noteId,
+              generation,
+              mediaType: snapshot.mediaType as 'audio' | 'video',
+              mediaUrl:
+                snapshot.transientAudioUrl ?? snapshot.transientVideoUrl ?? '',
+              estimatedDurationSeconds: snapshot.durationSeconds!,
+              signal,
+              finalAttempt: job.attemptCount >= job.maxAttempts,
+              priceCatalog: transcriptionOptions.priceCatalog,
+            })
+          : null;
+      const ownerTranscription =
+        transcriptionProvider === 'whisper' && transcriptionOptions?.whisper
+          ? await transcribeOwnerLinkMedia(
+              snapshot,
+              videoFetcher,
+              transcriptionOptions.audioFetcher ??
+                new SecureXiaoyuzhouAudioFetcher(),
+              transcriptionOptions.whisper,
+              signal,
+            )
+          : null;
+      const mediaTranscription =
+        managedApiTranscription ??
+        ownerTranscription ??
+        (paraformer &&
         snapshot.platform === 'xiaoyuzhou' &&
         snapshot.mediaType === 'audio' &&
         snapshot.transientAudioUrl
@@ -171,6 +276,13 @@ export function createLinkParseHandler(
               audioUrl: snapshot.transientAudioUrl,
               signal,
             })
+          : null);
+      const video =
+        !mediaTranscription &&
+        snapshot.platform === 'xiaohongshu' &&
+        snapshot.mediaType === 'video' &&
+        snapshot.transientVideoUrl
+          ? await videoFetcher.fetch(snapshot.transientVideoUrl, signal)
           : null;
       const videoSourceFile = video
         ? await saveObjectFile(pool, store, {
@@ -182,8 +294,15 @@ export function createLinkParseHandler(
           })
         : null;
       const sourceFileId = videoSourceFile?.id ?? null;
-      const sourceText = audioTranscription
-        ? buildXiaoyuzhouEvidenceText(snapshot.text, audioTranscription)
+      const sourceText = mediaTranscription
+        ? snapshot.mediaType === 'video'
+          ? buildMediaEvidenceText(
+              'video',
+              snapshot.text,
+              mediaTranscription.transcript,
+              null,
+            )
+          : buildXiaoyuzhouEvidenceText(snapshot.text, mediaTranscription)
         : snapshot.text;
       const updated = await pool.query(
         `UPDATE notes
@@ -220,7 +339,7 @@ export function createLinkParseHandler(
           snapshot.durationSeconds,
           sourceFileId,
           null,
-          audioTranscription
+          mediaTranscription
             ? 'succeeded'
             : videoSourceFile
               ? 'awaiting_key'
@@ -237,7 +356,7 @@ export function createLinkParseHandler(
         mediaType: snapshot.mediaType,
         imageCount: images.length,
         durationSeconds: snapshot.durationSeconds,
-        transcription: audioTranscription ? 'succeeded' : 'skipped',
+        transcription: mediaTranscription ? 'succeeded' : 'skipped',
       };
     } catch (error) {
       await pool.query(
@@ -431,13 +550,229 @@ export async function reconcileNextLinkMediaRequest(
   return `reconciled:${row.id}:${row.request_status}`;
 }
 
-type XiaoyuzhouTranscriptionRow = {
+type LinkTranscriptionRow = {
   provider_task_id: string;
   status: 'submitted' | 'succeeded' | 'failed';
   transcript: string | null;
   segments_json: unknown;
   error_code: string | null;
+  billing_job_id: string | null;
+  estimated_duration_seconds: number | null;
+  billable_duration_seconds: number | null;
 };
+
+async function transcribeManagedLinkMedia(
+  pool: Pool,
+  paraformer: ParaformerClient,
+  input: {
+    userId: string;
+    noteId: string;
+    generation: string;
+    mediaType: 'audio' | 'video';
+    mediaUrl: string;
+    estimatedDurationSeconds: number;
+    signal: AbortSignal;
+    finalAttempt: boolean;
+    priceCatalog: ManagedTranscriptionPriceCatalog;
+  },
+): Promise<ParaformerTranscript> {
+  const estimatedDurationSeconds = Math.min(
+    43_200,
+    Math.max(1, Math.ceil(input.estimatedDurationSeconds)),
+  );
+  const estimateMicros = managedTranscriptionCost(
+    input.priceCatalog,
+    estimatedDurationSeconds,
+  );
+  const idempotencyKey =
+    `managed-link-transcription:${input.noteId}:${input.generation}`;
+  let row = await loadXiaoyuzhouTranscription(pool, input);
+  if (!row) {
+    const quote = await createManagedJobQuote(
+      pool,
+      input.userId,
+      'ai.transcription',
+      'dashscope',
+      estimateMicros,
+      idempotencyKey,
+      {
+        noteId: input.noteId,
+        generation: input.generation,
+        mediaType: input.mediaType,
+        estimatedDurationSeconds,
+      },
+    );
+    await confirmAndReserveManagedJobQuote(
+      pool,
+      input.userId,
+      quote.jobId,
+    );
+    let taskId: string;
+    try {
+      taskId = await paraformer.submit(input.mediaUrl, input.signal);
+    } catch (error) {
+      await releaseJobCost(
+        pool,
+        input.userId,
+        quote.jobId,
+        'failed',
+        idempotencyKey,
+      ).catch(() => undefined);
+      throw error;
+    }
+    await pool.query(
+      `INSERT INTO link_transcriptions (
+         user_id, note_id, link_generation, provider_task_id,
+         media_type, provider, billing_job_id, estimated_duration_seconds
+       ) VALUES ($1, $2, $3, $4, $5, 'dashscope', $6, $7)
+       ON CONFLICT (user_id, note_id, link_generation) DO NOTHING`,
+      [
+        input.userId,
+        input.noteId,
+        input.generation,
+        taskId,
+        input.mediaType,
+        quote.jobId,
+        estimatedDurationSeconds,
+      ],
+    );
+    row = await loadXiaoyuzhouTranscription(pool, input);
+    if (!row) throw new Error('paraformer_task_not_saved');
+  }
+  if (row.status === 'failed') {
+    throw new Error(row.error_code ?? 'paraformer_task_failed');
+  }
+  if (row.status === 'succeeded') {
+    const transcript = row.transcript?.trim() ?? '';
+    if (!transcript) throw new Error('paraformer_transcript_missing');
+    return {
+      transcript,
+      segments: parseStoredSegments(row.segments_json),
+      billableDurationSeconds: row.billable_duration_seconds,
+    };
+  }
+  if (!row.billing_job_id || !row.estimated_duration_seconds) {
+    throw new Error('managed_transcription_billing_missing');
+  }
+  try {
+    const result = await paraformer.waitForTranscript(
+      row.provider_task_id,
+      input.signal,
+    );
+    const billableDurationSeconds = Math.min(
+      row.estimated_duration_seconds,
+      result.billableDurationSeconds ?? row.estimated_duration_seconds,
+    );
+    await settleJobCost(
+      pool,
+      input.userId,
+      row.billing_job_id,
+      managedTranscriptionCost(input.priceCatalog, billableDurationSeconds),
+      idempotencyKey,
+    );
+    const updated = await pool.query(
+      `UPDATE link_transcriptions
+       SET status = 'succeeded', transcript = $1,
+           segments_json = $2::jsonb, error_code = NULL,
+           billable_duration_seconds = $3,
+           finished_at = now(), updated_at = now()
+       WHERE user_id = $4 AND note_id = $5 AND link_generation = $6
+         AND provider_task_id = $7 AND status = 'submitted'`,
+      [
+        result.transcript,
+        JSON.stringify(result.segments),
+        billableDurationSeconds,
+        input.userId,
+        input.noteId,
+        input.generation,
+        row.provider_task_id,
+      ],
+    );
+    if (updated.rowCount !== 1) throw new Error('paraformer_task_superseded');
+    return { ...result, billableDurationSeconds };
+  } catch (error) {
+    if (
+      (error instanceof ParaformerError && error.terminal) ||
+      input.finalAttempt
+    ) {
+      await releaseJobCost(
+        pool,
+        input.userId,
+        row.billing_job_id,
+        'failed',
+        idempotencyKey,
+      ).catch(() => undefined);
+      await pool.query(
+        `UPDATE link_transcriptions
+         SET status = 'failed', error_code = $1,
+             finished_at = now(), updated_at = now()
+         WHERE user_id = $2 AND note_id = $3 AND link_generation = $4
+           AND provider_task_id = $5 AND status = 'submitted'`,
+        [
+          normalizeErrorCode(error),
+          input.userId,
+          input.noteId,
+          input.generation,
+          row.provider_task_id,
+        ],
+      );
+    }
+    throw error;
+  }
+}
+
+async function transcribeOwnerLinkMedia(
+  snapshot: Awaited<ReturnType<LinkPageFetcher['fetch']>>,
+  videoFetcher: LinkVideoFetcher,
+  audioFetcher: LinkAudioFetcher,
+  whisper: WhisperMediaClient,
+  signal: AbortSignal,
+): Promise<ParaformerTranscript | null> {
+  let segments: ExtractedAudioSegment[] | null = null;
+  if (
+    snapshot.platform === 'xiaoyuzhou' &&
+    snapshot.mediaType === 'audio' &&
+    snapshot.transientAudioUrl
+  ) {
+    segments = (await audioFetcher.fetch(snapshot.transientAudioUrl, signal))
+      .segments;
+  } else if (
+    snapshot.platform === 'xiaohongshu' &&
+    snapshot.mediaType === 'video' &&
+    snapshot.transientVideoUrl
+  ) {
+    const video = await videoFetcher.fetch(snapshot.transientVideoUrl, signal);
+    const directory = await mkdtemp(join(tmpdir(), 'remind-owner-video-'));
+    try {
+      const sourcePath = join(directory, 'source.mp4');
+      await writeFile(sourcePath, video.content, { mode: 0o600 });
+      segments = await extractVideoAudioSegments(sourcePath, signal);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+  if (!segments) return null;
+  const transcriptParts: string[] = [];
+  const transcriptSegments: ParaformerSegment[] = [];
+  for (const segment of segments) {
+    const result = await whisper.transcribeAudio(
+      { content: segment.content, contentType: 'audio/mpeg' },
+      signal,
+    );
+    transcriptParts.push(result.transcript);
+    transcriptSegments.push({
+      startSeconds: segment.startSeconds,
+      endSeconds: segment.startSeconds + 28,
+      text: result.transcript,
+      speakerId: null,
+    });
+  }
+  return {
+    transcript: transcriptParts.join('\n').slice(0, 2_000_000),
+    segments: transcriptSegments.slice(0, 20_000),
+    billableDurationSeconds: null,
+  };
+}
 
 async function transcribeXiaoyuzhouEpisode(
   pool: Pool,
@@ -454,7 +789,7 @@ async function transcribeXiaoyuzhouEpisode(
   if (!row) {
     const taskId = await paraformer.submit(input.audioUrl, input.signal);
     await pool.query(
-      `INSERT INTO xiaoyuzhou_transcriptions (
+      `INSERT INTO link_transcriptions (
          user_id, note_id, link_generation, provider_task_id
        ) VALUES ($1, $2, $3, $4)
        ON CONFLICT (user_id, note_id, link_generation) DO NOTHING`,
@@ -472,6 +807,7 @@ async function transcribeXiaoyuzhouEpisode(
     return {
       transcript,
       segments: parseStoredSegments(row.segments_json),
+      billableDurationSeconds: row.billable_duration_seconds,
     };
   }
   try {
@@ -480,7 +816,7 @@ async function transcribeXiaoyuzhouEpisode(
       input.signal,
     );
     const updated = await pool.query(
-      `UPDATE xiaoyuzhou_transcriptions
+      `UPDATE link_transcriptions
        SET status = 'succeeded', transcript = $1,
            segments_json = $2::jsonb, error_code = NULL,
            finished_at = now(), updated_at = now()
@@ -500,7 +836,7 @@ async function transcribeXiaoyuzhouEpisode(
   } catch (error) {
     if (error instanceof ParaformerError && error.terminal) {
       await pool.query(
-        `UPDATE xiaoyuzhou_transcriptions
+        `UPDATE link_transcriptions
          SET status = 'failed', error_code = $1,
              finished_at = now(), updated_at = now()
          WHERE user_id = $2 AND note_id = $3 AND link_generation = $4
@@ -521,10 +857,12 @@ async function transcribeXiaoyuzhouEpisode(
 async function loadXiaoyuzhouTranscription(
   pool: Pool,
   input: { userId: string; noteId: string; generation: string },
-): Promise<XiaoyuzhouTranscriptionRow | null> {
-  const result = await pool.query<XiaoyuzhouTranscriptionRow>(
-    `SELECT provider_task_id, status, transcript, segments_json, error_code
-     FROM xiaoyuzhou_transcriptions
+): Promise<LinkTranscriptionRow | null> {
+  const result = await pool.query<LinkTranscriptionRow>(
+    `SELECT provider_task_id, status, transcript, segments_json, error_code,
+            billing_job_id, estimated_duration_seconds,
+            billable_duration_seconds
+     FROM link_transcriptions
      WHERE user_id = $1 AND note_id = $2 AND link_generation = $3`,
     [input.userId, input.noteId, input.generation],
   );
@@ -632,13 +970,14 @@ async function loadLinkNote(
   jobId: string,
 ): Promise<LinkNoteRow> {
   const result = await pool.query<LinkNoteRow>(
-    `SELECT id, user_id, source_url
-     FROM notes
-     WHERE user_id = $1 AND id = $2
-       AND deleted_at IS NULL
-       AND source_url IS NOT NULL
-       AND link_status = 'processing'
-       AND link_generation = $3 AND link_job_id = $4`,
+    `SELECT note.id, note.user_id, note.source_url, owner.ai_mode
+     FROM notes AS note
+     JOIN users AS owner ON owner.id = note.user_id
+     WHERE note.user_id = $1 AND note.id = $2
+       AND note.deleted_at IS NULL
+       AND note.source_url IS NOT NULL
+       AND note.link_status = 'processing'
+       AND note.link_generation = $3 AND note.link_job_id = $4`,
     [userId, noteId, generation, jobId],
   );
   const row = result.rows[0];

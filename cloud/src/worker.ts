@@ -9,6 +9,7 @@ import {
   consumerManagedAiEnabled,
   dashscopeConfig,
   mediaProviderMode,
+  serverWhisperUserIds,
   whisperServiceUrl,
   workerPollMs,
   xiaoyuzhouTranscriptionEnabled,
@@ -36,6 +37,7 @@ import {
 } from './media-processing.js';
 import {
   managedMediaPriceCatalogFromEnvironment,
+  managedTranscriptionPriceCatalogFromEnvironment,
   managedTextPriceCatalogFromEnvironment,
 } from './media-pricing.js';
 import {
@@ -61,6 +63,11 @@ const credentialCipher = credentialCipherFromEnvironment();
 const objectStore = objectStoreFromEnvironment();
 const mediaMode = mediaProviderMode();
 const whisperUrl = whisperServiceUrl();
+const whisperUserIds = serverWhisperUserIds();
+const whisperClient = whisperUrl ? new WhisperMediaClient(whisperUrl) : null;
+if (whisperUserIds.size > 0 && !whisperClient) {
+  throw new Error('Server Whisper allowlist requires REMIND_WHISPER_URL');
+}
 const dashscope = dashscopeConfig();
 const paraformer = dashscope
   ? new ParaformerClient(dashscope.apiKey, dashscope.apiHost)
@@ -80,6 +87,10 @@ const managedTextCredentials = managedConsumerEnabled
 const managedTextPriceCatalog = managedConsumerEnabled
   ? managedTextPriceCatalogFromEnvironment()
   : null;
+const managedTranscriptionPriceCatalog =
+  managedConsumerEnabled && paraformer
+    ? managedTranscriptionPriceCatalogFromEnvironment()
+    : null;
 if (managedConsumerEnabled && !managedTextCredentials?.deepseek) {
   throw new Error(
     'Managed consumer AI requires text pricing and a platform DeepSeek credential',
@@ -96,7 +107,10 @@ const mediaHandlers: JobHandlers =
             ? new WhisperFirstByokMediaProcessingProvider(
                 database,
                 credentialCipher,
-                new WhisperMediaClient(whisperUrl),
+                whisperClient!,
+                undefined,
+                undefined,
+                whisperUserIds,
               )
             : new ByokMediaProcessingProvider(database, credentialCipher),
         )
@@ -144,6 +158,13 @@ const handlers: JobHandlers = new Map([
       undefined,
       undefined,
       xiaoyuzhouAudioEnabled ? paraformer : null,
+      xiaoyuzhouAudioEnabled
+        ? {
+            priceCatalog: managedTranscriptionPriceCatalog,
+            serverWhisperUserIds: whisperUserIds,
+            whisper: whisperClient,
+          }
+        : null,
     ),
   ],
   ...mediaHandlers,

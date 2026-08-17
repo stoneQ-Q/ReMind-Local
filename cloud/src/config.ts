@@ -66,6 +66,26 @@ export function whisperServiceUrl(): string | null {
   return value || null;
 }
 
+export function serverWhisperUserIds(): ReadonlySet<string> {
+  const value = process.env.REMIND_SERVER_WHISPER_USER_IDS?.trim();
+  if (!value) return new Set();
+  const ids: string[] = value
+    .split(',')
+    .map((item: string) => item.trim().toLowerCase())
+    .filter(Boolean);
+  if (
+    ids.some(
+      (id: string) =>
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+          id,
+        ),
+    )
+  ) {
+    throw new Error('REMIND_SERVER_WHISPER_USER_IDS must contain UUIDs');
+  }
+  return new Set(ids);
+}
+
 export function xiaoyuzhouTranscriptionEnabled(): boolean {
   const value =
     process.env.REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED?.trim() || 'false';

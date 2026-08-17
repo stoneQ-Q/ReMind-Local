@@ -145,6 +145,32 @@ export function CloudBillingCenter({
                 </View>
               </View>
 
+              {consumer ? (
+                <View style={styles.usageGuideCard}>
+                  <Text style={styles.usageGuideTitle}>大概会用多少</Text>
+                  <View style={styles.usageGuideRow}>
+                    <View style={styles.usageGuideCopy}>
+                      <Text style={styles.usageGuideLabel}>5 分钟视频</Text>
+                      <Text style={styles.usageGuideDetail}>
+                        只转写约 2.4 忆粒；自动整理后通常共 3～5 忆粒
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.usageGuideDivider} />
+                  <View style={styles.usageGuideRow}>
+                    <View style={styles.usageGuideCopy}>
+                      <Text style={styles.usageGuideLabel}>1 小时小宇宙音频</Text>
+                      <Text style={styles.usageGuideDetail}>
+                        只转写约 28.8 忆粒；自动整理后通常共 30～35 忆粒
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.usageGuideFootnote}>
+                    实际按识别出的有效语音时长结算。开始前会先留出预计用量，未使用的部分自动归还。
+                  </Text>
+                </View>
+              ) : null}
+
               <View style={styles.limitCard}>
                 <Text style={styles.limitTitle}>
                   {consumer ? '使用保护' : '消费安全上限'}
@@ -505,6 +531,45 @@ const styles = StyleSheet.create({
     borderColor: colors.line,
     borderRadius: 17,
     backgroundColor: colors.surface,
+  },
+  usageGuideCard: {
+    marginTop: 12,
+    padding: 16,
+    borderRadius: 17,
+    backgroundColor: colors.mist,
+  },
+  usageGuideTitle: {
+    color: colors.mistText,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  usageGuideRow: {
+    marginTop: 12,
+  },
+  usageGuideCopy: {
+    flex: 1,
+  },
+  usageGuideLabel: {
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  usageGuideDetail: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 10,
+    lineHeight: 16,
+  },
+  usageGuideDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginTop: 12,
+    backgroundColor: colors.line,
+  },
+  usageGuideFootnote: {
+    marginTop: 13,
+    color: colors.mistText,
+    fontSize: 10,
+    lineHeight: 16,
   },
   limitTitle: {
     color: colors.ink,

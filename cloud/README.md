@@ -67,7 +67,8 @@ API 提供 `GET /api/v1/jobs/:jobId` 查询当前用户自己的任务状态，�
 - 最多允许 4 次重定向、单次请求 15 秒、任务总计 45 秒、压缩前后页面均不超过 2 MB，正文最多保存 24,000 字；
 - 普通网页保存标题、说明、站点和正文；小红书图文最多保存 12 个经过域名校验的 HTTPS 图片地址；
 - 小红书视频目前只保存“视频”类型和可用时长，不把页面中的临时视频下载地址写入笔记、任务输入或任务结果。
-- 小宇宙只接受公开免费单集并提取节目元信息和时长；转写默认暂停，此时只保留单集链接和节目资料，不下载音频。显式设置 `REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED=true` 并配置北京地域百炼 API Key 与 API Host 后，Worker 才会把经过校验的 `xyzcdn.net` HTTPS 音频地址直接提交给 `paraformer-v2`；CDN 地址和原始音频都不会进入数据库或对象存储。
+- 小宇宙只接受公开免费单集并提取节目元信息和时长；转写默认暂停，此时只保留单集链接和节目资料，不下载音频。显式设置 `REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED=true` 并配置北京地域百炼 API Key、API Host 与 `REMIND_PRICE_DASHSCOPE_ASR_PER_SECOND_MICROS` 后，托管账号会把经过校验的小宇宙音频或小红书视频 CDN 地址直接提交给 `paraformer-v2`，先按媒体时长预留额度，再按百炼返回的有效语音时长结算。CDN 地址和原始媒体都不会进入数据库或对象存储。
+- `REMIND_SERVER_WHISPER_USER_IDS` 是逗号分隔的 UUID 私有白名单。只有白名单账号可以使用云服务器 Whisper；未列入的托管账号默认走百炼，未列入的 BYOK 账号继续使用自己的语音 API。不要把生产账号 UUID 硬编码进仓库。
 
 小红书或小宇宙页面遇到登录、安全验证、付费限制或页面结构变化时会保留原始笔记并将处理标记为失败。
 
