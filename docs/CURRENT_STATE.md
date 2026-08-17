@@ -8,7 +8,7 @@
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
 - Current authoritative feature checkpoint before this documentation update:
-  `f00ba85`
+  `22f1877`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -35,7 +35,7 @@ two runtime modes inside the personal test app, and one development environment.
    - Current device: Redmi Note 13 Pro, Android 16
    - This app can expose both cloud and local runtime modes when both service
      addresses are included in its build configuration.
-- Development source after `f00ba85` no longer exposes that mode distinction
+- Development source after `22f1877` no longer exposes that mode distinction
   in the consumer UI. The hosted service is an implementation detail for
   ordinary users; only `ReMind Local` keeps self-hosting controls.
    - The `preview` and `preview-local` EAS profile names refer to internal build
@@ -95,6 +95,25 @@ personal test app, and 1 development environment.**
   build and explicit installation verification.
 
 ## Pending development changes
+
+- Consumer header checkpoint `22f1877` replaces the ambiguous one-character
+  `设` mark with a wider button labelled `设置`. TypeScript passed, all 326 tests
+  in 84 files passed, and an Android Expo export completed at
+  `/tmp/remind-settings-label-export`; no signed APK was built or installed.
+- At the user's explicit request on 2026-08-17, the single production cloud
+  WeChat connection was revoked so the new in-App QR pairing flow can be tested
+  from its first screen. Before the mutation, a readable custom-format database
+  backup was created at
+  `/opt/remind/shared/backups/remind-pre-wechat-repair-test-20260817T090500Z.dump`
+  (12,311,564 bytes, mode 0600, `ubuntu:ubuntu`). The transaction cancelled the
+  current poll, marked the connection revoked, cleared its provider hash and
+  encrypted credentials, advanced its poll generation, and removed its poll job.
+- Post-change verification found zero active WeChat connections, while all 18
+  existing WeChat messages and the corresponding 18 cloud notes remained. Public
+  readiness stayed healthy on cloud release `54841e8`. The local gateway was not
+  started. A fresh real-phone QR scan and post-connection capture are now pending;
+  do not describe the self-service re-pairing flow as end-to-end verified until
+  the user completes them.
 
 - Consumer clarity checkpoint `f00ba85` renames `智能整理` settings to
   `智能功能` and defines three separate concepts: organizing one record into a
