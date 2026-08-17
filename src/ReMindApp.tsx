@@ -1128,12 +1128,13 @@ export function ReMindApp() {
             }}
             style={({ pressed }) => [
               styles.cloudBadge,
+              consumer && styles.cloudBadgeConsumer,
               !consumer && serviceMode.active === 'cloud' && styles.cloudBadgeConnected,
               pressed && styles.pressed,
             ]}
           >
             <Text maxFontSizeMultiplier={1} style={styles.cloudBadgeMark}>
-              {consumer ? '设' : serviceMode.active === 'cloud' ? '云' : '机'}
+              {consumer ? '设置' : serviceMode.active === 'cloud' ? '云' : '机'}
             </Text>
             {!consumer ? (
               <View
@@ -6071,6 +6072,9 @@ const styles = StyleSheet.create({
   cloudBadgeConnected: {
     borderColor: colors.accent,
     backgroundColor: colors.accentSoft,
+  },
+  cloudBadgeConsumer: {
+    width: 58,
   },
   cloudBadgeMark: {
     color: colors.accent,
