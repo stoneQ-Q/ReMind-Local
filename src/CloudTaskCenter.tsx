@@ -20,7 +20,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { formatCnyMicros } from './cloud-billing';
+import { isConsumerReMindApp } from './app-variant';
+import { formatCnyMicros, formatLingguangMicros } from './cloud-billing';
 import {
   cancelCloudMediaTask,
   confirmCloudMediaTask,
@@ -71,6 +72,8 @@ function CloudTaskCenterScreen({
   onClose: () => void;
   visible: boolean;
 }) {
+  const consumer = isConsumerReMindApp();
+  const formatUsage = consumer ? formatLingguangMicros : formatCnyMicros;
   const insets = useSafeAreaInsets();
   const [tasks, setTasks] = useState<CloudMediaTask[]>([]);
   const [loading, setLoading] = useState(false);
@@ -116,14 +119,18 @@ function CloudTaskCenterScreen({
     (task: CloudMediaTask) => {
       const quote = task.quote;
       if (!quote) return;
-      const amount = formatCnyMicros(quote.estimatedCostMicros);
+      const amount = formatUsage(quote.estimatedCostMicros);
       Alert.alert(
-        quote.confirmationRequired ? '确认这笔预计费用？' : '开始这个任务？',
-        `服务端预计最多预占 ${amount}。完成后按实际用量结算，未使用部分会退回可用余额。`,
+        quote.confirmationRequired
+          ? consumer ? '确认本次预计灵光？' : '确认这笔预计费用？'
+          : '开始这个任务？',
+        consumer
+          ? `本次最多留出 ${amount}。完成后只记录实际使用的灵光，未使用的会自动归还。`
+          : `服务端预计最多预占 ${amount}。完成后按实际用量结算，未使用部分会退回可用余额。`,
         [
           { text: '暂不开始', style: 'cancel' },
           {
-            text: `确认并预占 ${amount}`,
+            text: `${consumer ? '确认并留出' : '确认并预占'} ${amount}`,
             onPress: async () => {
               setActingId(task.request.id);
               setError(null);
@@ -140,14 +147,16 @@ function CloudTaskCenterScreen({
         ],
       );
     },
-    [load],
+    [consumer, formatUsage, load],
   );
 
   const cancelTask = useCallback(
     (task: CloudMediaTask) => {
       Alert.alert(
         '取消这个任务？',
-        '未使用的预占金额会释放；已经实际产生的第三方费用仍会按实际用量结算。',
+        consumer
+          ? '未使用的灵光会自动归还；任务已经使用的灵光仍会保留在记录中。'
+          : '未使用的预占金额会释放；已经实际产生的第三方费用仍会按实际用量结算。',
         [
           { text: '继续任务', style: 'cancel' },
           {
@@ -169,7 +178,7 @@ function CloudTaskCenterScreen({
         ],
       );
     },
-    [load],
+    [consumer, load],
   );
 
   const content = (
@@ -209,9 +218,13 @@ function CloudTaskCenterScreen({
           <View style={styles.heroMark}>
             <Text style={styles.heroMarkText}>任</Text>
           </View>
-          <Text style={styles.title}>费用确认后，任务才会开始</Text>
+          <Text style={styles.title}>
+            {consumer ? '确认灵光后，任务才会开始' : '费用确认后，任务才会开始'}
+          </Text>
           <Text style={styles.copy}>
-            图片、语音和视频会在云端排队处理。高费用任务不会自动确认；离开这个页面后，进行中的任务仍会继续。
+            {consumer
+              ? '图片、语音和视频会在云端排队处理。需要较多灵光的任务不会自动开始；离开页面后，进行中的任务仍会继续。'
+              : '图片、语音和视频会在云端排队处理。高费用任务不会自动确认；离开这个页面后，进行中的任务仍会继续。'}
           </Text>
 
           {loading ? (
@@ -255,7 +268,9 @@ function CloudTaskCenterScreen({
           ) : null}
 
           <Text style={styles.footnote}>
-            页面只显示当前账号最近 50 个任务，每 4 秒刷新进行中状态。价格、余额预占和最终结算都由服务端决定。
+            {consumer
+              ? '页面只显示当前账号最近 50 个任务，每 4 秒刷新进行中状态。灵光的留出、使用和归还都由服务端记录。'
+              : '页面只显示当前账号最近 50 个任务，每 4 秒刷新进行中状态。价格、余额预占和最终结算都由服务端决定。'}
           </Text>
         </ScrollView>
     </View>
@@ -357,6 +372,8 @@ function TaskCard({
   onConfirm: () => void;
   task: CloudMediaTask;
 }) {
+  const consumer = isConsumerReMindApp();
+  const formatUsage = consumer ? formatLingguangMicros : formatCnyMicros;
   const presentation = taskPresentation(task.request.status);
   const statusLabel =
     task.request.status === 'processing' &&
@@ -418,9 +435,11 @@ function TaskCard({
 
       <View style={styles.costRow}>
         <Text style={styles.costLabel}>
-          {terminal ? '实际费用' : '预计费用'}
+          {consumer
+            ? terminal ? '实际灵光' : '预计灵光'
+            : terminal ? '实际费用' : '预计费用'}
         </Text>
-        <Text style={styles.costValue}>{formatCnyMicros(displayedCost)}</Text>
+        <Text style={styles.costValue}>{formatUsage(displayedCost)}</Text>
       </View>
 
       {task.request.status === 'awaiting_confirmation' && quote ? (
@@ -429,13 +448,17 @@ function TaskCard({
             {expired
               ? '报价已过期'
               : quote.confirmationRequired
-                ? '等待你的费用确认'
+                ? consumer ? '等待你确认灵光' : '等待你的费用确认'
                 : '等待开始'}
           </Text>
           <Text style={styles.quoteCopy}>
             {expired
-              ? '这笔报价不会再扣款。请取消后重新提交，获取新的服务端报价。'
-              : `报价有效至 ${formatTaskTime(quote.expiresAt)}；确认时会先预占 ${formatCnyMicros(quote.estimatedCostMicros)}。`}
+              ? consumer
+                ? '这次预估已经过期，不会使用灵光。请取消后重新提交。'
+                : '这笔报价不会再扣款。请取消后重新提交，获取新的服务端报价。'
+              : consumer
+                ? `预估有效至 ${formatTaskTime(quote.expiresAt)}；确认时会先留出 ${formatUsage(quote.estimatedCostMicros)}。`
+                : `报价有效至 ${formatTaskTime(quote.expiresAt)}；确认时会先预占 ${formatUsage(quote.estimatedCostMicros)}。`}
           </Text>
           {!expired && quote.status === 'queued' ? (
             <Pressable
@@ -451,7 +474,7 @@ function TaskCard({
               ) : (
                 <Text style={styles.confirmText}>
                   {canConfirm || quote.confirmationRequired
-                    ? `确认并预占 ${formatCnyMicros(quote.estimatedCostMicros)}`
+                    ? `${consumer ? '确认并留出' : '确认并预占'} ${formatUsage(quote.estimatedCostMicros)}`
                     : canStartWithoutSecondConfirmation
                       ? '开始任务'
                       : '确认并开始'}
@@ -571,7 +594,11 @@ function taskErrorMessage(reason: unknown): string {
         ? reason.message
         : String(reason);
   if (code === 'quote_expired') return '报价已过期，请取消任务后重新提交。';
-  if (code === 'insufficient_balance') return '可用余额不足，任务没有开始。';
+  if (code === 'insufficient_balance') {
+    return isConsumerReMindApp()
+      ? '可用灵光不足，任务没有开始。'
+      : '可用余额不足，任务没有开始。';
+  }
   if (code === 'daily_limit_exceeded') return '已达到今日消费上限，任务没有开始。';
   if (code === 'monthly_limit_exceeded') return '已达到本月消费上限，任务没有开始。';
   if (code === 'provider_paused') return '第三方服务已自动暂停，任务没有开始。';

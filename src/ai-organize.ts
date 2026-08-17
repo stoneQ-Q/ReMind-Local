@@ -69,7 +69,7 @@ async function organizationErrorMessage(
     case 'managed_service_unavailable':
       return 'ReMind 智能服务正在维护，原始内容已经保留，请稍后重试。';
     case 'insufficient_balance':
-      return '本次内测额度不足，原始内容已经保留。你仍可继续记录和查看已有内容。';
+      return '本次所需灵光不足，原始内容已经保留。你仍可继续记录和查看已有内容。';
     case 'ai_timeout':
       return '笔记整理等待超时，已有内容已经保留，请稍后重试。';
     case 'ai_invalid_response':

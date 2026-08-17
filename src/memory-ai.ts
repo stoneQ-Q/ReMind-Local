@@ -197,7 +197,7 @@ async function memoryAiError(response: Response): Promise<string> {
     return 'ReMind 智能服务正在维护，请稍后重试。';
   }
   if (payload?.error === 'insufficient_balance') {
-    return '本次内测额度不足，已有记录不会受到影响。';
+    return '本次所需灵光不足，已有记录不会受到影响。';
   }
   if (payload?.error === 'ai_auth_failed') return 'API Key 已失效，请更新后重试。';
   if (payload?.error === 'ai_rate_limited') return 'AI 服务现在比较忙，请稍后再试。';

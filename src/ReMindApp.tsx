@@ -4969,7 +4969,7 @@ function CloudAccountSettings({
                 </View>
                 <View style={styles.cloudAiSettingsCopy}>
                   <Text style={styles.cloudAiSettingsTitle}>
-                    {consumer ? '智能服务与用量' : 'AI 与 API Key'}
+                    {consumer ? '智能服务与灵光' : 'AI 与 API Key'}
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     {consumer
@@ -5004,11 +5004,11 @@ function CloudAccountSettings({
                 </View>
                 <View style={styles.cloudAiSettingsCopy}>
                   <Text style={styles.cloudAiSettingsTitle}>
-                    {consumer ? '额度与用量' : '余额与费用'}
+                    {consumer ? '灵光与用量' : '余额与费用'}
                   </Text>
                   <Text style={styles.cloudAiSettingsDescription}>
                     {consumer
-                      ? '查看内测赠送额度、任务占用和使用记录'
+                      ? '查看获赠灵光、任务留出和使用记录'
                       : '查看可用余额、任务预占和每一笔费用记录'}
                   </Text>
                 </View>
