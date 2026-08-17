@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "operator:bootstrap-managed-consumer": "node dist/bootstrap-managed-consumer.js",
     "migrate": "node dist/migrate.js",
     "rotate:credentials": "node dist/rotate-credentials.js",
     "smoke:cos": "node dist/cos-smoke.js",

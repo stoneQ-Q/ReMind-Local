@@ -118,6 +118,11 @@ personal test app, and 1 development environment.**
   One `灵光` is a presentation unit over the existing integer server ledger;
   consumer screens show grants, holds, usage, returns, and safety limits only in
   `灵光`. ReMind Local continues to show provider costs directly for self-hosters.
+- The user authorized the single-account private test to reuse the account's
+  existing encrypted DeepSeek credential as the temporary platform credential.
+  The audited bootstrap requires exactly one active account and one credential,
+  never prints the secret, writes the server environment atomically with private
+  permissions, and grants 200 `灵光` through an idempotent gift-ledger entry.
 - A read-only production audit on 2026-08-17 found that daily local backups and
   encrypted off-site uploads had continued through 2026-08-16. The health check
   nevertheless reported a stale backup because its filename sort selected the
@@ -125,7 +130,7 @@ personal test app, and 1 development environment.**
   backups. The development source now restricts that check to daily backup
   filenames. This monitoring fix is not active until the next cloud deployment.
 - Verification on 2026-08-17: App and cloud TypeScript passed; all 158 App
-  source tests in 40 files and all 194 cloud tests in 48 files passed (the root
+  source tests in 40 files and all 198 cloud tests in 49 files passed (the root
   aggregate suite also passed 307 tests in 79 files); the cloud production
   build passed; Expo SDK 54 public config preserved `ReMind`
   (`app.remind.notes`) and `ReMind Local` (`app.remind.notes.local`) as separate
