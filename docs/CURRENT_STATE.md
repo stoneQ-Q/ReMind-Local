@@ -7,8 +7,7 @@
 
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
-- Current authoritative feature checkpoint before this documentation update:
-  `aaa2f44`
+- Current authoritative feature checkpoint: `ab5e273`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -95,6 +94,53 @@ personal test app, and 1 development environment.**
   build and explicit installation verification.
 
 ## Pending development changes
+
+- The authoritative `main` working tree contains the first consumer-experience
+  redesign batch requested before the next signed APK. The home screen now puts
+  the three primary actions in the first viewport: capture, `问 ReMind`, and the
+  current day's organization; the `问 ReMind` and `今天` cards now occupy equal
+  width inside one shared action surface. Both sides use the same title, arrow,
+  and supporting-text hierarchy; today's count is no longer displayed as an
+  oversized standalone number. It also surfaces active and failed processing as
+  actionable status banners that open the matching library filter; original
+  content preservation and retry guidance are stated next to failures. The
+  `问 ReMind` home action is intentionally text-only, without a decorative star
+  mark.
+- The same batch defines a single user-facing processing sequence (`已经收到` →
+  `正在获取内容` → `正在转写` → `正在整理` → completion), adds tested managed-media
+  `忆粒` estimates for known durations, and keeps provider currency visible only
+  on the self-hosted path. Consumer intelligent settings now open directly on
+  the controls for the managed service and link automation instead of showing a
+  decorative hero and a long conceptual explanation.
+- The visual system was simplified across the App: Android's generic serif font
+  was removed, the palette received clearer text contrast, the home capture and
+  action hierarchy use fewer hard borders, recent-note cards use quieter depth,
+  and the bottom navigation is now a contained floating surface. This is a
+  coherent hierarchy change, not only a color refresh.
+- The combined P1/P2 source batch adds user-controlled related-memory frequency
+  (`关闭` / `偶尔` / `多一些`) and presents every proactive recall as an explicit
+  recent-record versus past-record pair. It also adds evidence-safe organization
+  density presets (`简洁` / `适中` / `深入`) for daily and link organization;
+  these preferences are included in the portable JSON backup without exporting
+  device-specific Vault paths or service settings.
+- Obsidian export now marks only the title and core note body as an editable
+  ReMind region. A manual `导入 Obsidian 修改` action can bring those changes
+  back. Export refuses to overwrite an externally changed file, and import
+  refuses to choose a winner when the App and Vault both changed after the last
+  export. Older Markdown without the verified edit markers is left untouched.
+  Search/source filtering, cited multi-record Q&A, daily cross-record synthesis,
+  theme contributions/conflicts, reclassification, link snapshots, media
+  timestamps, and JSON migration were already present and remain part of this
+  combined validation batch.
+- Verification for this uncommitted batch on 2026-08-17: App TypeScript passed,
+  all 349 tests in 89 files passed; cloud TypeScript and all 223 tests in 54
+  files passed; and an Expo SDK 54 Android export completed at
+  `/tmp/remind-p1-p2-export.nWAA0I`. The follow-up unified home-action layout
+  also passed App TypeScript, all 349 tests, and an Android export at
+  `/tmp/remind-home-actions-export.igmFWI`. No signed APK was generated or installed;
+  build 31 remains the phone-verified delivery. The organization-style cloud
+  change was subsequently deployed as `ab5e273`, as recorded below. The local
+  gateway was not started.
 
 - Managed link transcription checkpoint `aaa2f44` keeps the existing Alibaba
   Cloud Bailian `paraformer-v2` integration and makes it the default audio/video
@@ -429,6 +475,20 @@ personal test app, and 1 development environment.**
   task was created solely for deployment testing; the first real ordinary-user
   transcription still needs end-to-end ledger observation. The Mac local gateway
   remained unloaded.
+- Cloud release `ab5e273` was deployed on 2026-08-18 from a dedicated committed
+  cloud-only change adding `简洁` / `适中` / `深入` organization preferences to
+  daily and link organization while preserving citation validation. Before the
+  switch, a custom-format PostgreSQL backup was created at
+  `remind-pre-ab5e273-20260818T091237Z.dump` (12,998,131 bytes, mode 0600) and
+  the private environment was copied to
+  `remind.env.pre-ab5e273-20260818T091237Z` (mode 0600). Cloud TypeScript, all
+  223 tests in 54 files, and the production build passed before deployment.
+  Public readiness and both API/Worker image metadata reported `ab5e273`; the
+  live artifact contains the organization preference handling, all long-running
+  containers are healthy, the server health check passed, DashScope remained
+  active, billing reservations remained zero, one cloud WeChat connection and
+  all 19 existing messages remained, and polling resumed within 15 seconds.
+  The Mac local gateway remained unloaded. No APK was generated or installed.
 
 ## WeChat polling safety
 
