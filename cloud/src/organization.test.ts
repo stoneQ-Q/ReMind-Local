@@ -81,6 +81,14 @@ describe('cloud organization', () => {
       expect(new Headers(init.headers).get('Authorization')).toBe(
         'Bearer sk-test-private',
       );
+      const providerRequest = JSON.parse(String(init.body)) as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      const organizationRequest = JSON.parse(
+        providerRequest.messages.find((message) => message.role === 'user')
+          ?.content ?? '{}',
+      ) as { organizationPreference?: string };
+      expect(organizationRequest.organizationPreference).toContain('深入');
       return new Response(
         JSON.stringify({
           choices: [
@@ -112,6 +120,7 @@ describe('cloud organization', () => {
       cipher as never,
       'user-1',
       {
+        organizationStyle: 'deep',
         sources: [
           {
             id: 'note-1',
