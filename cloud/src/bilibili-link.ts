@@ -70,21 +70,16 @@ export async function fetchBilibiliSnapshot(
   const bvid = extractBilibiliVideoId(finalUrl.toString(), html);
   if (!bvid) return null;
   const referer = `https://www.bilibili.com/video/${encodeURIComponent(bvid)}`;
-  const view = await requestApi(
-    `/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`,
+  const metadata = await fetchBilibiliMetadata(
+    bvid,
     referer,
     signal,
     fetcher,
   );
-  const viewData = apiData(view, 'link_bilibili_view');
-  const cid = positiveInteger(viewData.cid);
-  const durationSeconds = positiveInteger(viewData.duration);
-  const title = stringValue(viewData.title).trim().slice(0, 300);
+  const { cid, durationSeconds, title, description, ownerName } = metadata;
   if (!cid || !durationSeconds || durationSeconds > MAX_DURATION_SECONDS || !title) {
     throw new Error('link_bilibili_metadata_invalid');
   }
-  const description = stringValue(viewData.desc).trim();
-  const ownerName = stringValue(recordValue(viewData.owner).name).trim();
   const page = await requestApi(
     `/x/player/v2?bvid=${encodeURIComponent(bvid)}&cid=${cid}`,
     referer,
@@ -126,6 +121,60 @@ export async function fetchBilibiliSnapshot(
     durationSeconds,
     transientAudioUrl,
     embeddedTranscript: embeddedTranscript ?? undefined,
+  };
+}
+
+async function fetchBilibiliMetadata(
+  bvid: string,
+  referer: string,
+  signal: AbortSignal,
+  fetcher: FetchLike,
+): Promise<{
+  cid: number | null;
+  durationSeconds: number | null;
+  title: string;
+  description: string;
+  ownerName: string;
+}> {
+  try {
+    const view = await requestApi(
+      `/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`,
+      referer,
+      signal,
+      fetcher,
+    );
+    const data = apiData(view, 'link_bilibili_view');
+    return {
+      cid: positiveInteger(data.cid),
+      durationSeconds: positiveInteger(data.duration),
+      title: stringValue(data.title).trim().slice(0, 300),
+      description: stringValue(data.desc).trim(),
+      ownerName: stringValue(recordValue(data.owner).name).trim(),
+    };
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'link_bilibili_api_http_412') {
+      throw error;
+    }
+  }
+
+  // Some datacenter IPs are blocked by the richer view endpoint while the
+  // public player endpoints remain available. Pagelist supplies the CID,
+  // duration, and part title needed to continue with subtitles or audio.
+  const pagesPayload = await requestApi(
+    `/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`,
+    referer,
+    signal,
+    fetcher,
+  );
+  const pages = apiArray(pagesPayload, 'link_bilibili_pagelist').map(recordValue);
+  const firstPage = pages[0];
+  if (!firstPage) throw new Error('link_bilibili_metadata_invalid');
+  return {
+    cid: positiveInteger(firstPage.cid),
+    durationSeconds: positiveInteger(firstPage.duration),
+    title: stringValue(firstPage.part).trim().slice(0, 300),
+    description: '',
+    ownerName: '',
   };
 }
 
@@ -364,6 +413,13 @@ function apiData(payload: unknown, prefix: string): Record<string, unknown> {
   const code = numberValue(root.code);
   if (code !== 0) throw new Error(`${prefix}_${Number.isFinite(code) ? code : 'invalid'}`);
   return recordValue(root.data);
+}
+
+function apiArray(payload: unknown, prefix: string): unknown[] {
+  const root = recordValue(payload);
+  const code = numberValue(root.code);
+  if (code !== 0) throw new Error(`${prefix}_${Number.isFinite(code) ? code : 'invalid'}`);
+  return Array.isArray(root.data) ? root.data : [];
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

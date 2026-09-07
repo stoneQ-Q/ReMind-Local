@@ -132,6 +132,47 @@ describe('Bilibili link ingestion', () => {
     );
   });
 
+  it('uses the player pagelist when the richer view endpoint is blocked', async () => {
+    const trustedAudio =
+      'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s?deadline=1';
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes('/x/web-interface/view')) {
+        return new Response('blocked', { status: 412 });
+      }
+      if (url.includes('/x/player/pagelist')) {
+        return json({
+          code: 0,
+          data: [{ cid: 789, duration: 2088, part: '云端回退标题' }],
+        });
+      }
+      if (url.includes('/x/player/v2')) {
+        return json({ code: 0, data: { subtitle: { subtitles: [] } } });
+      }
+      if (url.includes('/x/player/playurl')) {
+        return json({
+          code: 0,
+          data: { dash: { audio: [{ bandwidth: 80_000, baseUrl: trustedAudio }] } },
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const snapshot = await fetchBilibiliSnapshot(
+      new URL(`https://www.bilibili.com/video/${bvid}`),
+      '',
+      new AbortController().signal,
+      fetcher,
+    );
+
+    expect(snapshot).toMatchObject({
+      title: '云端回退标题',
+      durationSeconds: 2088,
+      transientAudioUrl:
+        'https://upos-sz-mirrorali.bilivideo.com/upgcxcode/audio.m4s?deadline=1',
+    });
+  });
+
   it('rejects media URLs outside Bilibili-owned CDNs', async () => {
     expect(() =>
       selectBilibiliAudioUrl({
