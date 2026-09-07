@@ -67,6 +67,8 @@ export interface LinkVideoFetcher {
 
 export type LinkAudioDownload = {
   segments: ExtractedAudioSegment[];
+  sourceContent?: Buffer;
+  sourceContentType?: 'audio/mp4';
 };
 
 export interface LinkAudioFetcher {

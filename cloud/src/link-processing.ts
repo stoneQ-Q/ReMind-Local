@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +26,10 @@ import {
   createTemporaryLinkAudioProcessingRequest,
 } from './media-processing.js';
 import { saveObjectFile } from './object-files.js';
-import type { ObjectStore } from './object-store.js';
+import type {
+  ObjectStore,
+  TemporaryReadUrlObjectStore,
+} from './object-store.js';
 import {
   ParaformerError,
   type ParaformerClient,
@@ -237,6 +241,14 @@ export function createLinkParseHandler(
         serverWhisperUserIds:
           transcriptionOptions?.serverWhisperUserIds ?? new Set(),
       });
+      const usePrivateBilibiliParaformer = Boolean(
+        snapshot.platform === 'bilibili' &&
+          snapshot.mediaType === 'video' &&
+          snapshot.transientAudioUrl &&
+          paraformer &&
+          supportsTemporaryReadUrl(store) &&
+          transcriptionOptions?.serverWhisperUserIds.has(job.userId),
+      );
       if (transcriptionProvider === 'unavailable') {
         throw new Error('managed_transcription_unavailable');
       }
@@ -259,7 +271,9 @@ export function createLinkParseHandler(
             })
           : null;
       const ownerTranscription =
-        transcriptionProvider === 'whisper' && transcriptionOptions?.whisper
+        transcriptionProvider === 'whisper' &&
+        !usePrivateBilibiliParaformer &&
+        transcriptionOptions?.whisper
           ? await transcribeOwnerLinkMedia(
               snapshot,
               videoFetcher,
@@ -271,9 +285,31 @@ export function createLinkParseHandler(
               signal,
             )
           : null;
+      const privateBilibiliTranscription =
+        usePrivateBilibiliParaformer &&
+        paraformer &&
+        snapshot.transientAudioUrl &&
+        supportsTemporaryReadUrl(store)
+          ? await transcribePrivateBilibiliMedia(
+              pool,
+              store,
+              transcriptionOptions?.bilibiliAudioFetcher ??
+                new SecureBilibiliAudioFetcher(),
+              paraformer,
+              {
+                userId: job.userId,
+                noteId,
+                generation,
+                audioUrl: snapshot.transientAudioUrl,
+                sourceUrl: snapshot.url,
+                signal,
+              },
+            )
+          : null;
       const mediaTranscription =
         snapshot.embeddedTranscript ??
         managedApiTranscription ??
+        privateBilibiliTranscription ??
         ownerTranscription ??
         (paraformer &&
         snapshot.platform === 'xiaoyuzhou' &&
@@ -392,6 +428,54 @@ export function createLinkParseHandler(
       throw error;
     }
   };
+}
+
+function supportsTemporaryReadUrl(
+  store: ObjectStore,
+): store is TemporaryReadUrlObjectStore {
+  return (
+    typeof (store as Partial<TemporaryReadUrlObjectStore>).temporaryReadUrl ===
+    'function'
+  );
+}
+
+async function transcribePrivateBilibiliMedia(
+  pool: Pool,
+  store: TemporaryReadUrlObjectStore,
+  audioFetcher: LinkAudioFetcher,
+  paraformer: ParaformerClient,
+  input: {
+    userId: string;
+    noteId: string;
+    generation: string;
+    audioUrl: string;
+    sourceUrl: string;
+    signal: AbortSignal;
+  },
+): Promise<ParaformerTranscript> {
+  const download = await audioFetcher.fetch(
+    input.audioUrl,
+    input.signal,
+    input.sourceUrl,
+  );
+  if (!download.sourceContent?.byteLength) {
+    throw new Error('link_bilibili_audio_source_missing');
+  }
+  const objectKey =
+    `users/${input.userId}/temporary/${randomUUID()}.m4a`;
+  await store.put(objectKey, download.sourceContent);
+  try {
+    const temporaryUrl = await store.temporaryReadUrl(objectKey, 3_600);
+    return await transcribeXiaoyuzhouEpisode(pool, paraformer, {
+      userId: input.userId,
+      noteId: input.noteId,
+      generation: input.generation,
+      audioUrl: temporaryUrl,
+      signal: input.signal,
+    });
+  } finally {
+    await store.delete(objectKey).catch(() => undefined);
+  }
 }
 
 export async function ensureNextLinkMediaRequest(

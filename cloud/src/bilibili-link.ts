@@ -185,7 +185,11 @@ export class SecureBilibiliAudioFetcher {
     inputUrl: string,
     signal: AbortSignal,
     sourceUrl = 'https://www.bilibili.com/',
-  ): Promise<{ segments: ExtractedAudioSegment[] }> {
+  ): Promise<{
+    segments: ExtractedAudioSegment[];
+    sourceContent: Buffer;
+    sourceContentType: 'audio/mp4';
+  }> {
     let current = validateBilibiliAudioUrl(inputUrl);
     const referer = validateBilibiliReferer(sourceUrl);
     for (let redirects = 0; redirects <= 2; redirects += 1) {
@@ -221,7 +225,11 @@ export class SecureBilibiliAudioFetcher {
       try {
         const sourcePath = join(directory, 'source.m4s');
         await writeFile(sourcePath, content, { mode: 0o600 });
-        return { segments: await extractVideoAudioSegments(sourcePath, signal) };
+        return {
+          segments: await extractVideoAudioSegments(sourcePath, signal),
+          sourceContent: content,
+          sourceContentType: 'audio/mp4' as const,
+        };
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
