@@ -247,7 +247,11 @@ export function selectBilibiliAudioUrl(payload: unknown): string | null {
         candidates.push({
           url,
           preferred:
-            parsed.port === '8082' || parsed.hostname.includes('.mcdn.') ? 0 : 1,
+            parsed.hostname === 'upos-hz-mirrorakam.akamaized.net'
+              ? 0
+              : parsed.port === '8082' || parsed.hostname.includes('.mcdn.')
+                ? 1
+                : 2,
           bandwidth: numberValue(item.bandwidth),
         });
       } catch {
@@ -371,6 +375,7 @@ function validateBilibiliAudioUrl(value: string): string {
     url.password ||
     (url.port && url.port !== '443' && url.port !== '8082') ||
     !(
+      host === 'upos-hz-mirrorakam.akamaized.net' ||
       host === 'bilivideo.com' ||
       host.endsWith('.bilivideo.com') ||
       host === 'bilivideo.cn' ||

@@ -202,4 +202,27 @@ describe('Bilibili link ingestion', () => {
       ),
     ).rejects.toThrow('link_bilibili_audio_url_invalid');
   });
+
+  it('prefers Bilibili’s Akamai backup when it is available', () => {
+    const payload = {
+      code: 0,
+      data: {
+        dash: {
+          audio: [
+            {
+              bandwidth: 80_000,
+              baseUrl: 'https://upos-sz-mirrorcosov.bilivideo.com/audio.m4s',
+              backupUrl: [
+                'https://upos-hz-mirrorakam.akamaized.net/audio.m4s',
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    expect(selectBilibiliAudioUrl(payload)).toBe(
+      'https://upos-hz-mirrorakam.akamaized.net/audio.m4s',
+    );
+  });
 });
