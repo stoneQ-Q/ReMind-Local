@@ -13,6 +13,10 @@ const xiaoyuzhouMigration = readFileSync(
   ),
   'utf8',
 );
+const bilibiliMigration = readFileSync(
+  new URL('./migrations/0019_bilibili_video_processing.sql', import.meta.url),
+  'utf8',
+);
 
 describe('link processing migration', () => {
   it('stores bounded link results on the user-owned note', () => {
@@ -40,5 +44,11 @@ describe('link processing migration', () => {
       "link_media_type IN ('web', 'image', 'video', 'audio')",
     );
     expect(xiaoyuzhouMigration).toContain('notes_link_media_processing_idx');
+  });
+
+  it('adds Bilibili video to the trusted platform set', () => {
+    expect(bilibiliMigration).toContain(
+      "link_platform IN ('web', 'xiaohongshu', 'xiaoyuzhou', 'bilibili')",
+    );
   });
 });

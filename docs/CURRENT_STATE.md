@@ -493,6 +493,16 @@ personal test app, and 1 development environment.**
 ## WeChat polling safety
 
 - The active cloud WeChat connection polls in the cloud Worker.
+- On 2026-09-07, read-only inspection found that the old local
+  `app.remind.gateway` LaunchAgent had been started automatically at 10:50 on
+  2026-08-26, immediately after the Mac rebooted at 10:48. Its plist still had
+  both `RunAtLoad` and `KeepAlive` enabled from the 2026-08-11 installation.
+  The service was booted out, persistently disabled in the user launchd domain,
+  and its plist was retained as `app.remind.gateway.plist.disabled`; the saved
+  `~/.remind-weixin/config.json` checksum was unchanged. The local Worker remains
+  available, while the local WeChat gateway is now unloaded. The service installer
+  now requires the explicit `REMIND_ENABLE_LOCAL_WECHAT=1` opt-in before it will
+  install or restart that gateway.
 - The Mac's local `app.remind.gateway` must remain unloaded during cloud-mode use.
   Running it against the same WeChat account can compete for the same cursor and
   cause a message to enter local D1 instead of the cloud account.
@@ -502,6 +512,26 @@ personal test app, and 1 development environment.**
   local gateway and stored in local D1. This explains why it did not appear in the
   cloud-mode phone inbox. Do not claim the cloud parser rejected that link without
   inspecting the cloud poll state first.
+
+## Bilibili video ingestion
+
+- A production database audit on 2026-09-07 found that the user's 2026-09-06
+  23:02 Bilibili short-link job failed before transcription with
+  `link_http_412`. The deployed `ab5e273` parser still treats Bilibili as an
+  ordinary webpage and therefore reaches Bilibili's blocked HTML path.
+- The authoritative source now contains a pending cloud release that resolves a
+  `b23.tv` redirect only until it obtains a BV identifier, then reads Bilibili
+  metadata and subtitles through the platform endpoints without fetching the
+  blocked video page. It prefers usable Chinese subtitles; when none exist, the
+  private Whisper-allowlisted account downloads a temporary audio-only DASH stream
+  from an allowlisted Bilibili CDN with the required Referer and Range headers,
+  splits it through ffmpeg, and transcribes it without persisting the expiring CDN
+  URL.
+- The exact failed short link was replayed locally against the new cloud artifact:
+  it resolved as a 2,088-second Bilibili video, selected the audio fallback, and
+  produced 75 valid audio segments. TypeScript, all 254 cloud tests in 60 files,
+  and all 358 repository tests in 91 files passed. This source has not yet been
+  deployed; production remains `ab5e273` until the deployment below is completed.
 
 ## Current data boundaries
 

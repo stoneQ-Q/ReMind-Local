@@ -11,6 +11,7 @@ import {
 } from './job-quotes.js';
 import type { JobHandler } from './jobs.js';
 import {
+  SecureBilibiliAudioFetcher,
   SecureLinkPageFetcher,
   SecureXiaohongshuVideoFetcher,
   SecureXiaoyuzhouAudioFetcher,
@@ -55,6 +56,7 @@ export type LinkTranscriptionOptions = {
   serverWhisperUserIds: ReadonlySet<string>;
   whisper: WhisperMediaClient | null;
   audioFetcher?: LinkAudioFetcher;
+  bilibiliAudioFetcher?: LinkAudioFetcher;
 };
 
 export function selectLinkTranscriptionProvider(input: {
@@ -215,7 +217,12 @@ export function createLinkParseHandler(
           snapshot.transientAudioUrl) ||
           (snapshot.platform === 'xiaohongshu' &&
             snapshot.mediaType === 'video' &&
-            snapshot.transientVideoUrl),
+            snapshot.transientVideoUrl) ||
+          (snapshot.platform === 'bilibili' &&
+            snapshot.mediaType === 'video' &&
+            snapshot.transientAudioUrl &&
+            transcriptionOptions?.whisper &&
+            transcriptionOptions.serverWhisperUserIds.has(job.userId)),
       );
       const transcriptionProvider = selectLinkTranscriptionProvider({
         userId: job.userId,
@@ -258,11 +265,14 @@ export function createLinkParseHandler(
               videoFetcher,
               transcriptionOptions.audioFetcher ??
                 new SecureXiaoyuzhouAudioFetcher(),
+              transcriptionOptions.bilibiliAudioFetcher ??
+                new SecureBilibiliAudioFetcher(),
               transcriptionOptions.whisper,
               signal,
             )
           : null;
       const mediaTranscription =
+        snapshot.embeddedTranscript ??
         managedApiTranscription ??
         ownerTranscription ??
         (paraformer &&
@@ -295,7 +305,9 @@ export function createLinkParseHandler(
         : null;
       const sourceFileId = videoSourceFile?.id ?? null;
       const sourceText = mediaTranscription
-        ? snapshot.mediaType === 'video'
+        ? snapshot.platform === 'bilibili'
+          ? buildBilibiliEvidenceText(snapshot.text, mediaTranscription)
+          : snapshot.mediaType === 'video'
           ? buildMediaEvidenceText(
               'video',
               snapshot.text,
@@ -725,6 +737,7 @@ async function transcribeOwnerLinkMedia(
   snapshot: Awaited<ReturnType<LinkPageFetcher['fetch']>>,
   videoFetcher: LinkVideoFetcher,
   audioFetcher: LinkAudioFetcher,
+  bilibiliAudioFetcher: LinkAudioFetcher,
   whisper: WhisperMediaClient,
   signal: AbortSignal,
 ): Promise<ParaformerTranscript | null> {
@@ -736,6 +749,18 @@ async function transcribeOwnerLinkMedia(
   ) {
     segments = (await audioFetcher.fetch(snapshot.transientAudioUrl, signal))
       .segments;
+  } else if (
+    snapshot.platform === 'bilibili' &&
+    snapshot.mediaType === 'video' &&
+    snapshot.transientAudioUrl
+  ) {
+    segments = (
+      await bilibiliAudioFetcher.fetch(
+        snapshot.transientAudioUrl,
+        signal,
+        snapshot.url,
+      )
+    ).segments;
   } else if (
     snapshot.platform === 'xiaohongshu' &&
     snapshot.mediaType === 'video' &&
@@ -910,6 +935,21 @@ function buildXiaoyuzhouEvidenceText(
   return `${existingText.trim()}\n\n音频转写\n${timestamped}`.slice(0, 80_000);
 }
 
+function buildBilibiliEvidenceText(
+  existingText: string,
+  transcription: ParaformerTranscript,
+): string {
+  const timestamped = transcription.segments.length
+    ? transcription.segments
+        .map(
+          (segment) =>
+            `[${formatTimestamp(segment.startSeconds)}] ${segment.text}`,
+        )
+        .join('\n')
+    : transcription.transcript;
+  return `${existingText.trim()}\n\n视频语音转写\n${timestamped}`.slice(0, 80_000);
+}
+
 function formatTimestamp(seconds: number): string {
   const bounded = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(bounded / 3_600);
@@ -1017,7 +1057,7 @@ function normalizeErrorCode(error: unknown): string {
 }
 
 function sanitizeSnapshotImages(
-  platform: 'web' | 'xiaohongshu' | 'xiaoyuzhou',
+  platform: 'web' | 'xiaohongshu' | 'xiaoyuzhou' | 'bilibili',
   values: readonly string[],
 ): string[] {
   if (platform !== 'xiaohongshu') return [];
