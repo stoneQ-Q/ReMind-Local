@@ -519,19 +519,38 @@ personal test app, and 1 development environment.**
   23:02 Bilibili short-link job failed before transcription with
   `link_http_412`. The deployed `ab5e273` parser still treats Bilibili as an
   ordinary webpage and therefore reaches Bilibili's blocked HTML path.
-- The authoritative source now contains a pending cloud release that resolves a
+- Cloud release `a908b79` now resolves a
   `b23.tv` redirect only until it obtains a BV identifier, then reads Bilibili
   metadata and subtitles through the platform endpoints without fetching the
-  blocked video page. It prefers usable Chinese subtitles; when none exist, the
-  private Whisper-allowlisted account downloads a temporary audio-only DASH stream
-  from an allowlisted Bilibili CDN with the required Referer and Range headers,
-  splits it through ffmpeg, and transcribes it without persisting the expiring CDN
-  URL.
-- The exact failed short link was replayed locally against the new cloud artifact:
-  it resolved as a 2,088-second Bilibili video, selected the audio fallback, and
-  produced 75 valid audio segments. TypeScript, all 254 cloud tests in 60 files,
-  and all 358 repository tests in 91 files passed. This source has not yet been
-  deployed; production remains `ab5e273` until the deployment below is completed.
+  blocked video page. If the richer metadata endpoint returns 412 for the Hong
+  Kong datacenter IP, the parser falls back to the official player pagelist for
+  the CID, duration, and part title. It prefers usable Chinese subtitles; when
+  none exist, the private allowlisted account downloads a temporary audio-only
+  DASH stream from an allowlisted Bilibili/Akamai CDN with the required Referer
+  and Range headers. The audio is placed briefly in the existing private COS,
+  exposed through a one-hour signed URL to DashScope Paraformer, and deleted in
+  the processing cleanup path. Expiring Bilibili CDN URLs are never persisted.
+- Before the first rollout, PostgreSQL was backed up to
+  `remind-pre-f2de2e9-20260907T093825.dump` (26,578,762 bytes, mode 0600), its
+  restore catalog was validated inside the PostgreSQL container, and the private
+  environment was copied to `remind.env.pre-f2de2e9-20260907T093825` (mode 0600).
+  Migration `0019_bilibili_video_processing.sql` is applied and the live notes
+  constraint includes `bilibili`. Public readiness and the server health check
+  pass on release `a908b79`.
+- The exact failed `https://b23.tv/MET72Ph` record was retried end to end on
+  2026-09-07. It now reports `ready`, `bilibili`, `video`, 2,088 seconds, and
+  media status `succeeded`; its canonical source is
+  `https://www.bilibili.com/video/BV1gbEB6kESt`, and 17,070 characters of source
+  evidence include the `视频语音转写` section. The successful final job completed
+  on its first attempt with zero estimated, reserved, and actual platform billing
+  micros; the shared DashScope account still incurs its underlying provider cost,
+  approximately 0.167 yuan at the configured 80 micros per second. The cloud
+  WeChat connection remained active with zero failures and 25 messages, while the
+  Mac gateway remained disabled and unloaded. No APK was generated or installed.
+- The final local checks passed TypeScript, 235 cloud tests in 56 files, and 361
+  repository tests in 91 files. The exact link had also produced 75 valid ffmpeg
+  audio segments during local fallback validation, but production now uses the
+  faster temporary-COS Paraformer route for this private allowlisted account.
 
 ## Current data boundaries
 
