@@ -211,13 +211,16 @@ function validateMediaUrl(value: string): string {
     throw new ParaformerError('paraformer_audio_url_invalid', true);
   }
   const hostname = url.hostname.toLowerCase();
+  const trustedPrivateCos =
+    /^[a-z0-9-]+-[0-9]+\.cos\.[a-z0-9-]+\.myqcloud\.com$/.test(hostname);
   if (
     url.protocol !== 'https:' ||
     !(
       hostname === 'xyzcdn.net' ||
       hostname.endsWith('.xyzcdn.net') ||
       hostname === 'xhscdn.com' ||
-      hostname.endsWith('.xhscdn.com')
+      hostname.endsWith('.xhscdn.com') ||
+      trustedPrivateCos
     ) ||
     url.username ||
     url.password ||

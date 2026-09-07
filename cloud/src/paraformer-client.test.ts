@@ -58,6 +58,18 @@ describe('Paraformer client', () => {
     ).resolves.toBe('task-video-1234');
   });
 
+  it('accepts a signed Tencent COS URL used for temporary private audio', async () => {
+    const cosUrl =
+      'https://remind-private-hk-1385855631.cos.ap-hongkong.myqcloud.com/users/test/temporary/audio.m4a?q-signature=test';
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ output: { task_id: 'task-cos-123456' } }),
+    );
+
+    await expect(
+      new ParaformerClient(apiKey, apiHost, fetcher).submit(cosUrl, signal),
+    ).resolves.toBe('task-cos-123456');
+  });
+
   it('polls the task and returns plain text plus timestamp evidence', async () => {
     const fetcher = vi
       .fn()
