@@ -109,6 +109,7 @@ import {
 } from './library-layout';
 import { formatNoteTime, notePreview } from './note-utils';
 import { informationSourceLabel } from './information-source';
+import { cloudTranscriptPresentation } from './link-transcript';
 import { loadAppDiagnostics, type AppDiagnostics } from './diagnostics';
 import {
   chooseObsidianVault,
@@ -2970,6 +2971,7 @@ function NoteEditor({
       isXiaoyuzhouEpisodeUrl(note.sourceUrl) &&
       note.sourcePageText?.trim(),
   );
+  const transcriptPresentation = cloudTranscriptPresentation(note);
   const organizationContext =
     organizationContextForXiaoyuzhou({
       sourceUrl: note?.sourceUrl,
@@ -3086,7 +3088,7 @@ function NoteEditor({
               </View>
             </View>
           )}
-          {isXiaoyuzhouAudio ? (
+          {transcriptPresentation ? (
             <View style={styles.audioTranscriptCard}>
               <View style={styles.audioTranscriptHeader}>
                 <View style={styles.audioTranscriptMark}>
@@ -3094,10 +3096,10 @@ function NoteEditor({
                 </View>
                 <View style={styles.audioTranscriptHeaderCopy}>
                   <Text style={styles.audioTranscriptTitle}>
-                    云端逐字稿已就绪
+                    {transcriptPresentation.title}
                   </Text>
                   <Text style={styles.audioTranscriptMeta}>
-                    供 AI 整理时引用 · 原文不下载到手机 · 未保存音频
+                    {transcriptPresentation.detail}
                   </Text>
                 </View>
               </View>

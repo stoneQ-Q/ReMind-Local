@@ -1105,7 +1105,13 @@ export async function createImportedNote(
         }
         await transaction.runAsync(
           `UPDATE notes
-           SET source_url = COALESCE($sourceUrl, source_url),
+           SET status = CASE
+                 WHEN length(trim(COALESCE(source_page_text, ''))) < 20
+                  AND length(trim(COALESCE($sourcePageText, ''))) >= 20
+                 THEN 'saved'
+                 ELSE status
+               END,
+               source_url = COALESCE($sourceUrl, source_url),
                user_context = CASE
                  WHEN $clearUserContext = 1 THEN NULL
                  ELSE COALESCE($userContext, user_context)
