@@ -3,6 +3,9 @@ import type { Pool } from 'pg';
 import type { CredentialCipher } from './credential-cipher.js';
 import type { ClaimedJob, JobHandler } from './jobs.js';
 import { organizeLink } from './organization.js';
+import { runManagedOrganization } from './managed-organization.js';
+import type { ManagedTextPriceCatalog } from './media-pricing.js';
+import type { ManagedProviderCredentials } from './media-provider-routing.js';
 
 export const LINK_ORGANIZATION_JOB_TYPE = 'organization.link';
 
@@ -82,9 +85,38 @@ export async function getLinkOrganizationJob(
 export function createLinkOrganizationHandler(
   pool: Pool,
   cipher: CredentialCipher,
+  managed?: {
+    priceCatalog: ManagedTextPriceCatalog;
+    credentials: ManagedProviderCredentials;
+  },
 ): JobHandler {
-  return async (job: ClaimedJob, signal: AbortSignal) =>
-    organizeLink(pool, cipher, job.userId, job.input, signal);
+  return async (job: ClaimedJob, signal: AbortSignal) => {
+    const account = await pool.query<{ ai_mode: string }>(
+      `SELECT ai_mode FROM users WHERE id = $1`,
+      [job.userId],
+    );
+    if (account.rows[0]?.ai_mode !== 'managed') {
+      return organizeLink(pool, cipher, job.userId, job.input, signal);
+    }
+    if (!managed) throw new Error('managed_service_unavailable');
+    return runManagedOrganization({
+      pool,
+      userId: job.userId,
+      operation: 'link-organize',
+      body: job.input,
+      priceCatalog: managed.priceCatalog,
+      managedCredentials: managed.credentials,
+      run: (execution) =>
+        organizeLink(
+          pool,
+          cipher,
+          job.userId,
+          job.input,
+          signal,
+          execution,
+        ),
+    });
+  };
 }
 
 function requiredSnapshot(

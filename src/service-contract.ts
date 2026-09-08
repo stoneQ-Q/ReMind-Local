@@ -1,3 +1,5 @@
+import { isConsumerReMindApp } from './app-variant';
+
 export const REMIND_API_VERSION = 'v1' as const;
 
 export type ReMindServiceMode = 'self-hosted' | 'hosted';
@@ -140,6 +142,9 @@ function normalizeBaseUrl(value: string): string {
 }
 
 function defaultReMindAppMode(): ReMindAppMode {
+  if (isConsumerReMindApp() && getReMindServiceConfigForMode('cloud')) {
+    return 'cloud';
+  }
   if (getReMindServiceConfigForMode('local')) return 'local';
   if (getReMindServiceConfigForMode('cloud')) return 'cloud';
   return 'local';

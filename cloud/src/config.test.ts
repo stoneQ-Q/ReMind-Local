@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  consumerManagedAiEnabled,
+  consumerStarterCreditMicros,
   dashscopeConfig,
   releaseIdentifier,
+  serverWhisperUserIds,
   xiaoyuzhouTranscriptionEnabled,
 } from './config.js';
 
@@ -10,6 +13,11 @@ const originalValue = process.env.REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED;
 const originalDashscopeKey = process.env.REMIND_DASHSCOPE_API_KEY;
 const originalDashscopeHost = process.env.REMIND_DASHSCOPE_API_HOST;
 const originalRelease = process.env.REMIND_RELEASE;
+const originalManagedConsumer = process.env.REMIND_CONSUMER_MANAGED_AI_ENABLED;
+const originalStarterCredit =
+  process.env.REMIND_CONSUMER_STARTER_CREDIT_MICROS;
+const originalServerWhisperUsers =
+  process.env.REMIND_SERVER_WHISPER_USER_IDS;
 
 afterEach(() => {
   if (originalValue === undefined) {
@@ -20,6 +28,66 @@ afterEach(() => {
   restoreEnvironment('REMIND_DASHSCOPE_API_KEY', originalDashscopeKey);
   restoreEnvironment('REMIND_DASHSCOPE_API_HOST', originalDashscopeHost);
   restoreEnvironment('REMIND_RELEASE', originalRelease);
+  restoreEnvironment(
+    'REMIND_CONSUMER_MANAGED_AI_ENABLED',
+    originalManagedConsumer,
+  );
+  restoreEnvironment(
+    'REMIND_CONSUMER_STARTER_CREDIT_MICROS',
+    originalStarterCredit,
+  );
+  restoreEnvironment(
+    'REMIND_SERVER_WHISPER_USER_IDS',
+    originalServerWhisperUsers,
+  );
+});
+
+describe('serverWhisperUserIds', () => {
+  it('is empty by default and accepts an explicit UUID allowlist', () => {
+    delete process.env.REMIND_SERVER_WHISPER_USER_IDS;
+    expect([...serverWhisperUserIds()]).toEqual([]);
+
+    process.env.REMIND_SERVER_WHISPER_USER_IDS =
+      '11111111-1111-4111-8111-111111111111';
+    expect([...serverWhisperUserIds()]).toEqual([
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+  });
+
+  it('rejects a malformed allowlist instead of widening access', () => {
+    process.env.REMIND_SERVER_WHISPER_USER_IDS = 'everyone';
+    expect(() => serverWhisperUserIds()).toThrow(
+      'REMIND_SERVER_WHISPER_USER_IDS must contain UUIDs',
+    );
+  });
+});
+
+describe('consumer managed AI', () => {
+  it('stays disabled with no accidental starter spend by default', () => {
+    delete process.env.REMIND_CONSUMER_MANAGED_AI_ENABLED;
+    delete process.env.REMIND_CONSUMER_STARTER_CREDIT_MICROS;
+
+    expect(consumerManagedAiEnabled()).toBe(false);
+    expect(consumerStarterCreditMicros()).toBe(0n);
+  });
+
+  it('requires explicit enablement and an integer starter credit', () => {
+    process.env.REMIND_CONSUMER_MANAGED_AI_ENABLED = 'true';
+    process.env.REMIND_CONSUMER_STARTER_CREDIT_MICROS = '2000000';
+
+    expect(consumerManagedAiEnabled()).toBe(true);
+    expect(consumerStarterCreditMicros()).toBe(2_000_000n);
+  });
+
+  it('rejects ambiguous public launch configuration', () => {
+    process.env.REMIND_CONSUMER_MANAGED_AI_ENABLED = 'yes';
+    process.env.REMIND_CONSUMER_STARTER_CREDIT_MICROS = '-1';
+
+    expect(() => consumerManagedAiEnabled()).toThrow('must be true or false');
+    expect(() => consumerStarterCreditMicros()).toThrow(
+      'must be a nonnegative integer',
+    );
+  });
 });
 
 describe('releaseIdentifier', () => {

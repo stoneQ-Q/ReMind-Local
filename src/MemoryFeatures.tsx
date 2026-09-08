@@ -65,6 +65,7 @@ export function MemoryAskSheet({
       return;
     }
     setQuestion(normalized);
+    setAnswer(null);
     setLoading(true);
     try {
       const result = await askMemory(normalized, sources);
@@ -88,7 +89,7 @@ export function MemoryAskSheet({
           <View style={sheetStyles.headerSpacer} />
         </View>
         <ScrollView contentContainerStyle={[sheetStyles.body, { paddingBottom: insets.bottom + 36 }]} keyboardShouldPersistTaps="handled">
-          <Text style={sheetStyles.lead}>只从你的记录里寻找答案，找不到时会如实告诉你。</Text>
+          <Text style={sheetStyles.lead}>只根据你的记录回答；依据不够，就直接告诉你。</Text>
           <View style={sheetStyles.askBox}>
             <TextInput
               accessibilityLabel="向自己的笔记提问"
@@ -105,12 +106,20 @@ export function MemoryAskSheet({
           </View>
 
           {answer ? (
-            <View style={sheetStyles.answerCard}>
-              <Text style={sheetStyles.eyebrow}>{answer.insufficient ? '没有足够依据' : '来自你的记录'}</Text>
-              <Text selectable style={sheetStyles.answerText}>{answer.answer}</Text>
-              <CitationList citations={answer.citations} notesById={notesById} onOpen={(note) => { onClose(); onOpenNote(note); }} />
+            <>
+              <View style={sheetStyles.answerCard}>
+                <View style={[sheetStyles.answerStatus, answer.insufficient && sheetStyles.answerStatusInsufficient]}>
+                  <Text style={sheetStyles.eyebrow}>{answer.insufficient ? '依据不足' : '来自你的记录'}</Text>
+                </View>
+                <Text style={sheetStyles.questionLabel}>你问</Text>
+                <Text selectable style={sheetStyles.questionText}>{answer.question}</Text>
+                <View style={sheetStyles.answerDivider} />
+                <Text selectable style={sheetStyles.answerText}>{answer.answer}</Text>
+                <CitationList citations={answer.citations} notesById={notesById} onOpen={(note) => { onClose(); onOpenNote(note); }} />
+              </View>
               {answer.suggestedQuestions.length ? (
                 <View style={sheetStyles.suggestions}>
+                  <Text style={sheetStyles.sectionTitle}>接着问</Text>
                   {answer.suggestedQuestions.map((item) => (
                     <Pressable key={item} onPress={() => void submit(item)} style={sheetStyles.suggestionChip}>
                       <Text style={sheetStyles.suggestionText}>{item}</Text>
@@ -118,7 +127,16 @@ export function MemoryAskSheet({
                   ))}
                 </View>
               ) : null}
-            </View>
+              <Pressable
+                onPress={() => {
+                  setAnswer(null);
+                  setQuestion('');
+                }}
+                style={sheetStyles.secondaryButton}
+              >
+                <Text style={sheetStyles.secondaryButtonText}>换个问题</Text>
+              </Pressable>
+            </>
           ) : history.length ? (
             <View style={sheetStyles.history}>
               <Text style={sheetStyles.sectionTitle}>最近问过</Text>
@@ -305,9 +323,14 @@ const sheetStyles = StyleSheet.create({
   primaryButton: { minHeight: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
   primaryButtonText: { color: '#fff', fontSize: 15, fontWeight: '800' },
   disabled: { opacity: 0.35 },
-  answerCard: { borderRadius: 24, padding: 20, backgroundColor: colors.sage, gap: 14 },
-  eyebrow: { color: colors.sageText, fontSize: 12, fontWeight: '800', letterSpacing: 1 },
-  answerText: { color: colors.ink, fontSize: 17, lineHeight: 28 },
+  answerCard: { borderRadius: 24, padding: 20, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, gap: 12 },
+  answerStatus: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 99, backgroundColor: colors.accentSoft },
+  answerStatusInsufficient: { backgroundColor: colors.apricot },
+  eyebrow: { color: colors.sageText, fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  questionLabel: { color: colors.faint, fontSize: 11, fontWeight: '800' },
+  questionText: { color: colors.ink, fontSize: 18, lineHeight: 27, fontWeight: '800' },
+  answerDivider: { height: StyleSheet.hairlineWidth, marginVertical: 2, backgroundColor: colors.line },
+  answerText: { color: colors.ink, fontSize: 16, lineHeight: 27 },
   sectionTitle: { color: colors.ink, fontSize: 15, fontWeight: '800' },
   citations: { gap: 10, marginTop: 4 },
   citationRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 16, backgroundColor: colors.surface },
@@ -318,8 +341,10 @@ const sheetStyles = StyleSheet.create({
   citationQuote: { color: colors.muted, fontSize: 13, lineHeight: 19 },
   chevron: { color: colors.muted, fontSize: 24 },
   suggestions: { gap: 8 },
-  suggestionChip: { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 14, backgroundColor: colors.surface },
-  suggestionText: { color: colors.sageText, lineHeight: 20 },
+  suggestionChip: { paddingVertical: 12, paddingHorizontal: 14, borderRadius: 16, backgroundColor: colors.sage },
+  suggestionText: { color: colors.sageText, lineHeight: 21, fontWeight: '600' },
+  secondaryButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 15, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface },
+  secondaryButtonText: { color: colors.sageText, fontSize: 14, fontWeight: '800' },
   history: { gap: 10 },
   historyRow: { minHeight: 62, paddingHorizontal: 15, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', borderRadius: 17, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line },
   historyCopy: { flex: 1, gap: 3 },

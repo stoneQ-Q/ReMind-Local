@@ -67,7 +67,8 @@ API 提供 `GET /api/v1/jobs/:jobId` 查询当前用户自己的任务状态，�
 - 最多允许 4 次重定向、单次请求 15 秒、任务总计 45 秒、压缩前后页面均不超过 2 MB，正文最多保存 24,000 字；
 - 普通网页保存标题、说明、站点和正文；小红书图文最多保存 12 个经过域名校验的 HTTPS 图片地址；
 - 小红书视频目前只保存“视频”类型和可用时长，不把页面中的临时视频下载地址写入笔记、任务输入或任务结果。
-- 小宇宙只接受公开免费单集并提取节目元信息和时长；转写默认暂停，此时只保留单集链接和节目资料，不下载音频。显式设置 `REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED=true` 并配置北京地域百炼 API Key 与 API Host 后，Worker 才会把经过校验的 `xyzcdn.net` HTTPS 音频地址直接提交给 `paraformer-v2`；CDN 地址和原始音频都不会进入数据库或对象存储。
+- 小宇宙只接受公开免费单集并提取节目元信息和时长；转写默认暂停，此时只保留单集链接和节目资料，不下载音频。显式设置 `REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED=true` 并配置北京地域百炼 API Key、API Host 与 `REMIND_PRICE_DASHSCOPE_ASR_PER_SECOND_MICROS` 后，托管账号会把经过校验的小宇宙音频或小红书视频 CDN 地址直接提交给 `paraformer-v2`，先按媒体时长预留额度，再按百炼返回的有效语音时长结算。CDN 地址和原始媒体都不会进入数据库或对象存储。
+- `REMIND_SERVER_WHISPER_USER_IDS` 是逗号分隔的 UUID 私有白名单。只有白名单账号可以使用云服务器 Whisper；未列入的托管账号默认走百炼，未列入的 BYOK 账号继续使用自己的语音 API。不要把生产账号 UUID 硬编码进仓库。
 
 小红书或小宇宙页面遇到登录、安全验证、付费限制或页面结构变化时会保留原始笔记并将处理标记为失败。
 
@@ -115,7 +116,9 @@ PostgreSQL 备份只包含对象元数据，不包含 `remind-object-data` 中�
 - 小宇宙原始音频不下载、不进入对象存储；数据库仅保存百炼异步任务 ID、完整逐字稿和时间戳片段，供失败重试与来源追溯；
 - 整个请求支持取消、跨用户隔离和幂等创建。
 
-媒体处理默认关闭。`REMIND_MEDIA_PROVIDER=mock` 只用于无网络、零费用的故障测试；`REMIND_MEDIA_PROVIDER=byok` 只注册真实 BYOK 处理器；`REMIND_MEDIA_PROVIDER=remote` 同时启用 BYOK 和托管处理，但要求 Worker 具备两家平台密钥、API 与 Worker 具备完整价格表。平台密钥只传给 Worker，API 不持有。未知配置或托管配置缺失会使服务拒绝启动，因此不会把模拟结果误当作真实分析返回给用户。
+媒体处理默认关闭。`REMIND_MEDIA_PROVIDER=mock` 只用于无网络、零费用的故障测试；`REMIND_MEDIA_PROVIDER=byok` 只注册真实 BYOK 处理器；`REMIND_MEDIA_PROVIDER=remote` 同时启用 BYOK 和托管处理，但要求 Worker 具备两家平台密钥、API 与 Worker 具备完整价格表。智谱平台 Key 只传给 Worker；DeepSeek 平台 Key 同时传给 API 和 Worker，因为同步文字整理在 API 内完成，二者都不得向手机或日志返回密钥。未知配置或托管配置缺失会使服务拒绝启动，因此不会把模拟结果误当作真实分析返回给用户。
+
+普通版文字托管服务还必须显式设置 `REMIND_CONSUMER_MANAGED_AI_ENABLED=true`。新账号才会默认进入 `managed` 模式，并按 `REMIND_CONSUMER_STARTER_CREDIT_MICROS` 获得一笔来源为 `gift` 的内测额度。文字整理使用 DeepSeek 输入/输出价格先预占费用，再按供应商返回的实际 token 用量结算；失败时释放全部预占。文字托管可以在媒体仍保持 `byok` 时单独开放，不会顺带开放图片、语音或视频托管。若托管开关、DeepSeek 平台 Key 或两项文字价格任一缺失，API 与 Worker 会拒绝启动，不会降级为用户 Key 或产生未入账调用。
 
 真实供应商的网络与凭据边界已经接入 BYOK Worker：
 

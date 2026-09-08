@@ -11,7 +11,10 @@ import {
   getReMindServiceConfigForMode,
   type ReMindServiceConfig,
 } from './service-contract';
-import { cloudSessionStorageKey } from './persistence-contract';
+import {
+  cloudRecoveryCodeStorageKey,
+  cloudSessionStorageKey,
+} from './persistence-contract';
 const REQUEST_TIMEOUT_MS = 10_000;
 const refreshes = new Map<string, Promise<CloudSession>>();
 
@@ -57,6 +60,11 @@ export async function registerCloudAccount(
     throw new Error('Cloud registration returned an invalid response');
   }
   await saveCloudSession(service, payload);
+  await SecureStore.setItemAsync(
+    cloudRecoveryCodeStorageKey(credentialScope(service)),
+    payload.recoveryCode,
+    { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
+  );
   return payload;
 }
 
@@ -157,6 +165,22 @@ export async function clearCloudSession(): Promise<void> {
   if (!service) return;
   await SecureStore.deleteItemAsync(
     cloudSessionStorageKey(credentialScope(service)),
+  );
+}
+
+export async function getPendingCloudRecoveryCode(): Promise<string | null> {
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) return null;
+  return SecureStore.getItemAsync(
+    cloudRecoveryCodeStorageKey(credentialScope(service)),
+  );
+}
+
+export async function acknowledgeCloudRecoveryCode(): Promise<void> {
+  const service = getReMindServiceConfigForMode('cloud');
+  if (!service) return;
+  await SecureStore.deleteItemAsync(
+    cloudRecoveryCodeStorageKey(credentialScope(service)),
   );
 }
 

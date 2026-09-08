@@ -1,11 +1,18 @@
 const ONE_MILLION = 1_000_000n;
 const SECONDS_PER_MINUTE = 60n;
 
-export type ManagedMediaPriceCatalog = {
-  zhipuVisionPerImageMicros: bigint;
-  zhipuAsrPerMinuteMicros: bigint;
+export type ManagedTextPriceCatalog = {
   deepseekInputPerMillionTokensMicros: bigint;
   deepseekOutputPerMillionTokensMicros: bigint;
+};
+
+export type ManagedTranscriptionPriceCatalog = {
+  dashscopeAsrPerSecondMicros: bigint;
+};
+
+export type ManagedMediaPriceCatalog = ManagedTextPriceCatalog & {
+  zhipuVisionPerImageMicros: bigint;
+  zhipuAsrPerMinuteMicros: bigint;
 };
 
 export class ManagedMediaPricingUnavailableError extends Error {
@@ -33,6 +40,39 @@ export function managedMediaPriceCatalogFromEnvironment(
   };
 }
 
+export function managedTextPriceCatalogFromEnvironment(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): ManagedTextPriceCatalog {
+  return {
+    deepseekInputPerMillionTokensMicros: requiredPositiveMicros(
+      environment.REMIND_PRICE_DEEPSEEK_INPUT_PER_MILLION_TOKENS_MICROS,
+    ),
+    deepseekOutputPerMillionTokensMicros: requiredPositiveMicros(
+      environment.REMIND_PRICE_DEEPSEEK_OUTPUT_PER_MILLION_TOKENS_MICROS,
+    ),
+  };
+}
+
+export function managedTranscriptionPriceCatalogFromEnvironment(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): ManagedTranscriptionPriceCatalog {
+  return {
+    dashscopeAsrPerSecondMicros: requiredPositiveMicros(
+      environment.REMIND_PRICE_DASHSCOPE_ASR_PER_SECOND_MICROS,
+    ),
+  };
+}
+
+export function managedTranscriptionCost(
+  catalog: ManagedTranscriptionPriceCatalog,
+  durationSeconds: number,
+): bigint {
+  return (
+    catalog.dashscopeAsrPerSecondMicros *
+    BigInt(validDurationSeconds(durationSeconds))
+  );
+}
+
 export function estimateManagedImageCost(
   catalog: ManagedMediaPriceCatalog,
   imageCount = 1,
@@ -55,7 +95,7 @@ export function estimateManagedTranscriptionCost(
 }
 
 export function estimateManagedTextCost(
-  catalog: ManagedMediaPriceCatalog,
+  catalog: ManagedTextPriceCatalog,
   inputTokens: number,
   maximumOutputTokens: number,
 ): bigint {
@@ -72,7 +112,7 @@ export function estimateManagedTextCost(
 }
 
 export function actualManagedTextCost(
-  catalog: ManagedMediaPriceCatalog,
+  catalog: ManagedTextPriceCatalog,
   promptTokens: number,
   completionTokens: number,
 ): bigint {
@@ -101,7 +141,7 @@ function requiredPositiveMicros(value: string | undefined): bigint {
 }
 
 function validDurationSeconds(value: number): number {
-  if (!Number.isInteger(value) || value < 1 || value > 21_600) {
+  if (!Number.isInteger(value) || value < 1 || value > 43_200) {
     throw new Error('invalid_media_duration');
   }
   return value;

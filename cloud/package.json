@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "operator:bootstrap-managed-consumer": "node dist/bootstrap-managed-consumer.js",
     "migrate": "node dist/migrate.js",
     "rotate:credentials": "node dist/rotate-credentials.js",
     "smoke:cos": "node dist/cos-smoke.js",
@@ -16,11 +17,13 @@
   },
   "dependencies": {
     "cos-nodejs-sdk-v5": "^3.0.0",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/pg": "^8.20.0",
+    "@types/qrcode": "^1.5.6",
     "typescript": "~5.9.2",
     "vitest": "^4.1.10"
   }

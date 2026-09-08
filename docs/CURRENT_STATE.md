@@ -1,13 +1,13 @@
 # ReMind current state
 
 > This is the single current checkpoint for starting a new ReMind task.
-> Last verified: 2026-08-13, Asia/Shanghai.
+> Last verified: 2026-08-17, Asia/Shanghai.
 
 ## Source authority
 
 - Authoritative checkout: `/Users/stone/Documents/remind`
 - Authoritative branch: `main`
-- Current continuity checkpoint: `94e1fa0`
+- Current authoritative feature checkpoint: `ab5e273`
 - The 59 commits that had accumulated on `codex/stage7-cloud-health-baseline`
   were fast-forwarded into `main` on 2026-08-11. The current main worktree was
   clean immediately after that operation.
@@ -34,6 +34,9 @@ two runtime modes inside the personal test app, and one development environment.
    - Current device: Redmi Note 13 Pro, Android 16
    - This app can expose both cloud and local runtime modes when both service
      addresses are included in its build configuration.
+- Development source after `47e68ff` no longer exposes that mode distinction
+  in the consumer UI. The hosted service is an implementation detail for
+  ordinary users; only `ReMind Local` keeps self-hosting controls.
    - The `preview` and `preview-local` EAS profile names refer to internal build
      profiles for this same personal test app. `preview-local` is not the separate
      public `ReMind Local` product.
@@ -91,6 +94,228 @@ personal test app, and 1 development environment.**
   build and explicit installation verification.
 
 ## Pending development changes
+
+- The authoritative `main` working tree contains the first consumer-experience
+  redesign batch requested before the next signed APK. The home screen now puts
+  the three primary actions in the first viewport: capture, `问 ReMind`, and the
+  current day's organization; the `问 ReMind` and `今天` cards now occupy equal
+  width inside one shared action surface. Both sides use the same title, arrow,
+  and supporting-text hierarchy; today's count is no longer displayed as an
+  oversized standalone number. It also surfaces active and failed processing as
+  actionable status banners that open the matching library filter; original
+  content preservation and retry guidance are stated next to failures. The
+  `问 ReMind` home action is intentionally text-only, without a decorative star
+  mark.
+- The same batch defines a single user-facing processing sequence (`已经收到` →
+  `正在获取内容` → `正在转写` → `正在整理` → completion), adds tested managed-media
+  `忆粒` estimates for known durations, and keeps provider currency visible only
+  on the self-hosted path. Consumer intelligent settings now open directly on
+  the controls for the managed service and link automation instead of showing a
+  decorative hero and a long conceptual explanation.
+- The visual system was simplified across the App: Android's generic serif font
+  was removed, the palette received clearer text contrast, the home capture and
+  action hierarchy use fewer hard borders, recent-note cards use quieter depth,
+  and the bottom navigation is now a contained floating surface. This is a
+  coherent hierarchy change, not only a color refresh.
+- The combined P1/P2 source batch adds user-controlled related-memory frequency
+  (`关闭` / `偶尔` / `多一些`) and presents every proactive recall as an explicit
+  recent-record versus past-record pair. It also adds evidence-safe organization
+  density presets (`简洁` / `适中` / `深入`) for daily and link organization;
+  these preferences are included in the portable JSON backup without exporting
+  device-specific Vault paths or service settings.
+- Obsidian export now marks only the title and core note body as an editable
+  ReMind region. A manual `导入 Obsidian 修改` action can bring those changes
+  back. Export refuses to overwrite an externally changed file, and import
+  refuses to choose a winner when the App and Vault both changed after the last
+  export. Older Markdown without the verified edit markers is left untouched.
+  Search/source filtering, cited multi-record Q&A, daily cross-record synthesis,
+  theme contributions/conflicts, reclassification, link snapshots, media
+  timestamps, and JSON migration were already present and remain part of this
+  combined validation batch.
+- Verification for this uncommitted batch on 2026-08-17: App TypeScript passed,
+  all 349 tests in 89 files passed; cloud TypeScript and all 223 tests in 54
+  files passed; and an Expo SDK 54 Android export completed at
+  `/tmp/remind-p1-p2-export.nWAA0I`. The follow-up unified home-action layout
+  also passed App TypeScript, all 349 tests, and an Android export at
+  `/tmp/remind-home-actions-export.igmFWI`. No signed APK was generated or installed;
+  build 31 remains the phone-verified delivery. The organization-style cloud
+  change was subsequently deployed as `ab5e273`, as recorded below. The local
+  gateway was not started.
+
+- Managed link transcription checkpoint `aaa2f44` keeps the existing Alibaba
+  Cloud Bailian `paraformer-v2` integration and makes it the default audio/video
+  transcription path for ordinary managed accounts. Supported Xiaoyuzhou audio
+  and Xiaohongshu video URLs are sent directly from their validated public CDN
+  locations; ordinary managed media no longer falls back to the shared server
+  Whisper path when Bailian pricing or configuration is unavailable.
+- Server Whisper is now restricted by the private
+  `REMIND_SERVER_WHISPER_USER_IDS` UUID allowlist. The current single production
+  account is the only allowlisted account; its link audio/video continues to use
+  server Whisper without consuming `忆粒`. BYOK users outside that allowlist use
+  their own configured speech provider. The production UUID remains only in the
+  private server environment and is not hardcoded in source.
+- Bailian transcription reserves `忆粒` from the trusted media duration before
+  provider submission, then settles from Paraformer's returned effective speech
+  duration and releases the unused reservation. Migration
+  `0018_managed_link_transcription.sql` generalized the prior Xiaoyuzhou task
+  table, attached durable billing-job state, and added DashScope provider health.
+- The consumer `忆粒与用量` page now explains that a five-minute video costs
+  about 2.4 `忆粒` to transcribe and usually 3–5 after organization, while a
+  one-hour Xiaoyuzhou episode costs about 28.8 to transcribe and usually 30–35
+  after organization. It also states that actual transcription settles by
+  effective speech duration and unused reservation is returned.
+- Verification for `aaa2f44`: App and cloud TypeScript passed, the complete root
+  suite passed 333 tests in 85 files, the cloud production build passed, and an
+  Expo SDK 54 Android export completed at
+  `/tmp/remind-managed-transcription-export`. No signed APK was generated or
+  installed, as requested while the broader redesign is still being combined.
+
+- WeChat onboarding copy checkpoint `47e68ff` removes the implementation-focused
+  `不需要电脑或绑定码` statement. The consumer path now starts with `开始连接`,
+  explains that tapping `开始连接微信` generates a QR code valid for ten minutes,
+  and repeats that real server TTL on the QR screen before the same-phone
+  screenshot instructions.
+- Real-phone end-to-end re-pairing completed on 2026-08-17 after the reset below:
+  the App generated a QR code, WeChat scan and confirmation succeeded, the cloud
+  saved a new encrypted active connection, polling resumed, the user sent a test
+  message, and the App received it. Read-only cloud verification found one active
+  connection and the stored WeChat message count increased from 18 to 19. This
+  verifies self-service re-pairing and post-pair capture without Codex, terminal,
+  a local gateway, or a manual cloud restart on the user path.
+- Verification for `47e68ff`: App TypeScript passed, all 326 tests in 84 files
+  passed, and an Android Expo export completed at
+  `/tmp/remind-wechat-onboarding-copy-export`. The cloud release remains
+  `54841e8`; no signed APK was built or installed.
+
+- Consumer header checkpoint `22f1877` replaces the ambiguous one-character
+  `设` mark with a wider button labelled `设置`. TypeScript passed, all 326 tests
+  in 84 files passed, and an Android Expo export completed at
+  `/tmp/remind-settings-label-export`; no signed APK was built or installed.
+- At the user's explicit request on 2026-08-17, the single production cloud
+  WeChat connection was revoked so the new in-App QR pairing flow can be tested
+  from its first screen. Before the mutation, a readable custom-format database
+  backup was created at
+  `/opt/remind/shared/backups/remind-pre-wechat-repair-test-20260817T090500Z.dump`
+  (12,311,564 bytes, mode 0600, `ubuntu:ubuntu`). The transaction cancelled the
+  current poll, marked the connection revoked, cleared its provider hash and
+  encrypted credentials, advanced its poll generation, and removed its poll job.
+- Immediate post-reset verification found zero active WeChat connections, while all 18
+  existing WeChat messages and the corresponding 18 cloud notes remained. Public
+  readiness stayed healthy on cloud release `54841e8`. The local gateway was not
+  started. The fresh real-phone QR scan and post-connection capture were then
+  completed successfully as recorded above.
+
+- Consumer clarity checkpoint `f00ba85` renames `智能整理` settings to
+  `智能功能` and defines three separate concepts: organizing one record into a
+  reviewable note, asking ReMind across existing records with sources, and
+  choosing the automation applied after link content is retrieved. Asking
+  ReMind is not presented as part of organization, and the link options are
+  explicitly scoped to link automation rather than ordinary text or Q&A.
+- The consumer copy no longer promises later image, audio, or video intelligence.
+  Link choices are now `先预览再保存`, `自动保存为笔记`, and
+  `自动保存并归类`. The connected-WeChat screen explains that the user sends
+  text or forwards supported public links to the assistant chat created during
+  connection; ReMind saves the original first, then applies the selected link
+  handling mode and syncs it into the App.
+- Verification for `f00ba85` on 2026-08-17: App TypeScript passed, all 326 tests
+  in 84 files passed, and an Android Expo export completed successfully at
+  `/tmp/remind-intelligence-wechat-clarity-export`. No cloud deployment, signed
+  APK build, phone installation, or local gateway start occurred.
+
+- Consumer settings checkpoint `cd72f3d` consolidates the ordinary ReMind home
+  header to one `设置` entry. WeChat connection, intelligent organization,
+  `忆粒与用量`, and the Obsidian note library now live directly inside settings;
+  the redundant top-level `微` and `库` entries remain available only in
+  `ReMind Local`.
+- The consumer settings sheet no longer shows the decorative readiness mark,
+  the “ReMind 已经准备就绪” explanation, the cloud/local selector, or the
+  `功能与使用` heading. Its short descriptions now identify only the action
+  behind each row. `运行状态与诊断` remains visible in Expo/development through
+  `__DEV__`, stays available in `ReMind Local`, and is hidden from production
+  consumer builds.
+- Verification for `cd72f3d` on 2026-08-17: App TypeScript passed, all 326 tests
+  in 84 files passed, and an Android Expo export completed successfully at
+  `/tmp/remind-settings-consolidation-export`. This is source/export validation,
+  not a signed APK build or phone installation. The deployed cloud release
+  remains `54841e8`, the phone-installed signed delivery is unchanged, and the
+  local gateway was not started.
+
+- Consumer experience checkpoint `dcd859d`, with Node-24-compatible cloud lock
+  follow-up `54841e8`, removes the cloud/local choice and “cloud connected”
+  account details from ordinary ReMind settings. The header now opens plain
+  ReMind settings, whose primary entries are WeChat, intelligent organization,
+  and `忆粒`; diagnostics remains available as a help path. `ReMind Local`
+  retains explicit service addresses, runtime modes, API keys, task quotes, and
+  device controls.
+- The same batch simplifies `忆粒` activity by collapsing a completed job's
+  reserve/settle/release ledger sequence into one actual-use row while keeping
+  active reservations visible. `问 ReMind` now separates the user's question,
+  evidence status, answer, citations, and follow-up questions instead of placing
+  them in one large answer card. The rejected legacy `灵` mark and consumer
+  currency symbol were removed.
+- Consumer WeChat connection now has an in-App self-service QR flow. The cloud
+  requests the short-lived iLink QR, returns only a rendered QR image plus an
+  authenticated encrypted session token bound to the current ReMind account,
+  rate-limits creation and checks, accepts the optional WeChat verification
+  number in the App, and saves protocol credentials only after WeChat confirms.
+  The session expires after ten minutes and neither API responses nor logs expose
+  confirmed credentials. The existing six-digit gateway binding flow remains
+  for `ReMind Local`.
+- Verification for this batch on 2026-08-17: App TypeScript passed, 326 tests in
+  84 files passed, and an Android Expo export completed; cloud TypeScript and
+  production build passed, 209 tests in 52 files passed, and production
+  dependencies reported zero known vulnerabilities. A fresh-account real QR
+  scan has not yet been completed because the current production test account is
+  already bound; do not disturb that working connection merely to exercise the
+  first-time path. The settings and already-connected WeChat screens still need
+  the user's Expo visual review before a signed APK is produced.
+
+- Authoritative `main` through commit `06e1a49` contains the first
+  pass of the zero-configuration consumer experience. A clean consumer install
+  prefers the hosted cloud service, creates its anonymous device account in the
+  background, securely retains the one-time recovery code until acknowledged,
+  and enables ReMind-managed AI without asking the user for a provider or API
+  key. The consumer settings describe managed intelligence, privacy, trial
+  credit, and usage; BYOK fields and local service addresses remain available
+  only in the explicit `ReMind Local` build variant.
+- The same source checkpoint extends managed AI to synchronous and durable text
+  organization. New managed accounts may receive an operator-configured starter
+  credit, text calls reserve a server-priced upper bound before contacting the
+  provider, settle from provider token usage, and release the reservation on
+  failure. Public enablement is fail-closed behind
+  `REMIND_CONSUMER_MANAGED_AI_ENABLED`; the starter credit, platform DeepSeek
+  credential, price table, and existing cost limits must all be explicitly
+  configured. No payment entry point was opened.
+- The managed rollout is now intentionally split: DeepSeek-backed text
+  organization and memory Q&A can be enabled while media remains in BYOK mode.
+  Consumer-managed text requires only the platform DeepSeek credential and the
+  two DeepSeek text rates; it does not implicitly enable managed image, audio,
+  or video processing.
+- Consumer-facing usage is branded as `忆粒`, not currency or generic points.
+  One `忆粒` is a presentation unit over the existing integer server ledger;
+  consumer screens show grants, holds, usage, returns, and safety limits only in
+  `忆粒`. ReMind Local continues to show provider costs directly for self-hosters.
+- The user authorized the single-account private test to reuse the account's
+  existing encrypted DeepSeek credential as the temporary platform credential.
+  The audited bootstrap requires exactly one active account and one credential,
+  never prints the secret, writes the server environment atomically with private
+  permissions, and grants 200 `忆粒` through an idempotent gift-ledger entry.
+- A read-only production audit on 2026-08-17 found that daily local backups and
+  encrypted off-site uploads had continued through 2026-08-16. The health check
+  nevertheless reported a stale backup because its filename sort selected the
+  older `remind-pre-*` release backup instead of newer `remind-<timestamp>` daily
+  backups. Release `06e1a49` restricts that check to daily backup filenames; the
+  corrected health check is now active and passes in production.
+- Verification on 2026-08-17: App and cloud TypeScript passed; all 158 App
+  source tests in 40 files and all 198 cloud tests in 49 files passed (the root
+  aggregate suite also passed 313 tests in 81 files); the cloud production
+  build passed; Expo SDK 54 public config preserved `ReMind`
+  (`app.remind.notes`) and `ReMind Local` (`app.remind.notes.local`) as separate
+  variants; and Android Expo exports completed successfully for both variants.
+  Their unminified bundles were also verified to differ at the compile-time app
+  boundary. The cloud portion is deployed as described below. The consumer App
+  UI has not been built as a signed APK, installed, or phone-verified; build 31
+  remains the installed delivery.
 
 - The authoritative `main` development source contains a pending-release fix for
   cloud WeChat pullback: repeated cloud captures no longer count as newly
@@ -171,12 +396,14 @@ personal test app, and 1 development environment.**
 - The durable background-insight close/reopen phone scenario was intentionally
   deferred by the user. Automated coverage and cloud deployment are complete,
   but do not record that specific interaction as phone-verified yet.
-- The next personal cloud test APK is configured as ReMind `1.0.2`, Android
-  build 33, package `app.remind.notes`. GitHub Actions branch
-  `cloud-build-33` produces artifact
-  `ReMind-1.0.2-build33-diagnostics-background-insights`; this is a build target,
-  not an installed or verified delivery until the workflow succeeds and the APK
-  is installed on the Redmi.
+- Personal cloud test APK ReMind `1.0.2`, Android build 33, package
+  `app.remind.notes`, completed successfully in GitHub Actions on 2026-08-13.
+  Workflow run `31697617120` built remote commit `be96768` from branch
+  `cloud-build-33`, verified the APK archive, generated its SHA-256 file, and
+  uploaded artifact `ReMind-1.0.2-build33-diagnostics-background-insights`
+  (GitHub artifact ID `9180172967`, retained for 14 days). This is a completed
+  signed build but is not yet installed or phone-verified; build 31 remains the
+  delivery currently verified on the Redmi.
 
 ## Cloud mode
 
@@ -185,8 +412,9 @@ personal test app, and 1 development environment.**
 - Public readiness endpoint:
   `https://remind.43-129-237-189.sslip.io/ready`
 - On 2026-08-11 the endpoint returned HTTP 200 with the database ready.
-- The readiness response does not currently expose a Git release SHA, so the exact
-  deployed source commit must not be inferred from repository HEAD alone.
+- The readiness response exposes a safe release identifier. Continue to verify it
+  directly because repository HEAD, installed App build, and cloud release can
+  advance independently.
 - Last documented phone verification before later source work was build 31.
 - Cloud release `6004964` was deployed on 2026-08-13 after recoverable backup
   `remind-pre-6004964-20260813T111902Z.dump`. PostgreSQL, migration, API, Worker,
@@ -194,10 +422,87 @@ personal test app, and 1 development environment.**
   `6004964`, the Worker reported server Whisper and Xiaoyuzhou Paraformer enabled,
   and existing user/note counts remained present. The local Mac gateway remained
   unloaded during deployment.
+- Cloud release `06e1a49` was deployed on 2026-08-17 from a committed Git
+  archive after verified custom-format backup
+  `remind-pre-06e1a49-20260817T040452Z.dump` (12,167,983 bytes, mode 0600).
+  PostgreSQL migration, API, Worker, backup, Caddy, Whisper, public readiness,
+  and the corrected backup health check passed. The restarted backup service
+  also created and uploaded encrypted backup
+  `remind-20260817T040708Z.dump.enc`.
+- The user-authorized single-account bootstrap reused the existing encrypted
+  DeepSeek credential without printing it, enabled managed text while keeping
+  media in BYOK mode, and granted 200 `忆粒` through one gift-ledger entry. The
+  account is `managed`, has no reserved usage, and both API and Worker loaded the
+  managed configuration successfully. The prior private environment remains at
+  `/opt/remind/shared/remind.env.pre-06e1a49` with mode 0600 for emergency
+  rollback; the active environment remains mode 0600 and `ubuntu:ubuntu`.
+- Expo real-phone verification on 2026-08-17 completed the authenticated
+  phone-to-managed-DeepSeek billing path for `问 ReMind`. The visible response
+  correctly reported that there was not enough direct evidence for “loop
+  engineering”, separated potentially related saved material from direct facts,
+  and offered evidence-grounded follow-up questions. The corresponding
+  `ai.text` job succeeded with DeepSeek: 114,880 micros were reserved, 10,247
+  micros were settled (about 1.02 `忆粒`), the unused 104,633 micros were
+  released, reserved usage returned to zero, and the account balance became
+  1,989,753 micros (displayed as 198.98 `忆粒`). Public readiness still reported
+  release `06e1a49`, and the server health check passed. This verifies the live
+  Expo development session, not a newly signed or installed APK; build 31
+  remains the phone-installed delivery.
+- Cloud release `54841e8` was deployed on 2026-08-17 after verified custom-format
+  backup `remind-pre-54841e8-20260817T082520Z.dump` (12,293,455 bytes, mode
+  0600). The first build attempt from `dcd859d` stopped before symlink switching
+  because the Node 24 container rejected an incomplete optional-dependency lock;
+  `54841e8` regenerated that lock with the server npm version and then deployed
+  successfully. API, Worker, backup, Caddy, PostgreSQL, Whisper, public readiness,
+  and the health check passed; `/ready` reported `54841e8`. The self-service
+  WeChat endpoint rejects unauthenticated requests, its QR runtime dependency
+  loaded in the production API container, the existing managed account remained
+  at 1,989,753 micros with zero reserved usage, and the existing cloud WeChat
+  connection remained online. No local gateway was started.
+- Cloud release `aaa2f44` was deployed on 2026-08-17 from the committed source
+  after verified custom-format PostgreSQL backup
+  `remind-pre-aaa2f44-20260817T101123Z.dump` (12,326,488 bytes, mode 0600) and
+  private environment backup
+  `remind.env.pre-aaa2f44-20260817T101123Z` (mode 0600). Migration 0018 applied,
+  public readiness reported `aaa2f44`, the health check passed, DashScope provider
+  health was active, and the Worker loaded one Whisper-allowlisted account plus
+  the Bailian price and credentials without exposing their values.
+- Post-deployment checks confirmed the production routing artifact selects
+  `whisper` for the allowlisted account and `dashscope` for an ordinary managed
+  account. The existing account balance remained 1,989,753 micros with zero
+  reserved usage, one cloud WeChat connection remained active, and the stored
+  WeChat note count remained 19. No synthetic ordinary account or billable media
+  task was created solely for deployment testing; the first real ordinary-user
+  transcription still needs end-to-end ledger observation. The Mac local gateway
+  remained unloaded.
+- Cloud release `ab5e273` was deployed on 2026-08-18 from a dedicated committed
+  cloud-only change adding `简洁` / `适中` / `深入` organization preferences to
+  daily and link organization while preserving citation validation. Before the
+  switch, a custom-format PostgreSQL backup was created at
+  `remind-pre-ab5e273-20260818T091237Z.dump` (12,998,131 bytes, mode 0600) and
+  the private environment was copied to
+  `remind.env.pre-ab5e273-20260818T091237Z` (mode 0600). Cloud TypeScript, all
+  223 tests in 54 files, and the production build passed before deployment.
+  Public readiness and both API/Worker image metadata reported `ab5e273`; the
+  live artifact contains the organization preference handling, all long-running
+  containers are healthy, the server health check passed, DashScope remained
+  active, billing reservations remained zero, one cloud WeChat connection and
+  all 19 existing messages remained, and polling resumed within 15 seconds.
+  The Mac local gateway remained unloaded. No APK was generated or installed.
 
 ## WeChat polling safety
 
 - The active cloud WeChat connection polls in the cloud Worker.
+- On 2026-09-07, read-only inspection found that the old local
+  `app.remind.gateway` LaunchAgent had been started automatically at 10:50 on
+  2026-08-26, immediately after the Mac rebooted at 10:48. Its plist still had
+  both `RunAtLoad` and `KeepAlive` enabled from the 2026-08-11 installation.
+  The service was booted out, persistently disabled in the user launchd domain,
+  and its plist was retained as `app.remind.gateway.plist.disabled`; the saved
+  `~/.remind-weixin/config.json` checksum was unchanged. The local Worker remains
+  available, while the local WeChat gateway is now unloaded. The service installer
+  now requires the explicit `REMIND_ENABLE_LOCAL_WECHAT=1` opt-in before it will
+  install or restart that gateway.
 - The Mac's local `app.remind.gateway` must remain unloaded during cloud-mode use.
   Running it against the same WeChat account can compete for the same cursor and
   cause a message to enter local D1 instead of the cloud account.
@@ -207,6 +512,45 @@ personal test app, and 1 development environment.**
   local gateway and stored in local D1. This explains why it did not appear in the
   cloud-mode phone inbox. Do not claim the cloud parser rejected that link without
   inspecting the cloud poll state first.
+
+## Bilibili video ingestion
+
+- A production database audit on 2026-09-07 found that the user's 2026-09-06
+  23:02 Bilibili short-link job failed before transcription with
+  `link_http_412`. The deployed `ab5e273` parser still treats Bilibili as an
+  ordinary webpage and therefore reaches Bilibili's blocked HTML path.
+- Cloud release `a908b79` now resolves a
+  `b23.tv` redirect only until it obtains a BV identifier, then reads Bilibili
+  metadata and subtitles through the platform endpoints without fetching the
+  blocked video page. If the richer metadata endpoint returns 412 for the Hong
+  Kong datacenter IP, the parser falls back to the official player pagelist for
+  the CID, duration, and part title. It prefers usable Chinese subtitles; when
+  none exist, the private allowlisted account downloads a temporary audio-only
+  DASH stream from an allowlisted Bilibili/Akamai CDN with the required Referer
+  and Range headers. The audio is placed briefly in the existing private COS,
+  exposed through a one-hour signed URL to DashScope Paraformer, and deleted in
+  the processing cleanup path. Expiring Bilibili CDN URLs are never persisted.
+- Before the first rollout, PostgreSQL was backed up to
+  `remind-pre-f2de2e9-20260907T093825.dump` (26,578,762 bytes, mode 0600), its
+  restore catalog was validated inside the PostgreSQL container, and the private
+  environment was copied to `remind.env.pre-f2de2e9-20260907T093825` (mode 0600).
+  Migration `0019_bilibili_video_processing.sql` is applied and the live notes
+  constraint includes `bilibili`. Public readiness and the server health check
+  pass on release `a908b79`.
+- The exact failed `https://b23.tv/MET72Ph` record was retried end to end on
+  2026-09-07. It now reports `ready`, `bilibili`, `video`, 2,088 seconds, and
+  media status `succeeded`; its canonical source is
+  `https://www.bilibili.com/video/BV1gbEB6kESt`, and 17,070 characters of source
+  evidence include the `视频语音转写` section. The successful final job completed
+  on its first attempt with zero estimated, reserved, and actual platform billing
+  micros; the shared DashScope account still incurs its underlying provider cost,
+  approximately 0.167 yuan at the configured 80 micros per second. The cloud
+  WeChat connection remained active with zero failures and 25 messages, while the
+  Mac gateway remained disabled and unloaded. No APK was generated or installed.
+- The final local checks passed TypeScript, 235 cloud tests in 56 files, and 361
+  repository tests in 91 files. The exact link had also produced 75 valid ffmpeg
+  audio segments during local fallback validation, but production now uses the
+  faster temporary-COS Paraformer route for this private allowlisted account.
 
 ## Current data boundaries
 

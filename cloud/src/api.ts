@@ -25,7 +25,13 @@ import {
   getBillingAccount,
   listLedgerEntries,
 } from './billing.js';
-import { apiPort, mediaProviderMode, releaseIdentifier } from './config.js';
+import {
+  apiPort,
+  consumerManagedAiEnabled,
+  consumerStarterCreditMicros,
+  mediaProviderMode,
+  releaseIdentifier,
+} from './config.js';
 import { credentialCipherFromEnvironment } from './credential-cipher.js';
 import { closeDatabase, database } from './database.js';
 import {
@@ -44,7 +50,10 @@ import {
 import { getUserJob, requestJobCancellation } from './jobs.js';
 import { ProviderPausedError } from './provider-health.js';
 import { MediaProviderHttpError } from './media-provider-clients.js';
-import { MediaProviderAuthorizationError } from './media-provider-routing.js';
+import {
+  managedProviderCredentialsFromEnvironment,
+  MediaProviderAuthorizationError,
+} from './media-provider-routing.js';
 import {
   requestClientAddress,
   RequestRateLimiter,
@@ -59,6 +68,7 @@ import {
 } from './media-processing.js';
 import {
   managedMediaPriceCatalogFromEnvironment,
+  managedTextPriceCatalogFromEnvironment,
   ManagedMediaPricingUnavailableError,
 } from './media-pricing.js';
 import { objectStoreFromEnvironment } from './object-store.js';
@@ -70,6 +80,7 @@ import {
   generateMemoryInsight,
   suggestThemeMerge,
 } from './organization.js';
+import { runManagedOrganization } from './managed-organization.js';
 import {
   createLinkOrganizationJob,
   getLinkOrganizationJob,
@@ -83,6 +94,11 @@ import {
   listCloudWechatCaptures,
   updateCloudWechatReplyMode,
 } from './wechat-bindings.js';
+import { saveWechatConnection } from './wechat-connections.js';
+import {
+  checkWechatLogin,
+  startWechatLogin,
+} from './wechat-login.js';
 import type { WechatProtocolCredentials } from './wechat-protocol.js';
 
 const port = apiPort();
@@ -90,10 +106,24 @@ const credentialCipher = credentialCipherFromEnvironment();
 const objectStore = objectStoreFromEnvironment();
 const configuredMediaProvider = mediaProviderMode();
 const release = releaseIdentifier();
+const managedConsumerEnabled = consumerManagedAiEnabled();
+const starterCreditMicros = consumerStarterCreditMicros();
 const managedMediaPriceCatalog =
   configuredMediaProvider === 'remote'
     ? managedMediaPriceCatalogFromEnvironment()
     : null;
+const managedTextPriceCatalog = managedConsumerEnabled
+  ? managedTextPriceCatalogFromEnvironment()
+  : null;
+const managedCredentials = managedProviderCredentialsFromEnvironment();
+if (
+  managedConsumerEnabled &&
+  (!managedTextPriceCatalog || !managedCredentials.deepseek)
+) {
+  throw new Error(
+    'Managed consumer AI requires text pricing and a platform DeepSeek credential',
+  );
+}
 const MAX_JSON_BODY_BYTES = 96 * 1024;
 const MAX_ORGANIZATION_JSON_BODY_BYTES = 384 * 1024;
 const MAX_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -152,7 +182,12 @@ const server = createServer(async (request, response) => {
         sendJson(response, 400, { error: 'invalid_request' });
         return;
       }
-      const account = await createAnonymousAccount(database, registration);
+      const account = await createAnonymousAccount(database, registration, {
+        aiMode: managedConsumerEnabled ? 'managed' : 'disabled',
+        starterCreditMicros: managedConsumerEnabled
+          ? starterCreditMicros
+          : 0n,
+      });
       sendJson(response, 201, account);
       return;
     }
@@ -307,6 +342,106 @@ const server = createServer(async (request, response) => {
         200,
         await getCloudWechatStatus(database, account.userId),
       );
+      return;
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/wechat/login'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const status = await getCloudWechatStatus(database, account.userId);
+      if (status.bound) {
+        sendJson(response, 409, { error: 'wechat_already_bound' });
+        return;
+      }
+      try {
+        sendJson(
+          response,
+          201,
+          await startWechatLogin(credentialCipher, account.userId),
+        );
+      } catch (error) {
+        console.warn(
+          'Unable to start WeChat login',
+          error instanceof Error ? error.message : 'unknown error',
+        );
+        sendJson(response, 503, { error: 'wechat_login_unavailable' });
+      }
+      return;
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url === '/api/v1/wechat/login/check'
+    ) {
+      const account = await authenticateAccessToken(
+        database,
+        request.headers.authorization,
+      );
+      if (!account) {
+        sendJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const sessionToken =
+        isRecord(body) && typeof body.sessionToken === 'string'
+          ? body.sessionToken
+          : '';
+      const verificationCode =
+        isRecord(body) && typeof body.verificationCode === 'string'
+          ? body.verificationCode.trim()
+          : undefined;
+      if (
+        !sessionToken ||
+        (verificationCode !== undefined && !/^\d{4,8}$/.test(verificationCode))
+      ) {
+        sendJson(response, 400, { error: 'invalid_request' });
+        return;
+      }
+      try {
+        const existing = await getCloudWechatStatus(database, account.userId);
+        if (existing.bound) {
+          sendJson(response, 200, {
+            status: 'connected',
+            sessionToken: null,
+          });
+          return;
+        }
+        const result = await checkWechatLogin(
+          credentialCipher,
+          account.userId,
+          sessionToken,
+          verificationCode,
+        );
+        if (result.status === 'connected' && result.credentials) {
+          await saveWechatConnection(
+            database,
+            credentialCipher,
+            account.userId,
+            result.credentials,
+          );
+        }
+        sendJson(response, 200, {
+          status: result.status,
+          sessionToken: result.sessionToken,
+        });
+      } catch (error) {
+        const code = error instanceof Error ? error.message : '';
+        if (code === 'invalid_wechat_login_session') {
+          sendJson(response, 400, { error: code });
+        } else {
+          console.warn('Unable to check WeChat login', code || 'unknown error');
+          sendJson(response, 503, { error: 'wechat_login_unavailable' });
+        }
+      }
       return;
     }
 
@@ -1030,47 +1165,70 @@ const server = createServer(async (request, response) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 60_000);
       try {
-        const action = organizationMatch[1];
-        const result =
+        const action = organizationMatch[1] ?? '';
+        const invoke = (execution = {}) =>
           action === 'organize'
-            ? await organizeDaily(
+            ? organizeDaily(
                 database,
                 credentialCipher,
                 account.userId,
                 body,
                 controller.signal,
+                execution,
               )
             : action === 'link-organize'
-              ? await organizeLink(
+              ? organizeLink(
                   database,
                   credentialCipher,
                   account.userId,
                   body,
                   controller.signal,
+                  execution,
                 )
               : action === 'theme-merge'
-                ? await suggestThemeMerge(
-                  database,
-                  credentialCipher,
-                  account.userId,
-                  body,
-                  controller.signal,
+                ? suggestThemeMerge(
+                    database,
+                    credentialCipher,
+                    account.userId,
+                    body,
+                    controller.signal,
+                    execution,
                   )
                 : action === 'memory-question'
-                  ? await answerMemoryQuestion(
+                  ? answerMemoryQuestion(
                       database,
                       credentialCipher,
                       account.userId,
                       body,
                       controller.signal,
+                      execution,
                     )
-                  : await generateMemoryInsight(
+                  : generateMemoryInsight(
                       database,
                       credentialCipher,
                       account.userId,
                       body,
                       controller.signal,
+                      execution,
                     );
+        if (
+          account.aiMode === 'managed' &&
+          (!managedConsumerEnabled || !managedTextPriceCatalog)
+        ) {
+          sendJson(response, 503, { error: 'managed_service_unavailable' });
+          return;
+        }
+        const result = account.aiMode === 'managed'
+          ? await runManagedOrganization({
+              pool: database,
+              userId: account.userId,
+              operation: action,
+              body,
+              priceCatalog: managedTextPriceCatalog!,
+              managedCredentials,
+              run: invoke,
+            })
+          : await invoke();
         sendJson(response, 200, result);
       } finally {
         clearTimeout(timer);
@@ -1094,6 +1252,10 @@ const server = createServer(async (request, response) => {
       const mode = isRecord(body) ? body.mode : undefined;
       if (!isAiUsageMode(mode)) {
         sendJson(response, 400, { error: 'invalid_ai_mode' });
+        return;
+      }
+      if (mode === 'managed' && !managedConsumerEnabled) {
+        sendJson(response, 503, { error: 'managed_service_unavailable' });
         return;
       }
       const settings = await updateAiMode(database, account.userId, mode);

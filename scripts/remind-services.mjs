@@ -50,9 +50,11 @@ const allServices = [
   },
 ];
 const gatewayConfigPath = join(homedir(), '.remind-weixin', 'config.json');
+const localWechatEnabled = process.env.REMIND_ENABLE_LOCAL_WECHAT === '1';
 const services = allServices.filter(
   (service) =>
-    service.logName === 'worker' || existsSync(gatewayConfigPath),
+    service.logName === 'worker' ||
+    (localWechatEnabled && existsSync(gatewayConfigPath)),
 );
 
 if (command === 'install') {
@@ -88,6 +90,11 @@ function install() {
   }
 
   console.log('ReMind 后台服务已安装，会在 Mac 登录后自动启动。');
+  if (!localWechatEnabled && existsSync(gatewayConfigPath)) {
+    console.log(
+      '本地微信网关保持关闭；仅在明确设置 REMIND_ENABLE_LOCAL_WECHAT=1 时才会安装。',
+    );
+  }
   console.log(`日志目录：${logsDirectory}`);
 }
 

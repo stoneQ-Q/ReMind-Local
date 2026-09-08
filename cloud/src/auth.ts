@@ -29,6 +29,11 @@ export type CreatedAnonymousAccount = AuthSession & {
   recoveryCode: string;
 };
 
+export type NewAccountDefaults = {
+  aiMode?: 'disabled' | 'managed';
+  starterCreditMicros?: bigint;
+};
+
 export type AuthenticatedUser = {
   userId: string;
   deviceId: string;
@@ -39,18 +44,46 @@ export type AuthenticatedUser = {
 export async function createAnonymousAccount(
   pool: Pool,
   registration: DeviceRegistration,
+  defaults: NewAccountDefaults = {},
 ): Promise<CreatedAnonymousAccount> {
+  const aiMode = defaults.aiMode ?? 'disabled';
+  const starterCreditMicros = defaults.starterCreditMicros ?? 0n;
+  if (starterCreditMicros < 0n) {
+    throw new Error('starter credit must not be negative');
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const user = await client.query<{ id: string }>(
-      `INSERT INTO users DEFAULT VALUES RETURNING id`,
+      `INSERT INTO users (ai_mode) VALUES ($1) RETURNING id`,
+      [aiMode],
     );
     const userId = requiredRow(user.rows[0], 'user');
-    await client.query(
-      `INSERT INTO billing_accounts (user_id) VALUES ($1)`,
-      [userId],
+    const billing = await client.query<{ id: string }>(
+      `INSERT INTO billing_accounts (user_id, balance_micros)
+       VALUES ($1, $2)
+       RETURNING id`,
+      [userId, starterCreditMicros.toString()],
     );
+    if (starterCreditMicros > 0n) {
+      await client.query(
+        `INSERT INTO ledger_entries (
+           user_id, billing_account_id, job_id, kind, amount_micros,
+           balance_delta_micros, reserved_delta_micros,
+           balance_after_micros, reserved_after_micros,
+           idempotency_key, metadata_json
+         ) VALUES (
+           $1, $2, NULL, 'top_up', $3, $3, 0, $3, 0,
+           $4, '{"source":"gift","reason":"consumer_starter_credit"}'::jsonb
+         )`,
+        [
+          userId,
+          requiredRow(billing.rows[0], 'billing account'),
+          starterCreditMicros.toString(),
+          `consumer-starter:${userId}`,
+        ],
+      );
+    }
 
     const recoveryCode = createRecoveryCode();
     await client.query(

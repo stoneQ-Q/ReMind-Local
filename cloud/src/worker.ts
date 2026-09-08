@@ -6,8 +6,10 @@ import {
   WhisperFirstByokMediaProcessingProvider,
 } from './byok-media-provider.js';
 import {
+  consumerManagedAiEnabled,
   dashscopeConfig,
   mediaProviderMode,
+  serverWhisperUserIds,
   whisperServiceUrl,
   workerPollMs,
   xiaoyuzhouTranscriptionEnabled,
@@ -33,8 +35,13 @@ import {
   createMediaProcessingHandlers,
   ensureNextMediaProcessingJob,
 } from './media-processing.js';
-import { managedMediaPriceCatalogFromEnvironment } from './media-pricing.js';
 import {
+  managedMediaPriceCatalogFromEnvironment,
+  managedTranscriptionPriceCatalogFromEnvironment,
+  managedTextPriceCatalogFromEnvironment,
+} from './media-pricing.js';
+import {
+  managedProviderCredentialsFromEnvironment,
   requiredManagedProviderCredentialsFromEnvironment,
 } from './media-provider-routing.js';
 import { cleanupNextExpiredObject } from './object-files.js';
@@ -56,12 +63,39 @@ const credentialCipher = credentialCipherFromEnvironment();
 const objectStore = objectStoreFromEnvironment();
 const mediaMode = mediaProviderMode();
 const whisperUrl = whisperServiceUrl();
+const whisperUserIds = serverWhisperUserIds();
+const whisperClient = whisperUrl ? new WhisperMediaClient(whisperUrl) : null;
+if (whisperUserIds.size > 0 && !whisperClient) {
+  throw new Error('Server Whisper allowlist requires REMIND_WHISPER_URL');
+}
 const dashscope = dashscopeConfig();
 const paraformer = dashscope
   ? new ParaformerClient(dashscope.apiKey, dashscope.apiHost)
   : null;
 const xiaoyuzhouAudioEnabled =
   xiaoyuzhouTranscriptionEnabled() && Boolean(paraformer);
+const managedConsumerEnabled = consumerManagedAiEnabled();
+const managedMediaCredentials =
+  mediaMode === 'remote'
+    ? requiredManagedProviderCredentialsFromEnvironment()
+    : null;
+const managedMediaPriceCatalog =
+  mediaMode === 'remote' ? managedMediaPriceCatalogFromEnvironment() : null;
+const managedTextCredentials = managedConsumerEnabled
+  ? managedProviderCredentialsFromEnvironment()
+  : null;
+const managedTextPriceCatalog = managedConsumerEnabled
+  ? managedTextPriceCatalogFromEnvironment()
+  : null;
+const managedTranscriptionPriceCatalog =
+  managedConsumerEnabled && paraformer
+    ? managedTranscriptionPriceCatalogFromEnvironment()
+    : null;
+if (managedConsumerEnabled && !managedTextCredentials?.deepseek) {
+  throw new Error(
+    'Managed consumer AI requires text pricing and a platform DeepSeek credential',
+  );
+}
 const mediaHandlers: JobHandlers =
   mediaMode === 'mock'
     ? createMediaProcessingHandlers(database, objectStore)
@@ -73,7 +107,10 @@ const mediaHandlers: JobHandlers =
             ? new WhisperFirstByokMediaProcessingProvider(
                 database,
                 credentialCipher,
-                new WhisperMediaClient(whisperUrl),
+                whisperClient!,
+                undefined,
+                undefined,
+                whisperUserIds,
               )
             : new ByokMediaProcessingProvider(database, credentialCipher),
         )
@@ -85,10 +122,8 @@ const mediaHandlers: JobHandlers =
               database,
               credentialCipher,
               {
-                managedCredentials:
-                  requiredManagedProviderCredentialsFromEnvironment(),
-                managedPriceCatalog:
-                  managedMediaPriceCatalogFromEnvironment(),
+                managedCredentials: managedMediaCredentials!,
+                managedPriceCatalog: managedMediaPriceCatalog!,
               },
             ),
           )
@@ -104,7 +139,16 @@ const handlers: JobHandlers = new Map([
   ['wechat.poll', createWechatPollHandler(database, credentialCipher)],
   [
     LINK_ORGANIZATION_JOB_TYPE,
-    createLinkOrganizationHandler(database, credentialCipher),
+    createLinkOrganizationHandler(
+      database,
+      credentialCipher,
+      managedTextCredentials && managedTextPriceCatalog
+        ? {
+            credentials: managedTextCredentials,
+            priceCatalog: managedTextPriceCatalog,
+          }
+        : undefined,
+    ),
   ],
   [
     'link.parse',
@@ -114,6 +158,13 @@ const handlers: JobHandlers = new Map([
       undefined,
       undefined,
       xiaoyuzhouAudioEnabled ? paraformer : null,
+      xiaoyuzhouAudioEnabled
+        ? {
+            priceCatalog: managedTranscriptionPriceCatalog,
+            serverWhisperUserIds: whisperUserIds,
+            whisper: whisperClient,
+          }
+        : null,
     ),
   ],
   ...mediaHandlers,

@@ -77,6 +77,51 @@ export function formatCnyMicros(value: string, showPlus = false): string {
   return `${sign}¥${grouped}.${fraction}`;
 }
 
+const MICROS_PER_YILI = 10_000n;
+
+export function formatYiliMicros(
+  value: string,
+  showPlus = false,
+): string {
+  const micros = BigInt(value);
+  const negative = micros < 0n;
+  const absolute = negative ? -micros : micros;
+  const microsPerHundredth = MICROS_PER_YILI / 100n;
+  const hundredths =
+    (absolute + microsPerHundredth / 2n) / microsPerHundredth;
+  const whole = hundredths / 100n;
+  const fraction = hundredths % 100n;
+  const grouped = whole
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const decimal = fraction === 0n
+    ? ''
+    : `.${fraction.toString().padStart(2, '0').replace(/0$/, '')}`;
+  const sign = negative ? '-' : showPlus && micros > 0n ? '+' : '';
+  return `${sign}${grouped}${decimal} 忆粒`;
+}
+
+export function simplifyConsumerLedger(
+  entries: CloudLedgerEntry[],
+): CloudLedgerEntry[] {
+  const jobKinds = new Map<string, Set<CloudLedgerKind>>();
+  for (const entry of entries) {
+    if (!entry.jobId) continue;
+    const kinds = jobKinds.get(entry.jobId) ?? new Set<CloudLedgerKind>();
+    kinds.add(entry.kind);
+    jobKinds.set(entry.jobId, kinds);
+  }
+
+  return entries.filter((entry) => {
+    if (!entry.jobId) return true;
+    if (entry.kind === 'settle') return true;
+    if (entry.kind === 'release') return false;
+    if (entry.kind !== 'reserve') return true;
+    const kinds = jobKinds.get(entry.jobId);
+    return !kinds?.has('settle') && !kinds?.has('release');
+  });
+}
+
 export { CloudApiRequestError as CloudBillingError };
 
 function isBillingAccount(value: unknown): value is CloudBillingAccount {

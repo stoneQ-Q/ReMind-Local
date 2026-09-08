@@ -23,6 +23,21 @@ export function releaseIdentifier(): string {
   return /^[A-Za-z0-9._-]{1,64}$/.test(value) ? value : 'unknown';
 }
 
+export function consumerManagedAiEnabled(): boolean {
+  return booleanEnvironment('REMIND_CONSUMER_MANAGED_AI_ENABLED', false);
+}
+
+export function consumerStarterCreditMicros(): bigint {
+  const normalized =
+    process.env.REMIND_CONSUMER_STARTER_CREDIT_MICROS?.trim() || '0';
+  if (!/^[0-9]{1,18}$/.test(normalized)) {
+    throw new Error(
+      'REMIND_CONSUMER_STARTER_CREDIT_MICROS must be a nonnegative integer',
+    );
+  }
+  return BigInt(normalized);
+}
+
 export function workerPollMs(): number {
   const value = Number(process.env.REMIND_WORKER_POLL_MS ?? '1000');
   if (!Number.isInteger(value) || value < 100 || value > 60_000) {
@@ -51,6 +66,26 @@ export function whisperServiceUrl(): string | null {
   return value || null;
 }
 
+export function serverWhisperUserIds(): ReadonlySet<string> {
+  const value = process.env.REMIND_SERVER_WHISPER_USER_IDS?.trim();
+  if (!value) return new Set();
+  const ids: string[] = value
+    .split(',')
+    .map((item: string) => item.trim().toLowerCase())
+    .filter(Boolean);
+  if (
+    ids.some(
+      (id: string) =>
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+          id,
+        ),
+    )
+  ) {
+    throw new Error('REMIND_SERVER_WHISPER_USER_IDS must contain UUIDs');
+  }
+  return new Set(ids);
+}
+
 export function xiaoyuzhouTranscriptionEnabled(): boolean {
   const value =
     process.env.REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED?.trim() || 'false';
@@ -58,6 +93,15 @@ export function xiaoyuzhouTranscriptionEnabled(): boolean {
     throw new Error(
       'REMIND_XIAOYUZHOU_TRANSCRIPTION_ENABLED must be true or false',
     );
+  }
+  return value === 'true';
+}
+
+function booleanEnvironment(name: string, fallback: boolean): boolean {
+  const value = process.env[name]?.trim();
+  if (!value) return fallback;
+  if (value !== 'true' && value !== 'false') {
+    throw new Error(`${name} must be true or false`);
   }
   return value === 'true';
 }

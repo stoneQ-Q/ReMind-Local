@@ -30,6 +30,10 @@ export interface ObjectStore {
   delete(objectKey: string): Promise<void>;
 }
 
+export interface TemporaryReadUrlObjectStore extends ObjectStore {
+  temporaryReadUrl(objectKey: string, expiresSeconds: number): Promise<string>;
+}
+
 export interface ResumableObjectStore extends ObjectStore {
   readonly uploadStrategy: 'proxy_chunks';
   appendUploadChunk(
@@ -99,6 +103,7 @@ export interface TencentCosClient {
   getPrefix(objectKey: string, maximumBytes: number): Promise<Buffer>;
   download(objectKey: string, destinationPath: string): Promise<void>;
   delete(objectKey: string): Promise<void>;
+  temporaryReadUrl?(objectKey: string, expiresSeconds: number): string;
 }
 
 type TencentCosObjectStoreOptions = {
@@ -168,6 +173,20 @@ export class TencentCosObjectStore implements ResumableObjectStore {
       throw new Error('object_size_mismatch');
     }
     return content;
+  }
+
+  async temporaryReadUrl(
+    objectKey: string,
+    expiresSeconds: number,
+  ): Promise<string> {
+    validateObjectKey(objectKey);
+    if (!Number.isInteger(expiresSeconds) || expiresSeconds < 60 || expiresSeconds > 3_600) {
+      throw new Error('invalid_temporary_read_url_expiry');
+    }
+    if (!this.client.temporaryReadUrl) {
+      throw new Error('temporary_read_url_unavailable');
+    }
+    return this.client.temporaryReadUrl(objectKey, expiresSeconds);
   }
 
   async copyToFile(
@@ -437,6 +456,16 @@ class TencentCosSdkClient implements TencentCosClient {
     } catch (error) {
       throw safeCosError(error);
     }
+  }
+
+  temporaryReadUrl(objectKey: string, expiresSeconds: number): string {
+    return this.sdk.getObjectUrl({
+      ...this.params(objectKey),
+      Sign: true,
+      Method: 'GET',
+      Expires: expiresSeconds,
+      Protocol: 'https:',
+    });
   }
 
   async putFile(

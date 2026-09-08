@@ -15,6 +15,14 @@ import {
   extractVideoAudioSegments,
   type ExtractedAudioSegment,
 } from './video-audio-segments.js';
+import {
+  fetchBilibiliSnapshot,
+  isBilibiliHost,
+  SecureBilibiliAudioFetcher,
+  type BilibiliTranscript,
+} from './bilibili-link.js';
+
+export { SecureBilibiliAudioFetcher } from './bilibili-link.js';
 
 // WeChat articles and XHS SSR pages routinely exceed 2 MB because they embed
 // scripts and hydration data. Keep a hard download/decompression ceiling while
@@ -36,11 +44,12 @@ export type LinkSnapshot = {
   site: string;
   text: string;
   images: string[];
-  platform: 'web' | 'xiaohongshu' | 'xiaoyuzhou';
+  platform: 'web' | 'xiaohongshu' | 'xiaoyuzhou' | 'bilibili';
   mediaType: 'web' | 'image' | 'video' | 'audio';
   durationSeconds: number | null;
   transientVideoUrl?: string;
   transientAudioUrl?: string;
+  embeddedTranscript?: BilibiliTranscript;
 };
 
 export interface LinkPageFetcher {
@@ -58,10 +67,16 @@ export interface LinkVideoFetcher {
 
 export type LinkAudioDownload = {
   segments: ExtractedAudioSegment[];
+  sourceContent?: Buffer;
+  sourceContentType?: 'audio/mp4';
 };
 
 export interface LinkAudioFetcher {
-  fetch(url: string, signal: AbortSignal): Promise<LinkAudioDownload>;
+  fetch(
+    url: string,
+    signal: AbortSignal,
+    sourceUrl?: string,
+  ): Promise<LinkAudioDownload>;
 }
 
 export class SecureXiaohongshuVideoFetcher implements LinkVideoFetcher {
@@ -137,6 +152,15 @@ export class SecureLinkPageFetcher implements LinkPageFetcher {
   async fetch(inputUrl: string, signal: AbortSignal): Promise<LinkSnapshot> {
     let current = validatePublicLinkUrl(inputUrl);
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+      const currentUrl = new URL(current);
+      if (isBilibiliHost(currentUrl.hostname)) {
+        const snapshot = await fetchBilibiliSnapshot(
+          currentUrl,
+          '',
+          signal,
+        );
+        if (snapshot) return snapshot;
+      }
       const response = await requestPublicPage(current, signal);
       if (response.status >= 300 && response.status < 400) {
         if (!response.location || redirects === MAX_REDIRECTS) {
@@ -152,6 +176,15 @@ export class SecureLinkPageFetcher implements LinkPageFetcher {
       }
       if (!response.contentType.includes('text/html')) {
         throw new Error('link_not_html');
+      }
+      const finalUrl = new URL(current);
+      if (isBilibiliHost(finalUrl.hostname)) {
+        const snapshot = await fetchBilibiliSnapshot(
+          finalUrl,
+          response.body,
+          signal,
+        );
+        if (snapshot) return snapshot;
       }
       return extractLinkSnapshot(current, response.body);
     }

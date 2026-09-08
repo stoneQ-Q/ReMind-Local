@@ -25,6 +25,7 @@ import {
   type CloudAiSettings as CloudAiSettingsValue,
 } from './cloud-ai-settings';
 import type { LinkAutomationMode } from './database';
+import { isConsumerReMindApp } from './app-variant';
 import { colors } from './theme';
 
 const PROVIDERS: Array<{
@@ -58,6 +59,7 @@ export function CloudAiSettings({
   onLinkAutomationModeChange: (mode: LinkAutomationMode) => Promise<void>;
   visible: boolean;
 }) {
+  const consumer = isConsumerReMindApp();
   const insets = useSafeAreaInsets();
   const [settings, setSettings] = useState<CloudAiSettingsValue | null>(null);
   const [inputs, setInputs] = useState<Record<CloudAiProvider, string>>({
@@ -103,7 +105,7 @@ export function CloudAiSettings({
     };
   }, [visible]);
 
-  const changeMode = async (mode: Exclude<CloudAiMode, 'managed'>) => {
+  const changeMode = async (mode: CloudAiMode) => {
     if (acting) return;
     if (mode === 'bring_your_own_key' && !settings?.credentials.length) {
       setByokSelected(true);
@@ -217,7 +219,9 @@ export function CloudAiSettings({
           >
             <Text style={styles.close}>关闭</Text>
           </Pressable>
-          <Text style={styles.heading}>AI 与 API Key</Text>
+          <Text style={styles.heading}>
+            {consumer ? '智能功能' : 'AI 与 API Key'}
+          </Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -229,11 +233,15 @@ export function CloudAiSettings({
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.heroMark}>
-            <Text style={styles.heroMarkText}>AI</Text>
+            <Text style={styles.heroMarkText}>{consumer ? '智' : 'AI'}</Text>
           </View>
-          <Text style={styles.title}>选择谁来承担模型费用</Text>
+          <Text style={styles.title}>
+            {consumer ? '管理 ReMind 的智能功能' : '选择谁来承担模型费用'}
+          </Text>
           <Text style={styles.copy}>
-            关闭 AI 不会删除笔记；使用自己的 Key 时，模型费用直接由对应供应商向你结算。
+            {consumer
+              ? '整理记录、问 ReMind 和链接处理是三个独立功能，它们共用这里的智能服务。'
+              : '关闭 AI 不会删除笔记；使用自己的 Key 时，模型费用直接由对应供应商向你结算。'}
           </Text>
 
           {loading && !settings ? (
@@ -243,68 +251,103 @@ export function CloudAiSettings({
             </View>
           ) : (
             <>
-              <AiModeCard
-                active={settings?.mode === 'disabled' && !byokSelected}
-                description="只记录、搜索和备份，不调用任何模型。"
-                disabled={Boolean(acting)}
-                label="不使用 AI"
-                onPress={() => void changeMode('disabled')}
-              />
-              <AiModeCard
-                active={
-                  settings?.mode === 'bring_your_own_key' || byokSelected
-                }
-                description="Key 加密保存在云端，费用由你自己的供应商账号承担。"
-                disabled={Boolean(acting)}
-                label="使用自己的 API Key"
-                onPress={() => void changeMode('bring_your_own_key')}
-              />
-              <AiModeCard
-                active={settings?.mode === 'managed'}
-                badge="尚未开放"
-                description="由 ReMind 提供模型并按实际用量扣费；余额、价格和充值完成前保持锁定。"
-                disabled
-                label="使用 ReMind 托管服务"
-                onPress={() => undefined}
-              />
+              {consumer ? (
+                <>
+                  <Text style={styles.sectionTitle}>智能服务</Text>
+                  <AiModeCard
+                    active={settings?.mode !== 'disabled'}
+                    badge={
+                      settings?.mode === 'bring_your_own_key'
+                        ? '旧账号待切换'
+                        : '已开启'
+                    }
+                    description={
+                      settings?.mode === 'bring_your_own_key'
+                        ? '你的旧账号配置仍被安全保留。点这里切换后，之后不再需要自己承担模型配置。'
+                        : '允许整理记录、使用问 ReMind，并按下方设置处理链接。'
+                    }
+                    disabled={Boolean(acting)}
+                    label={
+                      settings?.mode === 'bring_your_own_key'
+                        ? '切换到 ReMind 智能服务'
+                        : '开启智能功能'
+                    }
+                    onPress={() => void changeMode('managed')}
+                  />
+                  <AiModeCard
+                    active={settings?.mode === 'disabled'}
+                    description="继续记录、搜索和同步，但不再调用智能服务；已有内容不会删除。"
+                    disabled={Boolean(acting)}
+                    label="关闭智能功能"
+                    onPress={() => void changeMode('disabled')}
+                  />
+                </>
+              ) : (
+                <>
+                  <AiModeCard
+                    active={settings?.mode === 'disabled' && !byokSelected}
+                    description="只记录、搜索和备份，不调用任何模型。"
+                    disabled={Boolean(acting)}
+                    label="不使用 AI"
+                    onPress={() => void changeMode('disabled')}
+                  />
+                  <AiModeCard
+                    active={
+                      settings?.mode === 'bring_your_own_key' || byokSelected
+                    }
+                    description="Key 加密保存在云端，费用由你自己的供应商账号承担。"
+                    disabled={Boolean(acting)}
+                    label="使用自己的 API Key"
+                    onPress={() => void changeMode('bring_your_own_key')}
+                  />
+                </>
+              )}
 
               <View style={styles.securityNotice}>
-                <Text style={styles.securityNoticeTitle}>Key 如何保存</Text>
+                <Text style={styles.securityNoticeTitle}>
+                  {consumer ? '三个功能分别做什么' : 'Key 如何保存'}
+                </Text>
                 <Text style={styles.securityNoticeCopy}>
-                  输入后立即通过当前云端会话提交；App
-                  不保存完整值，服务端加密存储，之后只返回末四位。
+                  {consumer
+                    ? '整理记录：把一条原始记录变成可审核的笔记。\n\n问 ReMind：从已有记录中回答问题并标出来源，它不属于整理。\n\n链接处理：取得链接正文后，按下方方式决定是否自动生成笔记。'
+                    : '输入后立即通过当前云端会话提交；App 不保存完整值，服务端加密存储，之后只返回末四位。'}
                 </Text>
               </View>
 
-              <Text style={styles.sectionTitle}>链接自动整理</Text>
+              <Text style={styles.sectionTitle}>
+                {consumer ? '链接处理方式' : '链接自动整理'}
+              </Text>
               <Text style={styles.sectionCopy}>
-                只处理已经取得可追溯正文或视频转写的链接。自动模式会直接使用你的
-                DeepSeek Key；原始链接和证据仍会保留。
+                {consumer
+                  ? '这里只决定开启智能功能后，收到链接并取得正文时，是先由你确认，还是自动保存。它不会改变普通文字记录，也不会影响问 ReMind。'
+                  : '只处理已经取得可追溯正文或视频转写的链接。自动模式会直接使用你的 DeepSeek Key；原始链接和证据仍会保留。'}
               </Text>
               <AiModeCard
                 active={linkAutomationMode === 'review'}
-                description="保持逐篇生成、审核和确认，不自动创建正式笔记。"
+                description="先生成整理结果，由你确认后再保存为正式笔记。"
                 disabled={Boolean(acting)}
-                label="每次由我审核"
+                label={consumer ? '先预览再保存' : '每次由我审核'}
                 onPress={() => void changeLinkAutomation('review')}
               />
               <AiModeCard
                 active={linkAutomationMode === 'auto_note'}
                 description="链接处理完成后自动生成正式来源笔记；主题仍由你决定。"
                 disabled={Boolean(acting)}
-                label="自动生成笔记"
+                label={consumer ? '自动保存为笔记' : '自动生成笔记'}
                 onPress={() => void changeLinkAutomation('auto_note')}
               />
               <AiModeCard
                 active={linkAutomationMode === 'auto_note_and_theme'}
                 description="自动生成笔记并接受主题建议；之后可在来源笔记中随时重新归类。"
                 disabled={Boolean(acting)}
-                label="自动生成并归入主题"
+                label={consumer ? '自动保存并归类' : '自动生成并归入主题'}
                 onPress={() =>
                   void changeLinkAutomation('auto_note_and_theme')
                 }
               />
 
+              {!consumer ? (
+                <>
               <Text style={styles.sectionTitle}>你的 API Key</Text>
               {PROVIDERS.map((item) => {
                 const credential = settings?.credentials.find(
@@ -411,13 +454,16 @@ export function CloudAiSettings({
                   ) : null}
                 </View>
               ) : null}
+                </>
+              ) : null}
             </>
           )}
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <Text style={styles.footnote}>
-            ReMind 不会显示或下载已经保存的完整 Key。若怀疑泄露，请在对应供应商后台撤销并生成新
-            Key。
+            {consumer
+              ? '智能功能暂处于内测。忆粒用完或服务暂时不可用时，不会影响原始记录。'
+              : 'ReMind 不会显示或下载已经保存的完整 Key。若怀疑泄露，请在对应供应商后台撤销并生成新 Key。'}
           </Text>
         </ScrollView>
       </View>
@@ -480,6 +526,8 @@ function aiSettingsErrorMessage(reason: unknown): string {
         return '这个 Key 格式不正确，请检查是否完整复制。';
       case 'api_credential_required':
         return '请先保存至少一个自己的 API Key。';
+      case 'managed_service_unavailable':
+        return 'ReMind 智能服务正在维护，请稍后重试。';
       case 'user_provider_credential_required':
         return '请先保存 DeepSeek API Key。';
       case 'ai_key_rejected':

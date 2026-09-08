@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Platform,
   Pressable,
@@ -16,11 +15,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CloudBillingError,
   formatCnyMicros,
+  formatYiliMicros,
   getCloudBillingOverview,
+  simplifyConsumerLedger,
   type CloudBillingOverview,
   type CloudLedgerEntry,
 } from './cloud-billing';
 import { colors } from './theme';
+import { isConsumerReMindApp } from './app-variant';
 
 export function CloudBillingCenter({
   onClose,
@@ -29,6 +31,7 @@ export function CloudBillingCenter({
   onClose: () => void;
   visible: boolean;
 }) {
+  const consumer = isConsumerReMindApp();
   const insets = useSafeAreaInsets();
   const [overview, setOverview] = useState<CloudBillingOverview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -60,6 +63,12 @@ export function CloudBillingCenter({
   }, [load, visible]);
 
   const account = overview?.account;
+  const formatUsage = consumer ? formatYiliMicros : formatCnyMicros;
+  const displayedEntries = overview
+    ? consumer
+      ? simplifyConsumerLedger(overview.entries)
+      : overview.entries
+    : [];
 
   return (
     <Modal
@@ -73,7 +82,9 @@ export function CloudBillingCenter({
           <Pressable hitSlop={10} onPress={onClose}>
             <Text style={styles.close}>关闭</Text>
           </Pressable>
-          <Text style={styles.heading}>余额与费用</Text>
+          <Text style={styles.heading}>
+            {consumer ? '忆粒与用量' : '余额与费用'}
+          </Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -91,11 +102,15 @@ export function CloudBillingCenter({
           }
         >
           <View style={styles.heroMark}>
-            <Text style={styles.heroMarkText}>¥</Text>
+            <Text style={styles.heroMarkText}>{consumer ? '忆' : '¥'}</Text>
           </View>
-          <Text style={styles.title}>每一笔费用都能看清楚</Text>
+          <Text style={styles.title}>
+            {consumer ? '你的忆粒' : '每一笔费用都能看清楚'}
+          </Text>
           <Text style={styles.copy}>
-            余额不会出现负数。任务开始前先预占，完成后按实际用量结算，失败或未使用的部分会释放。
+            {consumer
+              ? '忆粒用于整理记录、问 ReMind 和自动处理链接。完成后只记录实际使用量，没有用到的部分会自动归还。'
+              : '余额不会出现负数。任务开始前先预占，完成后按实际用量结算，失败或未使用的部分会释放。'}
           </Text>
 
           {loading && !overview ? (
@@ -106,93 +121,123 @@ export function CloudBillingCenter({
           ) : account ? (
             <>
               <View style={styles.balanceCard}>
-                <Text style={styles.balanceLabel}>当前可用</Text>
+                <Text style={styles.balanceLabel}>
+                  {consumer ? '现在可用' : '当前可用'}
+                </Text>
                 <Text
                   adjustsFontSizeToFit
                   minimumFontScale={0.7}
                   numberOfLines={1}
                   style={styles.balanceValue}
                 >
-                  {formatCnyMicros(account.availableMicros)}
+                  {formatUsage(account.availableMicros)}
                 </Text>
                 <View style={styles.balanceBreakdown}>
                   <BalanceStat
-                    label="账户余额"
-                    value={formatCnyMicros(account.balanceMicros)}
+                    label={consumer ? '全部' : '账户余额'}
+                    value={formatUsage(account.balanceMicros)}
                   />
                   <View style={styles.balanceDivider} />
                   <BalanceStat
-                    label="任务预占"
-                    value={formatCnyMicros(account.reservedMicros)}
+                    label={consumer ? '处理中' : '任务预占'}
+                    value={formatUsage(account.reservedMicros)}
                   />
                 </View>
               </View>
 
+              {consumer ? (
+                <View style={styles.usageGuideCard}>
+                  <Text style={styles.usageGuideTitle}>大概会用多少</Text>
+                  <View style={styles.usageGuideRow}>
+                    <View style={styles.usageGuideCopy}>
+                      <Text style={styles.usageGuideLabel}>5 分钟视频</Text>
+                      <Text style={styles.usageGuideDetail}>
+                        只转写约 2.4 忆粒；自动整理后通常共 3～5 忆粒
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.usageGuideDivider} />
+                  <View style={styles.usageGuideRow}>
+                    <View style={styles.usageGuideCopy}>
+                      <Text style={styles.usageGuideLabel}>1 小时小宇宙音频</Text>
+                      <Text style={styles.usageGuideDetail}>
+                        只转写约 28.8 忆粒；自动整理后通常共 30～35 忆粒
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.usageGuideFootnote}>
+                    实际按识别出的有效语音时长结算。开始前会先留出预计用量，未使用的部分自动归还。
+                  </Text>
+                </View>
+              ) : null}
+
               <View style={styles.limitCard}>
-                <Text style={styles.limitTitle}>消费安全上限</Text>
+                <Text style={styles.limitTitle}>
+                  {consumer ? '使用保护' : '消费安全上限'}
+                </Text>
                 <Text style={styles.limitCopy}>
-                  即使以后开启托管服务，也不能超过这些服务端限制。
+                  {consumer
+                    ? '每天和每月都有保护线，避免异常任务连续消耗。'
+                    : '即使以后开启托管服务，也不能超过这些服务端限制。'}
                 </Text>
                 <View style={styles.limitRows}>
                   <View style={styles.limitRow}>
                     <Text style={styles.limitLabel}>每日上限</Text>
                     <Text style={styles.limitValue}>
-                      {formatCnyMicros(account.dailyLimitMicros)}
+                      {formatUsage(account.dailyLimitMicros)}
                     </Text>
                   </View>
                   <View style={styles.limitRow}>
                     <Text style={styles.limitLabel}>每月上限</Text>
                     <Text style={styles.limitValue}>
-                      {formatCnyMicros(account.monthlyLimitMicros)}
+                      {formatUsage(account.monthlyLimitMicros)}
                     </Text>
                   </View>
                 </View>
               </View>
 
-              <Pressable
-                accessibilityState={{ disabled: true }}
-                onPress={() =>
-                  Alert.alert(
-                    '私密测试暂不充值',
-                    '支付、退款和对账链路尚未完成。当前不会收款，也不会跳转到任何支付页面。',
-                  )
-                }
-                style={({ pressed }) => [
-                  styles.topUpCard,
-                  pressed && styles.pressed,
-                ]}
-              >
+              <View style={styles.topUpCard}>
                 <View style={styles.topUpIcon}>
                   <Text style={styles.topUpIconText}>＋</Text>
                 </View>
                 <View style={styles.topUpCopy}>
                   <View style={styles.topUpTitleRow}>
-                    <Text style={styles.topUpTitle}>充值暂未开放</Text>
-                    <Text style={styles.lockedBadge}>无付款入口</Text>
+                    <Text style={styles.topUpTitle}>
+                      {consumer ? '内测体验规则' : '充值暂未开放'}
+                    </Text>
+                    <Text style={styles.lockedBadge}>
+                      {consumer ? '暂不收费' : '无付款入口'}
+                    </Text>
                   </View>
                   <Text style={styles.topUpDescription}>
-                    私密测试阶段先验证成本和稳定性，完成支付、退款、对账与合规后再开放。
+                    {consumer
+                      ? '当前忆粒由 ReMind 赠送。用完后仍可正常记录、搜索和查看已有内容。'
+                      : '私密测试阶段先验证成本和稳定性，完成支付、退款、对账与合规后再开放。'}
                   </Text>
                 </View>
-                <Text style={styles.topUpChevron}>›</Text>
-              </Pressable>
+              </View>
 
               <View style={styles.ledgerHeader}>
-                <Text style={styles.ledgerTitle}>费用明细</Text>
+                <Text style={styles.ledgerTitle}>
+                  {consumer ? '最近使用' : '费用明细'}
+                </Text>
                 <Text style={styles.ledgerCount}>
-                  最近 {overview.entries.length} 笔
+                  最近 {displayedEntries.length} 笔
                 </Text>
               </View>
-              {overview.entries.length ? (
-                overview.entries.map((entry) => (
+              {displayedEntries.length ? (
+                displayedEntries.map((entry) => (
                   <LedgerRow entry={entry} key={entry.id} />
                 ))
               ) : (
                 <View style={styles.emptyLedger}>
-                  <Text style={styles.emptyLedgerTitle}>还没有费用记录</Text>
+                  <Text style={styles.emptyLedgerTitle}>
+                    {consumer ? '还没有忆粒记录' : '还没有费用记录'}
+                  </Text>
                   <Text style={styles.emptyLedgerCopy}>
-                    目前没有充值、赠送、预占或结算。使用自己的 API Key
-                    不会从这里扣费。
+                    {consumer
+                      ? '第一次使用智能功能后，这里会显示获赠、留出和实际使用的忆粒。'
+                      : '目前没有充值、赠送、预占或结算。使用自己的 API Key 不会从这里扣费。'}
                   </Text>
                 </View>
               )}
@@ -216,7 +261,9 @@ export function CloudBillingCenter({
           ) : null}
 
           <Text style={styles.footnote}>
-            金额由服务端以整数微元记录，App 不使用浮点数计算余额。账本只追加新记录，历史记录不能直接修改。
+            {consumer
+              ? '这里优先展示实际使用；正在处理的任务会临时留出忆粒，完成或失败后自动结算。'
+              : '金额由服务端以整数微元记录，App 不使用浮点数计算余额。账本只追加新记录，历史记录不能直接修改。'}
           </Text>
         </ScrollView>
       </View>
@@ -234,7 +281,9 @@ function BalanceStat({ label, value }: { label: string; value: string }) {
 }
 
 function LedgerRow({ entry }: { entry: CloudLedgerEntry }) {
-  const presentation = ledgerPresentation(entry);
+  const consumer = isConsumerReMindApp();
+  const formatUsage = consumer ? formatYiliMicros : formatCnyMicros;
+  const presentation = ledgerPresentation(entry, formatUsage, consumer);
   return (
     <View style={styles.ledgerRow}>
       <View style={[styles.ledgerIcon, presentation.iconStyle]}>
@@ -249,8 +298,8 @@ function LedgerRow({ entry }: { entry: CloudLedgerEntry }) {
           {entry.jobId ? ' · AI 任务' : ''}
         </Text>
         <Text style={styles.ledgerAfter}>
-          余额 {formatCnyMicros(entry.balanceAfterMicros)} · 预占{' '}
-          {formatCnyMicros(entry.reservedAfterMicros)}
+          {consumer ? '剩余' : '余额'} {formatUsage(entry.balanceAfterMicros)} ·{' '}
+          {consumer ? '留出' : '预占'} {formatUsage(entry.reservedAfterMicros)}
         </Text>
       </View>
       <Text style={[styles.ledgerAmount, presentation.amountStyle]}>
@@ -260,7 +309,11 @@ function LedgerRow({ entry }: { entry: CloudLedgerEntry }) {
   );
 }
 
-function ledgerPresentation(entry: CloudLedgerEntry): {
+function ledgerPresentation(
+  entry: CloudLedgerEntry,
+  formatUsage: (value: string, showPlus?: boolean) => string,
+  consumer: boolean,
+): {
   title: string;
   amount: string;
   icon: string;
@@ -270,8 +323,8 @@ function ledgerPresentation(entry: CloudLedgerEntry): {
 } {
   if (entry.kind === 'reserve') {
     return {
-      title: '任务费用预占',
-      amount: `预占 ${formatCnyMicros(entry.amountMicros)}`,
+      title: consumer ? '为任务留出忆粒' : '任务费用预占',
+      amount: `${consumer ? '留出' : '预占'} ${formatUsage(entry.amountMicros)}`,
       icon: '锁',
       iconStyle: styles.ledgerIconReserved,
       iconTextStyle: styles.ledgerIconReservedText,
@@ -280,8 +333,8 @@ function ledgerPresentation(entry: CloudLedgerEntry): {
   }
   if (entry.kind === 'release') {
     return {
-      title: '未使用预占退回',
-      amount: `释放 ${formatCnyMicros(entry.amountMicros)}`,
+      title: consumer ? '未使用忆粒归还' : '未使用预占退回',
+      amount: `归还 ${formatUsage(entry.amountMicros)}`,
       icon: '回',
       iconStyle: styles.ledgerIconPositive,
       iconTextStyle: styles.ledgerIconPositiveText,
@@ -290,8 +343,8 @@ function ledgerPresentation(entry: CloudLedgerEntry): {
   }
   if (entry.kind === 'settle') {
     return {
-      title: '任务实际结算',
-      amount: formatCnyMicros(entry.balanceDeltaMicros, true),
+      title: consumer ? '智能服务使用' : '任务实际结算',
+      amount: formatUsage(entry.balanceDeltaMicros, true),
       icon: '用',
       iconStyle: styles.ledgerIconSettled,
       iconTextStyle: styles.ledgerIconSettledText,
@@ -301,19 +354,19 @@ function ledgerPresentation(entry: CloudLedgerEntry): {
 
   const title =
     entry.kind === 'refund'
-      ? '退款到账'
+      ? consumer ? '忆粒退回' : '退款到账'
       : entry.kind === 'adjustment'
-        ? '余额调整'
+        ? consumer ? '忆粒调整' : '余额调整'
         : entry.source === 'gift'
-          ? '体验额度赠送'
+          ? consumer ? '获赠体验忆粒' : '体验额度赠送'
           : entry.source === 'payment'
-            ? '充值到账'
+            ? consumer ? '忆粒到账' : '充值到账'
             : entry.source === 'operator'
-              ? '人工额度调整'
-              : '余额增加';
+              ? consumer ? '忆粒调整' : '人工额度调整'
+              : consumer ? '忆粒增加' : '余额增加';
   return {
     title,
-    amount: formatCnyMicros(entry.balanceDeltaMicros, true),
+    amount: formatUsage(entry.balanceDeltaMicros, true),
     icon: entry.kind === 'refund' ? '退' : entry.source === 'gift' ? '赠' : '入',
     iconStyle: styles.ledgerIconPositive,
     iconTextStyle: styles.ledgerIconPositiveText,
@@ -350,7 +403,7 @@ function billingErrorMessage(reason: unknown): string {
       return '这个安装包尚未配置私密测试云端。';
     }
   }
-  return '暂时无法读取余额和费用记录，请稍后重试。';
+  return '暂时无法读取忆粒与使用记录，请稍后重试。';
 }
 
 const styles = StyleSheet.create({
@@ -479,6 +532,45 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: colors.surface,
   },
+  usageGuideCard: {
+    marginTop: 12,
+    padding: 16,
+    borderRadius: 17,
+    backgroundColor: colors.mist,
+  },
+  usageGuideTitle: {
+    color: colors.mistText,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  usageGuideRow: {
+    marginTop: 12,
+  },
+  usageGuideCopy: {
+    flex: 1,
+  },
+  usageGuideLabel: {
+    color: colors.ink,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  usageGuideDetail: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 10,
+    lineHeight: 16,
+  },
+  usageGuideDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginTop: 12,
+    backgroundColor: colors.line,
+  },
+  usageGuideFootnote: {
+    marginTop: 13,
+    color: colors.mistText,
+    fontSize: 10,
+    lineHeight: 16,
+  },
   limitTitle: {
     color: colors.ink,
     fontSize: 13,
@@ -559,10 +651,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 10,
     lineHeight: 15,
-  },
-  topUpChevron: {
-    color: colors.faint,
-    fontSize: 24,
   },
   ledgerHeader: {
     marginTop: 28,

@@ -92,6 +92,49 @@ describe('imported note synchronization', () => {
     ).toEqual({ user_context: null });
     database.close();
   });
+
+  it('clears a stale failure when the cloud transcript first arrives', async () => {
+    const database = new DatabaseSync(':memory:');
+    const db = sqliteAdapter(database);
+    await migrateDatabase(db);
+    const created = await createImportedNote(
+      db,
+      '认真学习 https://b23.tv/example',
+      'cloud-wechat:bilibili-1',
+      {
+        sourceUrl: 'https://www.bilibili.com/video/BV1example',
+        userContext: '认真学习',
+        sourcePageTitle: null,
+        sourcePageSite: null,
+        sourcePageText: null,
+        createdAt: '2026-09-06T15:02:55.000Z',
+        sourceUpdatedAt: '2026-09-06T15:02:55.000Z',
+      },
+    );
+    await database
+      .prepare(`UPDATE notes SET status='failed' WHERE id=?`)
+      .run(created!.id);
+
+    await createImportedNote(
+      db,
+      '认真学习 https://b23.tv/example',
+      'cloud-wechat:bilibili-1',
+      {
+        sourceUrl: 'https://www.bilibili.com/video/BV1example',
+        userContext: '认真学习',
+        sourcePageTitle: '建立系统，而非追求目标',
+        sourcePageSite: 'bilibili.com',
+        sourcePageText: '视频语音转写\n[00:00] 建立系统，而非追求目标。',
+        createdAt: '2026-09-06T15:02:55.000Z',
+        sourceUpdatedAt: '2026-09-07T02:14:49.000Z',
+      },
+    );
+
+    const [note] = await listNotes(db);
+    expect(note?.status).toBe('saved');
+    expect(note?.sourcePageText).toContain('视频语音转写');
+    database.close();
+  });
 });
 
 function sqliteAdapter(database: DatabaseSync) {

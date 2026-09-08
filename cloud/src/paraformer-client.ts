@@ -17,6 +17,7 @@ export type ParaformerSegment = {
 export type ParaformerTranscript = {
   transcript: string;
   segments: ParaformerSegment[];
+  billableDurationSeconds: number | null;
 };
 
 export class ParaformerError extends Error {
@@ -51,7 +52,7 @@ export class ParaformerClient {
   }
 
   async submit(audioUrl: string, signal: AbortSignal): Promise<string> {
-    const trustedAudioUrl = validateAudioUrl(audioUrl);
+    const trustedAudioUrl = validateMediaUrl(audioUrl);
     const response = await this.fetcher(
       `${this.baseUrl}/api/v1/services/audio/asr/transcription`,
       {
@@ -154,10 +155,20 @@ function parseTranscript(payload: unknown): ParaformerTranscript {
     : [];
   const textParts: string[] = [];
   const segments: ParaformerSegment[] = [];
+  let billableDurationMilliseconds = 0;
+  let hasBillableDuration = false;
   for (const transcript of transcripts) {
     if (!isRecord(transcript)) continue;
     const text = cleanText(stringValue(transcript, 'text'), 1_000_000);
     if (text) textParts.push(text);
+    const contentDuration = numberValue(
+      transcript,
+      'content_duration_in_milliseconds',
+    );
+    if (contentDuration !== null && contentDuration >= 0) {
+      hasBillableDuration = true;
+      billableDurationMilliseconds += contentDuration;
+    }
     const sentences = Array.isArray(transcript.sentences)
       ? transcript.sentences
       : [];
@@ -183,10 +194,16 @@ function parseTranscript(payload: unknown): ParaformerTranscript {
   if (!transcript) {
     throw new ParaformerError('paraformer_transcript_empty', true);
   }
-  return { transcript, segments };
+  return {
+    transcript,
+    segments,
+    billableDurationSeconds: hasBillableDuration
+      ? Math.max(1, Math.ceil(billableDurationMilliseconds / 1_000))
+      : null,
+  };
 }
 
-function validateAudioUrl(value: string): string {
+function validateMediaUrl(value: string): string {
   let url: URL;
   try {
     url = new URL(value);
@@ -194,9 +211,17 @@ function validateAudioUrl(value: string): string {
     throw new ParaformerError('paraformer_audio_url_invalid', true);
   }
   const hostname = url.hostname.toLowerCase();
+  const trustedPrivateCos =
+    /^[a-z0-9-]+-[0-9]+\.cos\.[a-z0-9-]+\.myqcloud\.com$/.test(hostname);
   if (
     url.protocol !== 'https:' ||
-    (hostname !== 'xyzcdn.net' && !hostname.endsWith('.xyzcdn.net')) ||
+    !(
+      hostname === 'xyzcdn.net' ||
+      hostname.endsWith('.xyzcdn.net') ||
+      hostname === 'xhscdn.com' ||
+      hostname.endsWith('.xhscdn.com') ||
+      trustedPrivateCos
+    ) ||
     url.username ||
     url.password ||
     (url.port && url.port !== '443')

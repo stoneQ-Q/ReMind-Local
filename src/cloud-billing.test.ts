@@ -14,8 +14,11 @@ vi.mock('./cloud-api', () => ({
 
 import { requestCloudJson } from './cloud-api';
 import {
+  type CloudLedgerEntry,
   formatCnyMicros,
+  formatYiliMicros,
   getCloudBillingOverview,
+  simplifyConsumerLedger,
 } from './cloud-billing';
 
 const account = {
@@ -28,7 +31,7 @@ const account = {
   updatedAt: '2026-07-30T00:00:00.000Z',
 };
 
-const entry = {
+const entry: CloudLedgerEntry = {
   id: 'entry-1',
   jobId: null,
   kind: 'top_up',
@@ -94,5 +97,65 @@ describe('cloud billing client', () => {
     expect(formatCnyMicros('1234567890')).toBe('¥1,234.56789');
     expect(formatCnyMicros('-2500000', true)).toBe('-¥2.50');
     expect(formatCnyMicros('2500000', true)).toBe('+¥2.50');
+  });
+
+  it('formats consumer usage as branded yili without currency', () => {
+    expect(formatYiliMicros('0')).toBe('0 忆粒');
+    expect(formatYiliMicros('10000')).toBe('1 忆粒');
+    expect(formatYiliMicros('12345')).toBe('1.23 忆粒');
+    expect(formatYiliMicros('2000000')).toBe('200 忆粒');
+    expect(formatYiliMicros('-12500', true)).toBe('-1.25 忆粒');
+    expect(formatYiliMicros('12500', true)).toBe('+1.25 忆粒');
+  });
+
+  it('shows one simple consumer activity after a reserved job settles', () => {
+    const settled = {
+      ...entry,
+      id: 'settle-1',
+      jobId: 'job-1',
+      kind: 'settle' as const,
+      amountMicros: '10247',
+      balanceDeltaMicros: '-10247',
+      reservedDeltaMicros: '-10247',
+      balanceAfterMicros: '1989753',
+      reservedAfterMicros: '104633',
+      source: null,
+    };
+    const activities = simplifyConsumerLedger([
+      settled,
+      {
+        ...settled,
+        id: 'release-1',
+        kind: 'release',
+        amountMicros: '104633',
+        balanceDeltaMicros: '0',
+        reservedDeltaMicros: '-104633',
+        reservedAfterMicros: '0',
+      },
+      {
+        ...settled,
+        id: 'reserve-1',
+        kind: 'reserve',
+        amountMicros: '114880',
+        balanceDeltaMicros: '0',
+        reservedDeltaMicros: '114880',
+        balanceAfterMicros: '2000000',
+        reservedAfterMicros: '114880',
+      },
+      entry,
+    ]);
+
+    expect(activities.map((item) => item.id)).toEqual(['settle-1', 'entry-1']);
+  });
+
+  it('keeps an active consumer reservation visible until it finishes', () => {
+    const reserve = {
+      ...entry,
+      id: 'reserve-1',
+      jobId: 'job-1',
+      kind: 'reserve' as const,
+      source: null,
+    };
+    expect(simplifyConsumerLedger([reserve])).toEqual([reserve]);
   });
 });

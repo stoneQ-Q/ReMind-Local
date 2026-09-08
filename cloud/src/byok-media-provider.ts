@@ -188,6 +188,7 @@ export class WhisperFirstByokMediaProcessingProvider extends ByokMediaProcessing
     private readonly whisper: WhisperMediaClient,
     zhipu = new ZhipuMediaClient(),
     deepseek = new DeepSeekMediaClient(),
+    private readonly serverWhisperUserIds: ReadonlySet<string> = new Set(),
   ) {
     super(localPool, cipher, zhipu, deepseek);
   }
@@ -198,6 +199,13 @@ export class WhisperFirstByokMediaProcessingProvider extends ByokMediaProcessing
     context?: MediaProviderContext,
     contentType = 'audio/mpeg',
   ): Promise<MediaProviderStageResult<string>> {
+    const required = requireContext(context);
+    if (
+      this.serverWhisperUserIds.size > 0 &&
+      !this.serverWhisperUserIds.has(required.userId)
+    ) {
+      return super.transcribeAudio(content, signal, context, contentType);
+    }
     try {
       const result = await this.whisper.transcribeAudio(
         { content, contentType },
@@ -206,7 +214,6 @@ export class WhisperFirstByokMediaProcessingProvider extends ByokMediaProcessing
       return { output: result.transcript, actualCostMicros: 0n };
     } catch (whisperError) {
       if (signal.aborted) throw whisperError;
-      const required = requireContext(context);
       const fallback = await this.localPool.query<{ present: boolean }>(
         `SELECT EXISTS (
            SELECT 1 FROM api_credentials

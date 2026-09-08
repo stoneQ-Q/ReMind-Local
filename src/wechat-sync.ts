@@ -23,6 +23,24 @@ import { xiaoyuzhouUserIntent } from './xiaoyuzhou';
 
 export type WechatReplyMode = 'first' | 'always' | 'silent';
 
+export type WechatLoginSession = {
+  sessionToken: string;
+  qrImageDataUrl: string;
+  expiresAt: string;
+};
+
+export type WechatLoginCheck = {
+  status:
+    | 'waiting'
+    | 'scanned'
+    | 'verification_required'
+    | 'connected'
+    | 'expired'
+    | 'blocked'
+    | 'conflict';
+  sessionToken: string | null;
+};
+
 export type WechatConnection = {
   configured: boolean;
   bound: boolean;
@@ -164,6 +182,56 @@ export async function getWechatConnection(
     localWhisperAvailable: status.localWhisperAvailable === true,
     aiAvailable: status.aiAvailable === true,
     visionAvailable: status.visionAvailable === true,
+  };
+}
+
+export async function startCloudWechatLogin(): Promise<WechatLoginSession> {
+  const payload = await requestCloudJson('wechat/login', { method: 'POST' });
+  if (
+    !isRecord(payload) ||
+    typeof payload.sessionToken !== 'string' ||
+    !payload.sessionToken ||
+    typeof payload.qrImageDataUrl !== 'string' ||
+    !payload.qrImageDataUrl.startsWith('data:image/png;base64,') ||
+    typeof payload.expiresAt !== 'string'
+  ) {
+    throw new Error('invalid_wechat_login_response');
+  }
+  return {
+    sessionToken: payload.sessionToken,
+    qrImageDataUrl: payload.qrImageDataUrl,
+    expiresAt: payload.expiresAt,
+  };
+}
+
+export async function checkCloudWechatLogin(
+  sessionToken: string,
+  verificationCode?: string,
+): Promise<WechatLoginCheck> {
+  const payload = await requestCloudJson(
+    'wechat/login/check',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionToken,
+        ...(verificationCode ? { verificationCode } : {}),
+      }),
+    },
+    45_000,
+  );
+  if (
+    !isRecord(payload) ||
+    !isWechatLoginStatus(payload.status) ||
+    !(
+      typeof payload.sessionToken === 'string' ||
+      payload.sessionToken === null
+    )
+  ) {
+    throw new Error('invalid_wechat_login_response');
+  }
+  return {
+    status: payload.status,
+    sessionToken: payload.sessionToken,
   };
 }
 
@@ -453,4 +521,20 @@ function deviceApiUrl(
     service,
     `devices/${encodeURIComponent(deviceId)}/${action}`,
   );
+}
+
+function isWechatLoginStatus(value: unknown): value is WechatLoginCheck['status'] {
+  return (
+    value === 'waiting' ||
+    value === 'scanned' ||
+    value === 'verification_required' ||
+    value === 'connected' ||
+    value === 'expired' ||
+    value === 'blocked' ||
+    value === 'conflict'
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

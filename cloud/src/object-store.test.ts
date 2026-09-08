@@ -159,6 +159,10 @@ class FakeTencentCosClient implements TencentCosClient {
   async delete(objectKey: string) {
     this.objects.delete(objectKey);
   }
+
+  temporaryReadUrl(objectKey: string, expiresSeconds: number) {
+    return `https://private.cos.example/${objectKey}?expires=${expiresSeconds}`;
+  }
 }
 
 function createTencentStore(
@@ -200,6 +204,20 @@ describe('Tencent COS object store adapter', () => {
     });
     await store.delete(key);
     await store.delete(key);
+  });
+
+  it('creates a bounded signed read URL for a temporary object', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'remind-cos-test-'));
+    temporaryDirectories.push(directory);
+    const { store } = createTencentStore(directory);
+    const key = `users/${randomUUID()}/temporary/${randomUUID()}.m4a`;
+
+    expect(await store.temporaryReadUrl(key, 3_600)).toBe(
+      `https://private.cos.example/${key}?expires=3600`,
+    );
+    await expect(store.temporaryReadUrl(key, 3_601)).rejects.toThrow(
+      'invalid_temporary_read_url_expiry',
+    );
   });
 
   it('stages resumable chunks locally and completes idempotently in COS', async () => {

@@ -47,6 +47,29 @@ describe('Paraformer client', () => {
     );
   });
 
+  it('accepts the trusted Xiaohongshu video CDN for video transcription', async () => {
+    const videoUrl = 'https://sns-video.xhscdn.com/video.mp4';
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ output: { task_id: 'task-video-1234' } }),
+    );
+
+    await expect(
+      new ParaformerClient(apiKey, apiHost, fetcher).submit(videoUrl, signal),
+    ).resolves.toBe('task-video-1234');
+  });
+
+  it('accepts a signed Tencent COS URL used for temporary private audio', async () => {
+    const cosUrl =
+      'https://remind-private-hk-1385855631.cos.ap-hongkong.myqcloud.com/users/test/temporary/audio.m4a?q-signature=test';
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ output: { task_id: 'task-cos-123456' } }),
+    );
+
+    await expect(
+      new ParaformerClient(apiKey, apiHost, fetcher).submit(cosUrl, signal),
+    ).resolves.toBe('task-cos-123456');
+  });
+
   it('polls the task and returns plain text plus timestamp evidence', async () => {
     const fetcher = vi
       .fn()
@@ -71,6 +94,7 @@ describe('Paraformer client', () => {
         jsonResponse({
           transcripts: [
             {
+              content_duration_in_milliseconds: 5_201,
               text: '第一句话。第二句话。',
               sentences: [
                 {
@@ -98,6 +122,7 @@ describe('Paraformer client', () => {
 
     expect(result).toEqual({
       transcript: '第一句话。第二句话。',
+      billableDurationSeconds: 6,
       segments: [
         {
           startSeconds: 1,
