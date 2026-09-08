@@ -43,7 +43,7 @@ jobs:
           npm config set fetch-retry-maxtimeout 120000
           npm ci
           npm ci --prefix cloud
-          npm install --prefix gateway --no-package-lock
+          npm ci --prefix gateway
           npm run typecheck
           npm test
 
@@ -52,20 +52,20 @@ jobs:
           REMIND_ANDROID_VERSION_CODE: "33"
         run: |
           mkdir -p artifacts
-          eas build --platform android --profile preview-local --local --non-interactive --output artifacts/ReMind-1.0.2-build33-diagnostics-background-insights.apk
+          eas build --platform android --profile preview-local --local --non-interactive --output artifacts/ReMind-1.0.2-build33-bilibili-transcript-fix.apk
 
       - name: Verify APK and checksum
         run: |
-          unzip -t artifacts/ReMind-1.0.2-build33-diagnostics-background-insights.apk
+          unzip -t artifacts/ReMind-1.0.2-build33-bilibili-transcript-fix.apk
           cd artifacts
-          sha256sum ReMind-1.0.2-build33-diagnostics-background-insights.apk > SHA256SUMS.txt
+          sha256sum ReMind-1.0.2-build33-bilibili-transcript-fix.apk > SHA256SUMS.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ReMind-1.0.2-build33-diagnostics-background-insights
+          name: ReMind-1.0.2-build33-bilibili-transcript-fix
           path: |
-            artifacts/ReMind-1.0.2-build33-diagnostics-background-insights.apk
+            artifacts/ReMind-1.0.2-build33-bilibili-transcript-fix.apk
             artifacts/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
