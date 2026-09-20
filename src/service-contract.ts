@@ -134,6 +134,16 @@ export function buildReMindApiUrl(
 
 export function credentialScope(config: ReMindServiceConfig): string {
   if (config.routeStyle === 'legacy') return config.baseUrl;
+  // The personal cloud moved hosts without changing its users or credentials.
+  // Keep the existing SecureStore identity so an in-place APK update does not
+  // silently create a second account for the same person.
+  if (
+    config.mode === 'hosted' &&
+    config.baseUrl === 'https://101.201.170.65' &&
+    config.apiVersion === 'v1'
+  ) {
+    return 'hosted:https://remind.43-129-237-189.sslip.io:v1';
+  }
   return `${config.mode}:${config.baseUrl}:${config.apiVersion}`;
 }
 

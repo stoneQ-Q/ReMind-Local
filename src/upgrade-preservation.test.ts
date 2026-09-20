@@ -237,6 +237,35 @@ describe('ReMind in-place upgrade preservation', () => {
       'existing-cloud-token',
     );
   });
+
+  it('keeps the original cloud account when its server moves to Alibaba Cloud', async () => {
+    process.env.EXPO_PUBLIC_REMIND_CLOUD_API_URL = 'https://101.201.170.65';
+    const originalScope = 'hosted:https://remind.43-129-237-189.sslip.io:v1';
+    const newHostScope = 'hosted:https://101.201.170.65:v1';
+    secureValues.set(
+      cloudSessionStorageKey(originalScope),
+      JSON.stringify({
+        userId: 'original-user',
+        deviceId: 'original-device',
+        deviceSecret: 'original-secret',
+        accessToken: 'original-token',
+        accessTokenExpiresAt: '2035-07-30T00:00:00.000Z',
+      }),
+    );
+    secureValues.set(
+      cloudSessionStorageKey(newHostScope),
+      JSON.stringify({
+        userId: 'new-empty-user',
+        deviceId: 'new-empty-device',
+        deviceSecret: 'new-empty-secret',
+        accessToken: 'new-empty-token',
+        accessTokenExpiresAt: '2035-07-30T00:00:00.000Z',
+      }),
+    );
+
+    await expect(getCloudAccessToken()).resolves.toBe('original-token');
+    expect(secureValues.has(cloudSessionStorageKey(newHostScope))).toBe(true);
+  });
 });
 
 function sqliteAdapter(database: DatabaseSync) {

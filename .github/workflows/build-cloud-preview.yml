@@ -49,23 +49,23 @@ jobs:
 
       - name: Build signed cloud APK
         env:
-          REMIND_ANDROID_VERSION_CODE: "34"
+          REMIND_ANDROID_VERSION_CODE: "35"
         run: |
           mkdir -p artifacts
-          eas build --platform android --profile preview-local --local --non-interactive --output artifacts/ReMind-1.0.2-build34-aliyun.apk
+          eas build --platform android --profile preview-local --local --non-interactive --output artifacts/ReMind-1.0.2-build35-aliyun-account-fix.apk
 
       - name: Verify APK and checksum
         run: |
-          unzip -t artifacts/ReMind-1.0.2-build34-aliyun.apk
+          unzip -t artifacts/ReMind-1.0.2-build35-aliyun-account-fix.apk
           cd artifacts
-          sha256sum ReMind-1.0.2-build34-aliyun.apk > SHA256SUMS.txt
+          sha256sum ReMind-1.0.2-build35-aliyun-account-fix.apk > SHA256SUMS.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ReMind-1.0.2-build34-aliyun
+          name: ReMind-1.0.2-build35-aliyun-account-fix
           path: |
-            artifacts/ReMind-1.0.2-build34-aliyun.apk
+            artifacts/ReMind-1.0.2-build35-aliyun-account-fix.apk
             artifacts/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
