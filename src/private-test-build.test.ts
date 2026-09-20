@@ -3,8 +3,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-const PRIVATE_TEST_CLOUD_URL =
-  'https://remind.43-129-237-189.sslip.io';
+const PRIVATE_TEST_CLOUD_URL = 'https://101.201.170.65';
 
 describe('private test build configuration', () => {
   it('keeps local mode available and adds the HTTPS cloud endpoint', async () => {
